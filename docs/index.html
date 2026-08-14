@@ -270,8 +270,7 @@
       that changes in flight cannot surprise the transaction into an undeclared key.
     </p>
     <p class="meta">
-      Revision 2 · two adversarial reviews (Aug 2026) ·
-      source: <span class="mono">docs/04-architecture.md</span>
+      August 2026 · source: <span class="mono">docs/04-architecture.md</span>
     </p>
   </header>
 </div>
@@ -417,11 +416,10 @@
     <div class="fld"><span class="fn">side · tick · generation · seq · qty</span><span class="fb">contents: set at execution, given in the rested event</span></div>
   </div>
   <p>
-    This split matters more than it looks. Round 1 packed <code>(generation, seq)</code> into
-    the key itself, and both values move under concurrency: any rest at the same level bumps
-    <code>tail_seq</code>, and any sweep bumps <code>generation</code>. Every simulated key was
-    wrong under ordinary load. The rule that came out of it is simple: a key may only contain
-    what the client knows before submission. The coordinates, known once the order rests, give
+    This split is load-bearing. Queue coordinates move under concurrency: any rest at the same
+    level bumps <code>tail_seq</code>, and any sweep bumps <code>generation</code>, so a key
+    built from them would be wrong by the time the transaction lands. The rule is simple: a key
+    may only contain what the client knows before submission. The coordinates, known once the order rests, give
     the maker every key a settle will touch, the level plus at most one page.
   </p>
   <div class="callout">
@@ -580,10 +578,10 @@
 
 <div class="col">
   <div class="callout risk">
-    <span class="t sans">Attack closed: tombstone poisoning</span>
-    Head advance skips tombstones, and the scan used to be unbounded: rest K dust orders,
-    cancel the middle ones, and every taker crossing that price paid an O(K) scan. A place now
-    scans at most <code>MAX_SLOTS_SCANNED</code> slots, and <strong>head progress persists even
+    <span class="t sans">Tombstone poisoning, and its bound</span>
+    Head advance skips tombstones, and an unbounded scan would invite an attack: rest K dust
+    orders, cancel the middle ones, and every taker crossing that price pays an O(K) scan. A
+    place therefore scans at most <code>MAX_SLOTS_SCANNED</code> slots, and <strong>head progress persists even
     when the cap ends the loop early</strong>, so the cleanup cost spreads across takers instead
     of repeating for each one. The per-market <code>min_order_lots</code> floor makes the attack
     expensive to set up in the first place.
@@ -761,8 +759,7 @@
       A fill <strong>traps</strong> (a footprint violation) in exactly one case: the walk has to
       pass <code>pad_end</code>. Nothing else traps. The scan cap, the level cap, and the window
       edges all stop the loop with progress persisted and the remainder refunded, and a
-      displaced append comes back as <code>RetryRest</code>. Round 2 turned this list into the
-      contract.
+      displaced append comes back as <code>RetryRest</code>. This list is the contract.
     </div>
   </section>
 </div>
@@ -837,9 +834,9 @@
       </svg>
     </div>
     <figcaption>
-      <b>Why places survive a moving book.</b> The original design padded only the currently-set
-      ticks past the walk, so one refundable 1-lot rest inside the range failed every in-flight
-      taker. With <code>start_tick</code>, the band, and slot windows, one trap remains: the
+      <b>Why places survive a moving book.</b> Padding only the currently-set ticks would not
+      survive it: one refundable 1-lot rest inside the range would fail every in-flight taker.
+      With <code>start_tick</code>, the band, and slot windows, one trap remains: the
       walk needing a tick past <code>pad_end</code>. Queue-shape races stop the loop without
       trapping. On sparse books a safe band may not fit in 400 entries, a real and documented
       residual.
@@ -864,8 +861,8 @@
   </div>
   <p class="tbl-note">
     Compare against the per-transaction limits of 400 entries, 200 writes, and 132 KB. The
-    max-sweep row shows its own arithmetic because round 2 caught the earlier table understating
-    it by roughly 3x: 32 Levels at 384 B, 32 L0 words at 256 B, plus L1, Best, Fees, two vault
+    max-sweep row shows its own arithmetic so the ceiling can be checked rather than trusted:
+    32 Levels at 384 B, 32 L0 words at 256 B, plus L1, Best, Fees, two vault
     balances, and the taker's own rest comes to about 22 KB and 70 writes. Legal, but 7.6% of a
     whole ledger's 286,720 write bytes. Typical operations are the rows at or under 1.2 KB; a
     ledger sustains hundreds of those, or about 13 max sweeps. This is why every hot entry stays
@@ -946,10 +943,9 @@
   <section id="concurrency">
     <h2><span class="secno">§ 8</span>Concurrency: the true limits</h2>
     <p>
-      An earlier draft claimed bid and ask clusters parallelize and markets stay fully disjoint
-      under protocol 23. The review killed that claim. <strong>The vault's SAC balance entries
-      are the real serialization points:</strong> one balance entry per (token, contract), read
-      and written by every settling operation. Same-side rests serialize with each other, takers
+      Bid and ask clusters do not parallelize, and markets are not disjoint under protocol 23.
+      <strong>The vault's SAC balance entries are the real serialization points:</strong> one
+      balance entry per (token, contract), read and written by every settling operation. Same-side rests serialize with each other, takers
       serialize with both sides, and every market sharing a token joins the same execution
       cluster.
     </p>
@@ -1011,13 +1007,12 @@
       </svg>
     </div>
     <figcaption>
-      <b>The coupling the first draft missed.</b> A venue quoted mostly in one asset (USDC,
-      XLM) is effectively one serial cluster. v1 accepts this, since the network's write-byte
-      ceiling limits throughput before cluster parallelism does. Per-market vault sub-accounts
-      would win the parallelism back; that's a v2 work item. Round 2 also protected this
-      analysis from a quiet regression: market operations never write the instance entry,
-      because a per-op instance TTL bump would have been one global write shared by every
-      market.
+      <b>Shared tokens couple markets.</b> A venue quoted mostly in one asset (USDC, XLM) is
+      effectively one serial cluster. v1 accepts this, since the network's write-byte ceiling
+      limits throughput before cluster parallelism does. Per-market vault sub-accounts would
+      win the parallelism back; that's a v2 work item. One rule protects the analysis: market
+      operations never write the instance entry, because a per-op instance TTL bump would be
+      one global write shared by every market.
     </figcaption>
   </figure>
 </div>
@@ -1143,9 +1138,8 @@
   </section>
 
   <footer>
-    Sources: <span class="mono">docs/04-architecture.md</span> (rev 2) and decision notes
-    <span class="mono">001</span> through <span class="mono">005</span> in the PageBook
-    repository. Fee estimates use live mainnet rates from August 2026. Numbers marked as targets
+    Sources: <span class="mono">docs/04-architecture.md</span> and the decision notes in the
+    PageBook repository. Fee estimates use live mainnet rates from August 2026. Numbers marked as targets
     move with config or measurement; the tables here are the budgets the test suite enforces.
   </footer>
 </div>

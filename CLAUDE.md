@@ -43,6 +43,14 @@ See `docs/05-implementation-plan.md` §Milestones. Each milestone lands with: un
 property tests green, footprint-budget tests green, entry-size tests green, and a short
 `docs/decisions/` note for anything that diverged from the plan.
 
+## Artifacts
+
+- Any artifact produced from this repo (the explainer page, published HTML, reports)
+  MUST be run through the `humanizer` skill before publishing.
+- Artifacts are standalone documents describing the current state of the design. No
+  references to prior iterations, review rounds, or "what changed" — that history
+  lives in `docs/decisions/`.
+
 ## Repo conventions
 
 - Contract crate in `contracts/pagebook/`; shared types in `crates/pagebook-types/` if
