@@ -27,8 +27,9 @@ entry-size behavior) contradicts the docs, follow reality and record the deviati
   every loop bounds on a config constant (`MAX_LEVELS_PER_FILL`, page capacity, etc.).
 - No synchronous calls out to untrusted contracts. Token movement is SAC `transfer`
   only, to/from the contract's own vault. Top-of-book changes are events, not hooks.
-- Amount math in i128 (lots × tick × tick_size); checked arithmetic everywhere;
-  round quote in the maker's favor deterministically; dust accrues to fees.
+- Amount math in i128 (lots × tick × tick_size); checked arithmetic everywhere.
+  Matching math is exact by quantization (no rounding); the only rounding is the
+  taker fee, which rounds up (`ceil`); dust accrues to fees.
 - Persistent entries: never `del` a `Level` (generation counters must survive; archival
   handles cold ones). `OrderRef` is deleted on claim/cancel. Extend TTLs per the policy
   table in the architecture doc.
