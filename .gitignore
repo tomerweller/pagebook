@@ -1,0 +1,6 @@
+target/
+.stellar/
+.soroban/
+*.wasm
+Cargo.lock
+.DS_Store
