@@ -10,8 +10,22 @@ adversarial review — see `decisions/001-adversarial-review-round-1.md` and
 One contract hosts many **markets**. A market is a sorted token pair (SAC addresses)
 plus quantization params. Each market has two **sides** (bids, asks) of price **levels**;
 each level is a FIFO queue of maker orders at exactly one price. Takers cross the book
-and settle atomically; makers rest, then later **claim/cancel** — one entry point that
-settles whatever happened (filled → proceeds, open → refund, mixed → both).
+and settle atomically; makers rest, then later **settle** — one exit that pays whatever
+happened (filled → proceeds, open → refund, mixed → both).
+
+### Vocabulary (normative; used consistently in all docs, code, and tables)
+
+- **Entry points** (what a caller invokes): `place` (cross and/or rest an order),
+  `replace` / `replace_batch` (move quotes), `settle` (the one maker exit), `route`,
+  `create_market`, the cranks (`collect_fees`, `keepalive`), and admin functions.
+- **Behaviors** (what an invocation did): **take** (consume resting liquidity),
+  **rest** (leave an order on the book), **sweep** (consume a whole level). One
+  `place` may both take and rest.
+- **Roles**: the **maker** is whoever's order rests; the **taker** is whoever takes.
+- **Order states**: open → partially filled → filled. "Fill" is only ever an order
+  state (or the flag `fill_or_kill`), never an operation name. Settling an open order
+  *cancels* it (tombstones its slot); settling a filled order *claims* its proceeds —
+  "cancel" and "claim" name outcomes of `settle`, not operations.
 
 ### Quantization (exactness by construction)
 
@@ -20,7 +34,7 @@ settles whatever happened (filled → proceeds, open → refund, mixed → both)
 - Price of tick `t` (u32, band-limited by market config `[tick_min, tick_max)`,
   `tick_min ≥ 1` — tick 0 would admit zero-price, zero-escrow orders):
   `t × tick_size` quote atoms per base lot.
-- Quote value of a fill = `qty_lots × t × tick_size` — **integer, exact**. There is no
+- Quote value of a take = `qty_lots × t × tick_size` — **integer, exact**. There is no
   rounding anywhere in the matching path; Deepstate's correction-code machinery is
   unnecessary. All intermediate math in i128 (checked). The **only** rounding in the
   system is the taker fee: `fee = ceil(output × fee_bps / 10_000)` — rounds up, dust
@@ -55,7 +69,7 @@ at max occupancy; enforce with tests.
 | # | Entry | Durability | Key | Contents | Target size |
 |---|---|---|---|---|---|
 | 1 | `Admin` | instance | — | admin `Address`, fee recipient `Address`, paused flag, market counter | ~150 B |
-| 2 | `Market` | persistent | `("M", mkt_id)` | base/quote SAC addrs, lot_size, tick_size, tick band, fee bps, min/max order lots, `MAX_LEVELS_PER_FILL`, `MAX_SLOTS_SCANNED`, N, P, `MAX_PAGES` | ~250 B |
+| 2 | `Market` | persistent | `("M", mkt_id)` | base/quote SAC addrs, lot_size, tick_size, tick band, fee bps, min/max order lots, `MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED`, N, P, `MAX_PAGES` | ~250 B |
 | 3 | `Best(side)` | persistent | `("B", mkt, side)` | best tick (u32), empty flag | ~40 B |
 | 4 | `L1(side)` | persistent | `("S", mkt, side)` | summary bitmap: bit w = "L0 word w has any set bit" (2,048 words) | 256 B |
 | 5 | `L0(side, w)` | persistent | `("W", mkt, side, w)` | presence bitmap for ticks `[w·2048, (w+1)·2048)` | 256 B |
@@ -69,8 +83,8 @@ client *before* submission, so the `OrderRef` key is declarable at simulation ti
 matter what the book does in flight. The queue coordinates `(side, tick, generation,
 seq)` are assigned at execution, stored *inside* the entry (contents never affect the
 footprint), and reported in the `rested` event. Rest fails with `OrderExists` if the
-nonce is live; nonces are reusable after claim. `OrderRef` is written at rest, **rewritten
-in place by `replace`** (§3), and deleted at claim/cancel. Its layout is fixed-size so a
+nonce is live; nonces are reusable after settle. `OrderRef` is written at rest, **rewritten
+in place by `replace`** (§3), and deleted at settle. Its layout is fixed-size so a
 rewrite never changes the entry size — the property that makes `replace` rent-free.
 (Keying `OrderRef` by `(generation, seq)` — round-1's design — was unsound: any
 concurrent rest at the same level moves `tail_seq`, any concurrent sweep bumps
@@ -86,7 +100,7 @@ the targets.
 **Level capacity** within one generation is `LEVEL_CAP = N + P × MAX_PAGES` seqs; rests
 beyond that fail with `LevelFull` (see §2 for the empty-level reset that makes this
 recoverable). Pages wholly behind `head_seq` MAY be deleted by the operation that
-advances past them (claims never read slots — they settle from counters +
+advances past them (settlement never reads slots — it derives from counters +
 `OrderRef.qty`), so live pages are bounded by queue *depth*, not by history.
 
 **Stale-slot rule (page reuse).** `Page` keys do not include the generation, and a
@@ -110,7 +124,7 @@ quote (`qty × t × tick_size`); asks escrow base (`qty × lot_size`).
 slot `s` if `s < N`, else slot `(s − N) mod P` of `Page((s − N) / P)`. Slots are never
 moved or compacted; "remove head" always means counter advance, never element removal.
 Every slot's location is therefore a pure function of coordinates the maker knows after
-resting — a canceller declares at most one specific Page.
+resting — a settling maker declares at most one specific Page.
 
 Three counters carry all fill history:
 
@@ -126,31 +140,31 @@ Three counters carry all fill history:
 reset the queue: `generation += 1, head_seq = 0, head_consumed = 0, tail_seq = 0`.
 This is safe: at `total_open == 0`, every seq in `[H, tail)` is a tombstone whose
 `OrderRef` was already deleted at cancel, and every seq `< H` is fully filled — bumping
-G turns those claims into the `g < G` row below, which pays them identically. Without
+G turns their settlements into the `g < G` row below, which pays them identically. Without
 this rule, a level emptied by *cancels* (matching never sweeps it) accumulates
 `tail_seq` forever and eventually returns `LevelFull` at an empty price — a permanent
 DoS on that tick. (ADR-002 finding 2.)
 
-**Claim logic** for order with stored coordinates `(side, tick, generation g, seq s,
+**Settlement logic** for order with stored coordinates `(side, tick, generation g, seq s,
 qty q)` against `Level(side, tick)` with state `(G, H, C)`:
 
-| Condition | Status | Settlement |
+| Condition | State | Settlement |
 |---|---|---|
 | `g < G` | fully filled | pay `q` at tick price |
 | `g == G`, `s < H` | fully filled | pay `q` at tick price |
 | `g == G`, `s == H` | partially filled `C` | pay `C` at tick price; refund `q − C`; advance `H` (eagerly, past consecutive tombstones in declared entries), reset `C` |
 | `g == G`, `s > H` | open | refund `q`; zero its queue slot (tombstone) |
 
-Then delete `OrderRef`, emit event. O(1), ~3 writes. Because every fill at a level
-happens at exactly the tick price, *when* the fill happened is irrelevant — counters are
+Then delete `OrderRef`, emit event. O(1), ~3 writes. Because every take at a level
+happens at exactly the tick price, *when* it happened is irrelevant — counters are
 a complete proof. This re-derives Deepstate's "absent from tree ⇒ fully filled" claim
 at stable keys, and is the direct replacement for Phoenix seats / DeepBook settled-owed
 ledgers with **zero maker-related writes during matching**.
 
 **Bounded tombstone scan.** Tombstones (`qty = 0` slots from mid-queue cancels) are
-skipped when the head advances, but the scan is bounded: a fill scans at most
+skipped when the head advances, but the scan is bounded: a place scans at most
 `MAX_SLOTS_SCANNED` slots total, and head advancement is **always persisted**, even when
-the cap ends the fill early — cleanup cost amortizes across takers instead of repeating
+the cap ends the loop early — cleanup cost amortizes across takers instead of repeating
 for each one. Without this bound, an attacker rests K dust orders, cancels the middle,
 and poisons the best price with a scan bounded only by history. (`min_order_lots` raises
 the cost of that attack; the scan cap removes the damage.)
@@ -165,16 +179,16 @@ slot *write* outside it is the taker's own rest. Both are bounded by client-decl
 windows (§4) — execution treats a window edge like a loop cap, never as a trap:
 
 ```
-fill(taker, market, side, limit_tick, qty_lots, start_tick, nonce, window, flags):
+place(taker, market, side, limit_tick, qty_lots, start_tick, nonce, window, flags):
   # start_tick = the client's simulated best opposite tick. Matching never visits
   # ticks BETTER than start_tick: an order rested at a better price between
-  # simulation and inclusion is simply unreachable by this fill — it cannot make
+  # simulation and inclusion is simply unreachable by this place — it cannot make
   # the tx read an undeclared key, so it cannot fail the tx.
   # window = the slot access the client declared pages for: per-band-level page
   # ranges for consumption, plus the append range for the taker's own rest.
   best = worse_of(Best(opposite), start_tick)   # bitmap walk from start_tick if needed
   while qty_lots > 0 and best crosses limit_tick
-        and levels_crossed < MAX_LEVELS_PER_FILL
+        and levels_crossed < MAX_LEVELS_CROSSED
         and slots_scanned < MAX_SLOTS_SCANNED:
     lvl = Level(opposite, best)
     if lvl.total_open == 0:                     # stale bit (lazy clear — see §8 inv. 3)
@@ -195,7 +209,7 @@ fill(taker, market, side, limit_tick, qty_lots, start_tick, nonce, window, flags
     if loop terminated by a cap or window edge while the book still crosses limit_tick:
       refund remainder                          # NEVER rest a crossing order (inv. 8)
     else: rest remainder at limit_tick (append must land in window, below)
-  settle: SAC transfers taker↔vault (base, quote)
+  transfer: SAC moves taker↔vault (base, quote)
   fee = ceil(taker_output × fee_bps / 10_000) → Fees(token)   # the only rounding
   update Best(opposite) if moved; emit events
 ```
@@ -214,7 +228,7 @@ orders) *and* a concurrent sweep or reset (which sends the tail back toward 0).
 against the recorded `Best(opposite)` **as stored** — one read, footprint-stable. If it
 would cross the recorded best, it fails `Crossed`, *even if that best is a stale bit
 over an emptied level*. Because `Best` is never worse than the true best (inv. 3), this
-check can false-reject near stale state (until the next fill cleans it) but can never
+check can false-reject near stale state (until the next place that takes there cleans it) but can never
 rest a truly crossing order. Trying to be smarter — walking past stale levels to find
 the "true" best — would either widen the footprint unboundedly or create a crossed
 book; both are forbidden.
@@ -227,11 +241,11 @@ coordinates and appends at the new tick under the normal rest rules (bounds, app
 window, `LevelFull`, empty-reset). Because the entry is reused at fixed size, **no rent
 is charged**: the maker's nonce is a durable quote slot whose 120-day rent amortizes
 across every update. This is what makes market making economical (§4 fee table,
-ADR-005) — cancel+rest re-creates the `OrderRef` and re-pays ~0.027 XLM of rent per
+ADR-005) — settle+place re-creates the `OrderRef` and re-pays ~0.027 XLM of rent per
 update; replace pays only write fees (~0.003 XLM). Replace never takes liquidity: it
 applies the same conservative post-only check against recorded `Best` and fails
 `Crossed` instead. And it is atomic — the maker is never unquoted between the
-settlement and the re-rest, which a cancel-then-rest pair cannot guarantee.
+settlement and the re-rest, which a settle-then-place pair cannot guarantee.
 
 Pages: slots beyond N spill into `Page(side, tick, p)` positionally (§2). Matching
 consumes inline first, then pages in order; an op that advances `head_seq` past the end
@@ -240,17 +254,17 @@ footprint per maker *count* — bounded by P per entry.)
 
 **Events** (per tx ≤ 16,384 bytes): `rested(owner, nonce, side, tick, generation, seq)`,
 `filled(side, tick, lots, quote)` one per crossed level, `swept(side, tick, generation)`,
-`claimed(owner, nonce, filled_lots, refunded_lots)`, `top_changed(side, old, new)`.
-Event bytes are bounded by the same caps that bound the loops: ≤ `MAX_LEVELS_PER_FILL`
-fill/sweep events per invocation (shared across route legs, below) ⇒ worst case ≈ 64 ×
+`settled(owner, nonce, filled_lots, refunded_lots)`, `top_changed(side, old, new)`.
+Event bytes are bounded by the same caps that bound the loops: ≤ `MAX_LEVELS_CROSSED`
+take/sweep events per invocation (shared across route legs, below) ⇒ worst case ≈ 64 ×
 ~100 B ≈ 6.4 KB, asserted in tests. No synchronous hooks — Soroban cannot resource-cap
 an untrusted call.
 
-`route(legs[])`: sequential fills across markets, deltas netted in invocation memory,
+`route(legs[])`: sequential place legs across markets, deltas netted in invocation memory,
 one SAC transfer per token at the end. **Route caps are per-transaction, not per-leg:**
-`legs.len() ≤ MAX_ROUTE_LEGS`, and one shared `MAX_LEVELS_PER_FILL` /
+`legs.len() ≤ MAX_ROUTE_LEGS`, and one shared `MAX_LEVELS_CROSSED` /
 `MAX_SLOTS_SCANNED` budget spans all legs — so a route's worst-case writes, events, and
-footprint are the same as a single max fill plus per-leg constants, and the §0 creation
+footprint are the same as a single maximal place plus per-leg constants, and the §0 creation
 bound already reserves `MAX_ROUTE_LEGS` headroom for the netted transfers. The client
 splits the 400-entry footprint across legs' bands (SDK responsibility).
 
@@ -269,9 +283,9 @@ Everything above exists so this section works:
   their queues are inline); for the taker's own possible rest, `OrderRef(taker, nonce)`,
   the rest level's bitmap words, and append pages `{page(tail_sim), +1, 0}`. Band
   padding is required because a new level can appear at *any* tick inside the walk
-  range; window padding is required because a concurrent fill can move a head into
+  range; window padding is required because a concurrent take can move a head into
   pages, and a concurrent rest can move a tail across a page boundary.
-- **Failure modes, exhaustively.** A fill **traps** (footprint violation) only if the
+- **Failure modes, exhaustively.** A place **traps** (footprint violation) only if the
   walk must pass `pad_end`. Every other race **degrades gracefully**: scan cap, level
   cap, and window edges end the loop with progress persisted and the remainder
   refunded; an append landing outside the window is the typed error `RetryRest`. On
@@ -286,7 +300,7 @@ Everything above exists so this section works:
   mostly in USDC is effectively one serial cluster. v1 accepts this — the network
   write-bytes ceiling, not cluster parallelism, is the binding throughput limit at
   current numbers. Recovering parallelism (per-market vault sub-accounts, or internal
-  balance entries netted at claim edges) is an explicit v2 item (§7). No operation
+  balance entries netted at settlement edges) is an explicit v2 item (§7). No operation
   writes the instance entry (§5) — the cluster analysis above is the whole story.
 
 Budgets (targets, packed encoding, incl. SAC instance/balance entries and the
@@ -295,19 +309,19 @@ resource tests gate against these):
 
 | Op | Footprint | Writes | Write bytes |
 |---|---|---|---|
-| rest (existing level) | ~12 | ~5 | ~0.9 KB |
-| rest (new level) | ~14 | ~7 | ~1.2 KB |
-| cancel / claim | ~9 | ~3–4 | ~0.6 KB |
+| place — rest only (existing level) | ~12 | ~5 | ~0.9 KB |
+| place — rest only (new level) | ~14 | ~7 | ~1.2 KB |
+| settle | ~9 | ~3–4 | ~0.6 KB |
 | replace (one quote) | ~14 | ~8 | ~1.5 KB |
 | replace_batch (40-quote full refresh) | ~130 | ~90 | ~24 KB |
-| taker, 8 levels swept (band ~24 + windows) | ~55 | ~21 | ~6 KB |
-| max sweep (32 levels, 32 distinct L0 words) | ~85 + pad | ~70 | ~22 KB |
+| place — take only, 8 levels swept (band ~24 + windows) | ~55 | ~21 | ~6 KB |
+| place — maximal take (32 levels, 32 distinct L0 words) | ~85 + pad | ~70 | ~22 KB |
 
 Worst-case write-byte arithmetic for the max sweep, so nobody trusts the table blindly:
 32 Level (×384 B) + 32 L0 (×256 B) + L1 + Best + Fees + 2 vault balances + own-rest
 entries ≈ 12.3 + 8.2 + 0.3 + ~1.2 KB ≈ **22 KB** and ~70 writes — within per-tx limits
 (400 entries / 200 writes / 132 KB) but **7.6% of a whole ledger's 286,720 write
-bytes**. Typical ops are the rest/cancel rows (≤ 1 KB); the ledger sustains hundreds of
+bytes**. Typical ops are the rest/settle rows (≤ 1 KB); the ledger sustains hundreds of
 those, or ~13 max sweeps, per close — the reason every hot entry is a few hundred bytes.
 (SLP history suggests the ceiling rises; per-op bytes here are ~50–100× under a
 whole-book-blob design.)
@@ -322,16 +336,16 @@ per byte per 120-day minimum TTL**. Instruction counts are rough (±3×) but imm
 
 | Op | Est. resource fee | Dominated by |
 |---|---|---|
-| rest (existing level) | **~0.029 XLM** | `OrderRef` rent (160 B × 120 d ≈ 0.027) |
-| rest (first touch / restore of a tick) | **~0.094 XLM** | + `Level` rent (384 B ≈ 0.064) |
-| cancel / claim | **~0.002 XLM** | write entries; no rent (only deletes/rewrites) |
+| place — rest only (existing level) | **~0.029 XLM** | `OrderRef` rent (160 B × 120 d ≈ 0.027) |
+| place — rest only (first touch / restore of a tick) | **~0.094 XLM** | + `Level` rent (384 B ≈ 0.064) |
+| settle | **~0.002 XLM** | write entries; no rent (only deletes/rewrites) |
 | replace (one quote; entry reused) | **~0.003 XLM** | write entries; zero rent |
 | replace_batch (40-quote full refresh, one tx) | **~0.03 XLM** | write entries (~90 × 2,500) |
-| taker, 8 levels swept, no rest | **~0.009 XLM** | write entries + tx size |
-| taker, 8 levels + rested remainder | **~0.037 XLM** | the remainder's `OrderRef` rent |
-| max sweep (32 levels) | **~0.027 XLM** | write entries (70 × 2,500) |
+| place — take only, 8 levels swept | **~0.009 XLM** | write entries + tx size |
+| place — take 8 levels + rest remainder | **~0.037 XLM** | the remainder's `OrderRef` rent |
+| place — maximal take (32 levels) | **~0.027 XLM** | write entries (70 × 2,500) |
 | `create_market` | **~0.043 XLM** | `Market` rent |
-| `claim_fees` | **~0.001 XLM** | — |
+| `collect_fees` | **~0.001 XLM** | — |
 | `keepalive` (whole venue, per ~120 d) | **~2.3 XLM** | wasm code-entry rent (~40 KB at ⅓ discount) |
 
 Readings, in design terms:
@@ -342,7 +356,7 @@ Readings, in design terms:
   with `min_order_lots` (a dust-storm of K orders now has a hard cost of ~0.027 K XLM,
   non-refundable).
 - **Churn is priced separately from holding — use `replace`.** Updating a quote via
-  cancel+rest re-creates the `OrderRef` and re-pays its rent every time (~0.031
+  settle+place re-creates the `OrderRef` and re-pays its rent every time (~0.031
   XLM/quote — a 40-order book refreshed every minute would burn ~1,800 XLM/day, so
   SDEX-style churn is impossible on that path). `replace` reuses the entry: a full
   40-quote refresh in one tx is ~0.03 XLM, and the per-quote carrying cost stays
@@ -365,14 +379,14 @@ Readings, in design terms:
 Mainnet's minimum persistent TTL is **2,073,600 ledgers (~120 days)**, charged as rent
 at creation/restore; the maximum is ~180 days (03 §Storage). That makes the policy
 almost entirely passive — entries live in prepaid 120-day chunks, and **no hot path
-ever extends a TTL** (matching, resting, cancel/claim pay zero rent on existing
+ever extends a TTL** (matching, resting, and settling pay zero rent on existing
 entries):
 
 | Entry | TTL comes from | On archival (~120 d idle) |
 |---|---|---|
 | `Admin` (instance) + wasm code | permissionless `keepalive()` crank + admin ops — **never market ops** | crank restores (~2.3 XLM/120 d, mostly code rent) |
 | `Market`, `Best`, `L1`, `L0`, `Level`, `Page`, `Fees` | 120-d minimum at creation/restore; whoever restores pays the next chunk | auto-restore on touch (generation survives) |
-| `OrderRef` | 120-d minimum at rest (maker pays); maker MAY `extend_ttl` to the 180-d max for long-lived quotes | claimant auto-restores; costs land on beneficiary |
+| `OrderRef` | 120-d minimum at rest (maker pays); maker MAY `extend_ttl` to the 180-d max for long-lived quotes | the settling maker auto-restores; costs land on beneficiary |
 
 The instance rule matters for §4: a per-op `bump_instance` would put an instance
 **write** in every transaction — one global serialization point across every market and
@@ -380,13 +394,13 @@ token, silently undoing the whole concurrency analysis. Reads of instance config
 shared read-only and do not conflict; the TTL is maintained out-of-band by `keepalive()`
 (anyone may crank it; admin ops also bump).
 
-An order older than ~120 days unclaimed has an archived `OrderRef`; the claim
-transaction auto-restores it (P23), paying its next rent chunk — acceptable because the
-claim is the entry's last act (it is deleted on settlement).
+An order older than ~120 days unsettled has an archived `OrderRef`; the settle
+transaction auto-restores it (P23), paying its next rent chunk — acceptable because
+settling is the entry's last act (it is deleted on settlement).
 
-Requirements: **never `del` a `Level`** (counters must survive for claims; cold levels
+Requirements: **never `del` a `Level`** (counters must survive for settlement; cold levels
 sleep in the archive — archival IS the garbage collector, and restore-on-touch is the
-designed lifecycle). Pages behind the head and `OrderRef` on claim ARE deleted (their
+designed lifecycle). Pages behind the head and `OrderRef` on settle ARE deleted (their
 lifecycles are done). Temporary storage is allowed only for lossless-if-lost data (e.g.,
 optional time-in-force expiry index) — never for funds-bearing state.
 
@@ -397,9 +411,9 @@ This contract custodies every maker's escrow; "no admin story" is not an option.
 - **Initialization is the constructor.** `__constructor(admin, fee_recipient)` runs
   atomically at deploy — there is no `init` entry point and no first-caller-wins race.
 - **Every state-changing entry point authenticates**, explicitly:
-  `fill`/`route` → `taker.require_auth()`; `cancel` (claim) → `owner.require_auth()`;
+  `place`/`route` → `taker.require_auth()`; `settle`/`replace` → `owner.require_auth()`;
   `create_market`, `set_admin`, `set_fee_recipient`, `set_paused`, `upgrade` →
-  `admin.require_auth()`; `claim_fees` and `keepalive` → none (permissionless cranks
+  `admin.require_auth()`; `collect_fees` and `keepalive` → none (permissionless cranks
   whose effects are defined by config, not caller).
 - **Trust model, stated plainly:** the admin can upgrade the wasm, and an upgraded wasm
   can move the vault. Deployments that custody real value MUST put the admin behind a
@@ -409,10 +423,10 @@ This contract custodies every maker's escrow; "no admin story" is not an option.
   needs an anti-spam creation fee, and `Market` entries are per-key persistent
   (never instance — an instance-resident market table is a shared-entry growth bomb
   that every invocation pays to read).
-- **Pause blocks `fill`, rest, and `replace`. `cancel`, claim, and `claim_fees` ALWAYS
-  work** — funds exit is never gated, under any admin state. (`replace` contains a
-  rest, so it pauses with the entry side of the book; the settle half is available
-  through `cancel`.)
+- **Pause blocks `place` and `replace`. `settle` and `collect_fees` ALWAYS work** —
+  funds exit is never gated, under any admin state. (`replace` contains a rest, so it
+  pauses with the entry side of the book; the exit half stays available through
+  `settle`.)
 - Hot entries carry a leading schema-version byte (§1); upgraded code migrates entries
   lazily on touch.
 
@@ -421,20 +435,20 @@ This contract custodies every maker's escrow; "no admin story" is not an option.
 - **Global orders** (Manifest-style cross-market capital): reintroduces third-party
   vault entries into taker footprints and sim-to-apply races; v2 at most, with bounded
   global makers per level and skippable-order semantics.
-- **Per-market vault sub-accounts** (or internal balance accounting netted at claim
-  edges) to break the shared-token serialization cluster (§4); v2.
+- **Per-market vault sub-accounts** (or internal balance accounting netted at
+  settlement edges) to break the shared-token serialization cluster (§4); v2.
 - **Permissionless market creation** with an anti-spam fee (§6); v2.
 - **Synchronous hooks**: impossible to sandbox (no per-call cap); events instead.
 - **Geometric-tick market type** using Liquidity Book's `(1+step)^id` map — changes
-  only the id→price function (bitmaps/levels/claims untouched), removes the per-market
+  only the id→price function (bitmaps/levels/settlement untouched), removes the per-market
   tick-band config, and makes a fixed-width pad band a constant percentage depth;
   see `01-prior-art.md` §Liquidity Book. v2.
 - **Pooled (pro-rata) levels** — LB-style fungible per-`(level, generation)` shares as
   a sibling market type: deletes pages/tombstones/windows/`OrderRef` (whose rent is the
   dominant per-order cost, ADR-004) at the price of time priority within a level. MUST
-  keep generation-on-sweep for fill finality. v2.
-- **Volatility-scaled taker fee** (LB surge pricing): the fill loop already counts
-  crossings and `Fees` is already RW — zero added footprint; costs `quote_fill` exact
+  keep generation-on-sweep for fill finality (final order states without keepers). v2.
+- **Volatility-scaled taker fee** (LB surge pricing): the matching loop already counts
+  crossings and `Fees` is already RW — zero added footprint; costs `quote_place` exact
   fee determinism. v2, decision note required.
 - **Self-trade prevention, oracle-pegged orders, batch-auction market type**
   (SPEEDEX-flavored sibling for hot markets): design notes exist in
@@ -448,21 +462,21 @@ This contract custodies every maker's escrow; "no admin story" is not an option.
    excluded per invariant 9).
 3. `total_open > 0` ⇒ bitmap bit set. The converse is deliberately weak: a stale set
    bit over an empty level is permitted (cancel-to-empty is O(1) and does not walk
-   bitmaps or move `Best`) and is cleared lazily by the next fill that visits it.
-   `Best` is never *worse* than the true best set tick; fills may walk forward from it.
-4. Claim settlement is exact and path-independent: any interleaving of fills/cancels
+   bitmaps or move `Best`) and is cleared lazily by the next place that takes through it.
+   `Best` is never *worse* than the true best set tick; matching may walk forward from it.
+4. Settlement is exact and path-independent: any interleaving of takes and settles
    ending in the same counters pays the same amounts (single-price levels make this
    provable).
-5. Price-time priority, scoped by `start_tick`: fills consume strictly best-tick-first
+5. Price-time priority, scoped by `start_tick`: takes consume strictly best-tick-first
    among ticks at-or-worse than `start_tick`, FIFO within level (tombstones skipped).
    Orders rested at better ticks after simulation keep their place; they are not
    consumed and not harmed.
 6. No operation touches entries outside its declared key family; window/cap edges
    degrade gracefully (refund / `RetryRest`), and only walking past `pad_end` traps.
-7. Every loop is bounded by a config constant (`MAX_LEVELS_PER_FILL`,
+7. Every loop is bounded by a config constant (`MAX_LEVELS_CROSSED`,
    `MAX_SLOTS_SCANNED`, `MAX_ROUTE_LEGS`, `MAX_REPLACE_BATCH`, N, P, `MAX_PAGES`) —
    route caps shared across legs, not multiplied by them.
-8. The book is never crossed after any operation completes: a fill loop terminated by a
+8. The book is never crossed after any operation completes: a matching loop terminated by a
    cap or window refunds its remainder; post-only compares against recorded `Best` and
    fails closed.
 9. Slot validity: a queue slot is meaningful iff `seq < tail_seq` of the current

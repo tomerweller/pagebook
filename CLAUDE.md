@@ -24,15 +24,18 @@ entry-size behavior) contradicts the docs, follow reality and record the deviati
   resource/footprint info via budget & snapshot APIs; if exact counts are awkward,
   assert upper bounds).
 - No panics in reachable paths; use typed `contracterror` codes. No unbounded loops:
-  every loop bounds on a config constant (`MAX_LEVELS_PER_FILL`, page capacity, etc.).
+  every loop bounds on a config constant (`MAX_LEVELS_CROSSED`, page capacity, etc.).
+- Operation vocabulary is normative (architecture §0): entry points are `place`,
+  `replace`, `settle`, `route`, and the cranks; behaviors are take/rest/sweep; "fill"
+  is only an order state. Use these names in code, tests, events, and docs.
 - No synchronous calls out to untrusted contracts. Token movement is SAC `transfer`
   only, to/from the contract's own vault. Top-of-book changes are events, not hooks.
 - Amount math in i128 (lots × tick × tick_size); checked arithmetic everywhere.
   Matching math is exact by quantization (no rounding); the only rounding is the
   taker fee, which rounds up (`ceil`); dust accrues to fees.
 - Persistent entries: never `del` a `Level` (generation counters must survive; archival
-  handles cold ones). `OrderRef` is deleted on claim/cancel. Extend TTLs per the policy
-  table in the architecture doc.
+  handles cold ones). `OrderRef` is deleted on settle and reused in place by replace.
+  Extend TTLs per the policy table in the architecture doc.
 
 ## Definition of done per milestone
 

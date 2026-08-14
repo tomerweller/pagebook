@@ -333,18 +333,31 @@
     </p>
     <p>
       <strong>Takers</strong> cross the book and settle atomically in one transaction.
-      <strong>Makers</strong> rest, then later <strong>claim</strong> through a single exit path
-      that settles whatever happened: a filled order pays proceeds, an open one refunds escrow,
-      a partial fill pays both. Matching writes nothing per maker; three counters determine
+      <strong>Makers</strong> rest, then later <strong>settle</strong> through a single exit that
+      pays whatever happened: a filled order pays proceeds, an open one refunds escrow, a
+      partial fill pays both. Matching writes nothing per maker; three counters determine
       every maker's outcome later (§ 4).
     </p>
+    <div class="callout">
+      <span class="t sans">Vocabulary, used consistently from here on</span>
+      <strong>Entry points</strong> are what you call: <code>place</code> (cross and/or rest an
+      order), <code>replace</code> (move quotes), <code>settle</code> (the one maker exit),
+      <code>route</code>, and the cranks. <strong>Behaviors</strong> are what a call did:
+      <em>take</em> (consume resting liquidity), <em>rest</em> (leave an order on the book),
+      <em>sweep</em> (consume a whole level) — one <code>place</code> may both take and rest.
+      <strong>Roles</strong> follow behavior: the maker's order rests, the taker takes.
+      <strong>Order states</strong> are open, partially filled, filled — "fill" is only ever an
+      order state. Settling an open order <em>cancels</em> it; settling a filled order
+      <em>claims</em> its proceeds. Cancel and claim name outcomes of <code>settle</code>, not
+      operations.
+    </div>
     <h3>Quantization: exact by construction</h3>
     <ul>
       <li><code>lot_size</code>: base atoms per lot; quantities on the book are u64 lots.</li>
       <li><code>tick_size</code>: quote atoms per lot per tick. The price of tick
         <code>t</code> is <code>t × tick_size</code>, with <code>t ≥ tick_min ≥ 1</code>.
         Tick 0 would allow zero-price orders with no escrow, so it's excluded.</li>
-      <li>The quote value of any fill is <code>qty_lots × t × tick_size</code>, an exact
+      <li>The quote value of any take is <code>qty_lots × t × tick_size</code>, an exact
         integer. <strong>There is no rounding anywhere in the matching path.</strong> The one
         exception in the whole system is the taker fee,
         <code>ceil(output × fee_bps / 10⁴)</code>, whose dust accrues to the fee pot.</li>
@@ -409,7 +422,7 @@
     <code>tail_seq</code>, and any sweep bumps <code>generation</code>. Every simulated key was
     wrong under ordinary load. The rule that came out of it is simple: a key may only contain
     what the client knows before submission. The coordinates, known once the order rests, give
-    the maker every key a claim will touch, the level plus at most one page.
+    the maker every key a settle will touch, the level plus at most one page.
   </p>
   <div class="callout">
     <span class="t sans">Packed encoding is mandatory</span>
@@ -544,15 +557,15 @@
     <figcaption>
       <b>One ask level at one price, drawn with N=8 to fit.</b> Matching writes no per-maker
       state; it advances H and C, or bumps G on a full sweep. An order's coordinates
-      <code>(g, s)</code> against the counters <code>(G, H, C)</code> decide its fate at claim
-      time.
+      <code>(g, s)</code> against the counters <code>(G, H, C)</code> decide its fate at
+      settlement time.
     </figcaption>
   </figure>
 
   <div class="tablewrap">
     <table>
       <thead>
-        <tr><th>Claim condition</th><th>Status</th><th>Settlement</th></tr>
+        <tr><th>Condition</th><th>State</th><th>Settlement</th></tr>
       </thead>
       <tbody>
         <tr><td class="k">g &lt; G</td><td>fully filled</td><td>pay full qty at the tick price</td></tr>
@@ -562,16 +575,16 @@
       </tbody>
     </table>
   </div>
-  <p class="tbl-note">That table is the entire claim state machine: O(1), about three writes. Every fill at a level happens at exactly the tick price, so it never matters when a fill happened. The counters are a complete proof.</p>
+  <p class="tbl-note">That table is the entire settlement state machine: O(1), about three writes. Every take at a level happens at exactly the tick price, so it never matters when it happened. The counters are a complete proof.</p>
 </div>
 
 <div class="col">
   <div class="callout risk">
     <span class="t sans">Attack closed: tombstone poisoning</span>
     Head advance skips tombstones, and the scan used to be unbounded: rest K dust orders,
-    cancel the middle ones, and every taker crossing that price paid an O(K) scan. A fill now
+    cancel the middle ones, and every taker crossing that price paid an O(K) scan. A place now
     scans at most <code>MAX_SLOTS_SCANNED</code> slots, and <strong>head progress persists even
-    when the cap ends the fill early</strong>, so the cleanup cost spreads across takers instead
+    when the cap ends the loop early</strong>, so the cleanup cost spreads across takers instead
     of repeating for each one. The per-market <code>min_order_lots</code> floor makes the attack
     expensive to set up in the first place.
   </div>
@@ -670,10 +683,10 @@
     and a client-declared page <em>window</em> bounds it, behaving exactly like a loop cap. The
     taker path, compressed:
   </p>
-  <pre><code>fill(taker, mkt, side, limit_tick, qty, start_tick, nonce, window, flags):
+  <pre><code>place(taker, mkt, side, limit_tick, qty, start_tick, nonce, window, flags):
   best = worse_of(Best(opposite), start_tick)   # never visit better ticks
   while qty &gt; 0 and best crosses limit_tick
-        and levels &lt; MAX_LEVELS_PER_FILL
+        and levels &lt; MAX_LEVELS_CROSSED
         and slots_scanned &lt; MAX_SLOTS_SCANNED:
     lvl = Level(opposite, best)
     if lvl.total_open == 0:        # stale bit → clear lazily, walk on
@@ -687,7 +700,7 @@
   settle two SAC transfers · fee = ceil(output × bps / 10⁴)</code></pre>
   <div class="callout">
     <span class="t sans">The book is never crossed</span>
-    A cap or window edge can stop the fill while the book still crosses the limit. When that
+    A cap or window edge can stop the matching loop while the book still crosses the limit. When that
     happens, the contract <strong>refunds the remainder</strong> rather than resting it, because
     a rested remainder would put a bid above live asks and nothing downstream is defined on a
     crossed book. This is invariant 8.
@@ -706,8 +719,8 @@
     maximum fill plus per-leg constants.
   </p>
   <p>
-    Makers update quotes with <strong><code>replace</code></strong> rather than cancel+rest. It
-    settles the old order exactly per the claim table, rewrites the <em>same</em>
+    Makers update quotes with <strong><code>replace</code></strong> rather than settle+place. It
+    settles the old order exactly per the settlement table, rewrites the <em>same</em>
     <code>OrderRef</code> in place with the new coordinates, and appends at the new tick.
     Reusing the entry at fixed size means zero rent, and the update is atomic, so the maker is
     never unquoted in between. <code>replace_batch</code> bounds a list of these at
@@ -740,7 +753,7 @@
         boundary, keys the band doesn't cover. So the client declares small page windows and
         passes them as an argument: pages around the simulated head for each set level, and
         <code>{page(tail), +1, page 0}</code> for its own rest. Execution never reads past a
-        window. Hitting the edge stops the fill like a cap, and an append that lands outside
+        window. Hitting the edge stops the loop like a cap, and an append that lands outside
         fails with the typed error <code>RetryRest</code>.</li>
     </ul>
     <div class="callout">
@@ -824,10 +837,10 @@
       </svg>
     </div>
     <figcaption>
-      <b>Why fills survive a moving book.</b> The original design padded only the currently-set
+      <b>Why places survive a moving book.</b> The original design padded only the currently-set
       ticks past the walk, so one refundable 1-lot rest inside the range failed every in-flight
       taker. With <code>start_tick</code>, the band, and slot windows, one trap remains: the
-      walk needing a tick past <code>pad_end</code>. Queue-shape races stop the fill without
+      walk needing a tick past <code>pad_end</code>. Queue-shape races stop the loop without
       trapping. On sparse books a safe band may not fit in 400 entries, a real and documented
       residual.
     </figcaption>
@@ -839,13 +852,13 @@
         <tr><th>Operation</th><th>Footprint entries</th><th>Writes</th><th>Write bytes</th></tr>
       </thead>
       <tbody>
-        <tr><td>rest (existing level)</td><td class="num">~12</td><td class="num">~5</td><td class="num">~0.9 KB</td></tr>
-        <tr><td>rest (new level)</td><td class="num">~14</td><td class="num">~7</td><td class="num">~1.2 KB</td></tr>
-        <tr><td>cancel / claim</td><td class="num">~9</td><td class="num">~3–4</td><td class="num">~0.6 KB</td></tr>
+        <tr><td>place — rest only (existing level)</td><td class="num">~12</td><td class="num">~5</td><td class="num">~0.9 KB</td></tr>
+        <tr><td>place — rest only (new level)</td><td class="num">~14</td><td class="num">~7</td><td class="num">~1.2 KB</td></tr>
+        <tr><td>settle</td><td class="num">~9</td><td class="num">~3–4</td><td class="num">~0.6 KB</td></tr>
         <tr><td>replace (one quote)</td><td class="num">~14</td><td class="num">~8</td><td class="num">~1.5 KB</td></tr>
         <tr><td>replace_batch (40-quote refresh)</td><td class="num">~130</td><td class="num">~90</td><td class="num">~24 KB</td></tr>
-        <tr><td>taker, 8 levels swept (band ~24 + windows)</td><td class="num">~55</td><td class="num">~21</td><td class="num">~6 KB</td></tr>
-        <tr><td>max sweep (32 levels, worst-case dispersal)</td><td class="num">~85 + pad</td><td class="num">~70</td><td class="num">~22 KB</td></tr>
+        <tr><td>place — take only, 8 levels swept (band ~24 + windows)</td><td class="num">~55</td><td class="num">~21</td><td class="num">~6 KB</td></tr>
+        <tr><td>place — maximal take (32 levels, worst-case dispersal)</td><td class="num">~85 + pad</td><td class="num">~70</td><td class="num">~22 KB</td></tr>
       </tbody>
     </table>
   </div>
@@ -879,19 +892,19 @@
   <div class="tablewrap">
     <table>
       <thead>
-        <tr><th>Operation</th><th>Est. resource fee</th><th>Dominated by</th></tr>
+        <tr><th>Entry point — outcome</th><th>Est. resource fee</th><th>Dominated by</th></tr>
       </thead>
       <tbody>
-        <tr><td>rest (existing level)</td><td class="num">~0.029 XLM</td><td>OrderRef rent (160 B × 120 d ≈ 0.027)</td></tr>
-        <tr><td>rest (first touch / restore of a tick)</td><td class="num">~0.094 XLM</td><td>+ Level rent (384 B ≈ 0.064)</td></tr>
-        <tr><td>cancel / claim</td><td class="num">~0.002 XLM</td><td>write entries; zero rent</td></tr>
+        <tr><td>place — rest only (existing level)</td><td class="num">~0.029 XLM</td><td>OrderRef rent (160 B × 120 d ≈ 0.027)</td></tr>
+        <tr><td>place — rest only (first touch / restore of a tick)</td><td class="num">~0.094 XLM</td><td>+ Level rent (384 B ≈ 0.064)</td></tr>
+        <tr><td>settle</td><td class="num">~0.002 XLM</td><td>write entries; zero rent</td></tr>
         <tr><td>replace (one quote; entry reused)</td><td class="num">~0.003 XLM</td><td>write entries; zero rent</td></tr>
         <tr><td>replace_batch (40-quote refresh, one tx)</td><td class="num">~0.03 XLM</td><td>write entries (~90 × 2,500)</td></tr>
-        <tr><td>taker, 8 levels swept, no rest</td><td class="num">~0.009 XLM</td><td>write entries + tx size</td></tr>
-        <tr><td>taker, 8 levels + rested remainder</td><td class="num">~0.037 XLM</td><td>the remainder's OrderRef rent</td></tr>
-        <tr><td>max sweep (32 levels)</td><td class="num">~0.027 XLM</td><td>write entries (70 × 2,500)</td></tr>
+        <tr><td>place — take only, 8 levels swept</td><td class="num">~0.009 XLM</td><td>write entries + tx size</td></tr>
+        <tr><td>place — take 8 levels + rest remainder</td><td class="num">~0.037 XLM</td><td>the remainder's OrderRef rent</td></tr>
+        <tr><td>place — maximal take (32 levels)</td><td class="num">~0.027 XLM</td><td>write entries (70 × 2,500)</td></tr>
         <tr><td>create_market</td><td class="num">~0.043 XLM</td><td>Market rent</td></tr>
-        <tr><td>claim_fees</td><td class="num">~0.001 XLM</td><td>—</td></tr>
+        <tr><td>collect_fees</td><td class="num">~0.001 XLM</td><td>—</td></tr>
         <tr><td>keepalive (whole venue, per ~120 d)</td><td class="num">~2.3 XLM</td><td>wasm code-entry rent (40 KB at ⅓ discount)</td></tr>
       </tbody>
     </table>
@@ -918,7 +931,7 @@
   <div class="callout risk">
     <span class="t sans">Market making: churn is priced separately from holding</span>
     On the classic Stellar DEX, makers re-center whole books every ledger or two because offer
-    updates cost ~100 stroops and reserves come back. The cancel+rest path here re-pays
+    updates cost ~100 stroops and reserves come back. The settle+place path here re-pays
     OrderRef rent on every update (~0.031 XLM per quote), so a 40-order book refreshed every
     minute would burn ~1,800 XLM a day. That's why <code>replace</code> exists: with the entry
     reused, the same full refresh is one ~0.03 XLM transaction and per-quote carrying cost
@@ -1056,12 +1069,12 @@
       <li><strong>Initialization is the constructor.</strong> <code>__constructor(admin,
         fee_recipient)</code> runs at deploy; there is no <code>init</code> entry point and no
         first-caller race to steal admin.</li>
-      <li><strong>Every state-changing entry point authenticates.</strong> Takers sign fills and
-        routes, owners sign cancels, and the admin signs configuration, upgrades, pause, and
-        market creation. The two cranks, <code>claim_fees</code> and <code>keepalive</code>,
+      <li><strong>Every state-changing entry point authenticates.</strong> Takers sign places and
+        routes, owners sign settles and replaces, and the admin signs configuration, upgrades, pause, and
+        market creation. The two cranks, <code>collect_fees</code> and <code>keepalive</code>,
         take no auth at all; their effects come from config, not from whoever calls them.</li>
-      <li><strong>Pause blocks fills, rests, and replaces.</strong> Cancel and claim always
-        work, so funds can always leave, whatever the admin state.</li>
+      <li><strong>Pause blocks places and replaces.</strong> Settle always works, so funds can
+        always leave, whatever the admin state.</li>
       <li><strong>The trust model:</strong> an admin that can upgrade the wasm can move the
         vault. Deployments holding real value should put the admin behind a multisig or
         timelock. A trustless deployment burns the admin and accepts that it can never
@@ -1088,7 +1101,7 @@
         first among reachable ticks, FIFO within a level. Orders rested at better prices after
         simulation keep their place.</li>
       <li><strong>Footprint discipline.</strong> No operation touches a key outside its declared
-        family. Cap and window edges stop a fill without trapping; only a walk past
+        family. Cap and window edges stop the loop without trapping; only a walk past
         <code>pad_end</code> traps.</li>
       <li><strong>Bounded loops.</strong> Every loop bounds on a config constant, and route caps
         are shared across legs.</li>
@@ -1114,14 +1127,14 @@
         events do the job instead.</li>
       <li><strong>Geometric ticks in the Liquidity Book style.</strong>
         <code>(1+step)^id</code> pricing changes only the id-to-price map, leaves bitmaps,
-        levels, and claims untouched, removes the per-market tick band, and turns a fixed pad
+        levels, and settlement untouched, removes the per-market tick band, and turns a fixed pad
         width into a constant percentage depth. v2.</li>
       <li><strong>Pooled pro-rata levels:</strong> fungible shares per (level, generation) as a
         sibling market type. It would delete pages, tombstones, windows, and the per-order
         OrderRef whose rent is the largest cost, in exchange for giving up time priority within
         a level. Generation-on-sweep stays either way, because fill finality without keepers is
         the point. v2.</li>
-      <li><strong>A volatility-scaled taker fee.</strong> The fill loop already counts crossings
+      <li><strong>A volatility-scaled taker fee.</strong> The matching loop already counts crossings
         and the fee pot is already in the write set, so the footprint cost is zero; the price is
         exact fee quotes. v2.</li>
       <li><strong>Self-trade prevention, oracle-pegged orders, and batch auctions.</strong>
