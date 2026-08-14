@@ -705,6 +705,17 @@
     levels-and-slots budget across all legs, which keeps a route's ceiling equal to a single
     maximum fill plus per-leg constants.
   </p>
+  <p>
+    Makers update quotes with <strong><code>replace</code></strong> rather than cancel+rest. It
+    settles the old order exactly per the claim table, rewrites the <em>same</em>
+    <code>OrderRef</code> in place with the new coordinates, and appends at the new tick.
+    Reusing the entry at fixed size means zero rent, and the update is atomic, so the maker is
+    never unquoted in between. <code>replace_batch</code> bounds a list of these at
+    <code>MAX_REPLACE_BATCH</code> with settlement netted into one transfer per token: a full
+    book refresh is one transaction. Replace never takes liquidity; it applies the same
+    conservative post-only check and fails <code>Crossed</code> instead. Why this operation
+    exists at all is a fee story, told in § 7.
+  </p>
 </div>
 
 <div class="col">
@@ -831,6 +842,8 @@
         <tr><td>rest (existing level)</td><td class="num">~12</td><td class="num">~5</td><td class="num">~0.9 KB</td></tr>
         <tr><td>rest (new level)</td><td class="num">~14</td><td class="num">~7</td><td class="num">~1.2 KB</td></tr>
         <tr><td>cancel / claim</td><td class="num">~9</td><td class="num">~3–4</td><td class="num">~0.6 KB</td></tr>
+        <tr><td>replace (one quote)</td><td class="num">~14</td><td class="num">~8</td><td class="num">~1.5 KB</td></tr>
+        <tr><td>replace_batch (40-quote refresh)</td><td class="num">~130</td><td class="num">~90</td><td class="num">~24 KB</td></tr>
         <tr><td>taker, 8 levels swept (band ~24 + windows)</td><td class="num">~55</td><td class="num">~21</td><td class="num">~6 KB</td></tr>
         <tr><td>max sweep (32 levels, worst-case dispersal)</td><td class="num">~85 + pad</td><td class="num">~70</td><td class="num">~22 KB</td></tr>
       </tbody>
@@ -872,6 +885,8 @@
         <tr><td>rest (existing level)</td><td class="num">~0.029 XLM</td><td>OrderRef rent (160 B × 120 d ≈ 0.027)</td></tr>
         <tr><td>rest (first touch / restore of a tick)</td><td class="num">~0.094 XLM</td><td>+ Level rent (384 B ≈ 0.064)</td></tr>
         <tr><td>cancel / claim</td><td class="num">~0.002 XLM</td><td>write entries; zero rent</td></tr>
+        <tr><td>replace (one quote; entry reused)</td><td class="num">~0.003 XLM</td><td>write entries; zero rent</td></tr>
+        <tr><td>replace_batch (40-quote refresh, one tx)</td><td class="num">~0.03 XLM</td><td>write entries (~90 × 2,500)</td></tr>
         <tr><td>taker, 8 levels swept, no rest</td><td class="num">~0.009 XLM</td><td>write entries + tx size</td></tr>
         <tr><td>taker, 8 levels + rested remainder</td><td class="num">~0.037 XLM</td><td>the remainder's OrderRef rent</td></tr>
         <tr><td>max sweep (32 levels)</td><td class="num">~0.027 XLM</td><td>write entries (70 × 2,500)</td></tr>
@@ -899,6 +914,18 @@
     0.064 XLM) is paid once per tick per 120 days of activity by whoever creates or restores the
     level. One caution: 1,000/KB is the protocol floor. The rate climbs toward 10,000/KB as live
     Soroban state approaches its 3 GB target, and every rent-dominated row scales with it.
+  </div>
+  <div class="callout risk">
+    <span class="t sans">Market making: churn is priced separately from holding</span>
+    On the classic Stellar DEX, makers re-center whole books every ledger or two because offer
+    updates cost ~100 stroops and reserves come back. The cancel+rest path here re-pays
+    OrderRef rent on every update (~0.031 XLM per quote), so a 40-order book refreshed every
+    minute would burn ~1,800 XLM a day. That's why <code>replace</code> exists: with the entry
+    reused, the same full refresh is one ~0.03 XLM transaction and per-quote carrying cost
+    stays 0.000225 XLM/day at any update frequency. Capacity binds before fees do, though: at
+    ~24 KB per refresh the network fits about 12 full-book refreshes per ledger, total. Makers
+    here quote wider and re-center on threshold moves, not every ledger. Full analysis in
+    <span class="mono">docs/decisions/005</span>.
   </div>
 </div>
 
@@ -1033,8 +1060,8 @@
         routes, owners sign cancels, and the admin signs configuration, upgrades, pause, and
         market creation. The two cranks, <code>claim_fees</code> and <code>keepalive</code>,
         take no auth at all; their effects come from config, not from whoever calls them.</li>
-      <li><strong>Pause blocks fills and rests only.</strong> Cancel and claim always work, so
-        funds can always leave, whatever the admin state.</li>
+      <li><strong>Pause blocks fills, rests, and replaces.</strong> Cancel and claim always
+        work, so funds can always leave, whatever the admin state.</li>
       <li><strong>The trust model:</strong> an admin that can upgrade the wasm can move the
         vault. Deployments holding real value should put the admin behind a multisig or
         timelock. A trustless deployment burns the admin and accepts that it can never
@@ -1104,7 +1131,7 @@
 
   <footer>
     Sources: <span class="mono">docs/04-architecture.md</span> (rev 2) and decision notes
-    <span class="mono">001</span> through <span class="mono">004</span> in the PageBook
+    <span class="mono">001</span> through <span class="mono">005</span> in the PageBook
     repository. Fee estimates use live mainnet rates from August 2026. Numbers marked as targets
     move with config or measurement; the tables here are the budgets the test suite enforces.
   </footer>

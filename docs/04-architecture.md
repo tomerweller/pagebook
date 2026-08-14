@@ -69,10 +69,12 @@ client *before* submission, so the `OrderRef` key is declarable at simulation ti
 matter what the book does in flight. The queue coordinates `(side, tick, generation,
 seq)` are assigned at execution, stored *inside* the entry (contents never affect the
 footprint), and reported in the `rested` event. Rest fails with `OrderExists` if the
-nonce is live; nonces are reusable after claim. `OrderRef` is written **once** at rest
-and deleted at claim/cancel. (Keying `OrderRef` by `(generation, seq)` — round-1's
-design — was unsound: any concurrent rest at the same level moves `tail_seq`, any
-concurrent sweep bumps `generation`, and the simulated key is wrong. See ADR-003.)
+nonce is live; nonces are reusable after claim. `OrderRef` is written at rest, **rewritten
+in place by `replace`** (§3), and deleted at claim/cancel. Its layout is fixed-size so a
+rewrite never changes the entry size — the property that makes `replace` rent-free.
+(Keying `OrderRef` by `(generation, seq)` — round-1's design — was unsound: any
+concurrent rest at the same level moves `tail_seq`, any concurrent sweep bumps
+`generation`, and the simulated key is wrong. See ADR-003.)
 
 **Packed encoding is mandatory for hot entries.** `Level` and `Page` are fixed-layout
 `Bytes` blobs with a leading schema-version byte, not `#[contracttype]` structs —
@@ -217,6 +219,20 @@ rest a truly crossing order. Trying to be smarter — walking past stale levels 
 the "true" best — would either widen the footprint unboundedly or create a crossed
 book; both are forbidden.
 
+**Replace: the maker update path.** `replace(owner, nonce, side, tick, qty)` — and the
+batched `replace_batch`, ≤ `MAX_REPLACE_BATCH` items, one netted transfer per token —
+settles the old order exactly per the §2 claim table (pay what filled, refund what
+didn't, tombstone the slot), then rewrites the **same `OrderRef` in place** with the new
+coordinates and appends at the new tick under the normal rest rules (bounds, append
+window, `LevelFull`, empty-reset). Because the entry is reused at fixed size, **no rent
+is charged**: the maker's nonce is a durable quote slot whose 120-day rent amortizes
+across every update. This is what makes market making economical (§4 fee table,
+ADR-005) — cancel+rest re-creates the `OrderRef` and re-pays ~0.027 XLM of rent per
+update; replace pays only write fees (~0.003 XLM). Replace never takes liquidity: it
+applies the same conservative post-only check against recorded `Best` and fails
+`Crossed` instead. And it is atomic — the maker is never unquoted between the
+settlement and the re-rest, which a cancel-then-rest pair cannot guarantee.
+
 Pages: slots beyond N spill into `Page(side, tick, p)` positionally (§2). Matching
 consumes inline first, then pages in order; an op that advances `head_seq` past the end
 of a page MAY delete it. (Deep single-level queues are the only case that grows
@@ -282,6 +298,8 @@ resource tests gate against these):
 | rest (existing level) | ~12 | ~5 | ~0.9 KB |
 | rest (new level) | ~14 | ~7 | ~1.2 KB |
 | cancel / claim | ~9 | ~3–4 | ~0.6 KB |
+| replace (one quote) | ~14 | ~8 | ~1.5 KB |
+| replace_batch (40-quote full refresh) | ~130 | ~90 | ~24 KB |
 | taker, 8 levels swept (band ~24 + windows) | ~55 | ~21 | ~6 KB |
 | max sweep (32 levels, 32 distinct L0 words) | ~85 + pad | ~70 | ~22 KB |
 
@@ -307,6 +325,8 @@ per byte per 120-day minimum TTL**. Instruction counts are rough (±3×) but imm
 | rest (existing level) | **~0.029 XLM** | `OrderRef` rent (160 B × 120 d ≈ 0.027) |
 | rest (first touch / restore of a tick) | **~0.094 XLM** | + `Level` rent (384 B ≈ 0.064) |
 | cancel / claim | **~0.002 XLM** | write entries; no rent (only deletes/rewrites) |
+| replace (one quote; entry reused) | **~0.003 XLM** | write entries; zero rent |
+| replace_batch (40-quote full refresh, one tx) | **~0.03 XLM** | write entries (~90 × 2,500) |
 | taker, 8 levels swept, no rest | **~0.009 XLM** | write entries + tx size |
 | taker, 8 levels + rested remainder | **~0.037 XLM** | the remainder's `OrderRef` rent |
 | max sweep (32 levels) | **~0.027 XLM** | write entries (70 × 2,500) |
@@ -321,6 +341,14 @@ Readings, in design terms:
   open order per 120 days — an anti-spam economics that arrives for free and stacks
   with `min_order_lots` (a dust-storm of K orders now has a hard cost of ~0.027 K XLM,
   non-refundable).
+- **Churn is priced separately from holding — use `replace`.** Updating a quote via
+  cancel+rest re-creates the `OrderRef` and re-pays its rent every time (~0.031
+  XLM/quote — a 40-order book refreshed every minute would burn ~1,800 XLM/day, so
+  SDEX-style churn is impossible on that path). `replace` reuses the entry: a full
+  40-quote refresh in one tx is ~0.03 XLM, and the per-quote carrying cost stays
+  0.000225 XLM/day regardless of update frequency. Capacity, not fees, then binds:
+  at ~24 KB per full refresh the *network* fits ~12 per ledger. Full analysis and
+  SDEX comparison in ADR-005.
 - **Padding is negligible:** ~300 stroops (0.00003 XLM) per declared-but-untouched
   key — a 100-key band costs ~0.003 XLM. Pad generously; the budget constraint is the
   400-entry cap, not the fee.
@@ -381,8 +409,10 @@ This contract custodies every maker's escrow; "no admin story" is not an option.
   needs an anti-spam creation fee, and `Market` entries are per-key persistent
   (never instance — an instance-resident market table is a shared-entry growth bomb
   that every invocation pays to read).
-- **Pause blocks `fill`/rest only. `cancel`, claim, and `claim_fees` ALWAYS work** —
-  funds exit is never gated, under any admin state.
+- **Pause blocks `fill`, rest, and `replace`. `cancel`, claim, and `claim_fees` ALWAYS
+  work** — funds exit is never gated, under any admin state. (`replace` contains a
+  rest, so it pauses with the entry side of the book; the settle half is available
+  through `cancel`.)
 - Hot entries carry a leading schema-version byte (§1); upgraded code migrates entries
   lazily on touch.
 
@@ -430,8 +460,8 @@ This contract custodies every maker's escrow; "no admin story" is not an option.
 6. No operation touches entries outside its declared key family; window/cap edges
    degrade gracefully (refund / `RetryRest`), and only walking past `pad_end` traps.
 7. Every loop is bounded by a config constant (`MAX_LEVELS_PER_FILL`,
-   `MAX_SLOTS_SCANNED`, `MAX_ROUTE_LEGS`, N, P, `MAX_PAGES`) — route caps shared
-   across legs, not multiplied by them.
+   `MAX_SLOTS_SCANNED`, `MAX_ROUTE_LEGS`, `MAX_REPLACE_BATCH`, N, P, `MAX_PAGES`) —
+   route caps shared across legs, not multiplied by them.
 8. The book is never crossed after any operation completes: a fill loop terminated by a
    cap or window refunds its remainder; post-only compares against recorded `Best` and
    fails closed.

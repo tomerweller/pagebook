@@ -74,6 +74,18 @@ pub trait PageBook {
     /// owner.require_auth(). Returns (paid, refunded).
     fn cancel(e: Env, owner: Address, mkt: MarketId, nonce: u64) -> (i128, i128);
 
+    /// Maker quote update (ADR-005): settle the old order per the claim table,
+    /// rewrite the SAME OrderRef in place (fixed size ⇒ zero rent), append at the
+    /// new tick. Never matches — conservative post-only check vs recorded Best.
+    /// owner.require_auth(). Blocked when paused (contains a rest).
+    fn replace(e: Env, owner: Address, mkt: MarketId, nonce: u64, is_bid: bool,
+               tick: u32, qty_lots: u64, window: SlotWindow) -> (i128, i128);
+
+    /// Batched replace: items.len() ≤ MAX_REPLACE_BATCH, settlement deltas netted,
+    /// one transfer per token. A full book refresh is one transaction.
+    fn replace_batch(e: Env, owner: Address, mkt: MarketId, items: Vec<ReplaceItem>)
+        -> Vec<(i128, i128)>;
+
     // Views (RO footprints; for routers/UIs):
     fn best(e: Env, mkt: MarketId, is_bid: bool) -> Option<u32>;
     fn level(e: Env, mkt: MarketId, is_bid: bool, tick: u32) -> LevelInfo;
@@ -102,11 +114,14 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
 - **M1 — single level end-to-end.** Constructor/admin/pause skeleton + auth tests
   (malicious-caller per entry point); market creation with the full §0 bound checks
   (property tests at each maximum: max order, full level, route headroom, fee cap);
-  rest/cancel/claim against one level (no bitmap walk, inline queue only); positional
-  slot lifecycle unit tests (slot(seq) pure; head advance counter-only; eager-advance;
-  **empty-level reset**: cancel a level to empty repeatedly until past `LEVEL_CAP`,
-  assert reuse + old claims still pay); nonce lifecycle (`OrderExists`, reuse after
-  claim); vault escrow + settlement; conservation invariant test. This proves the claim
+  rest/cancel/claim/**replace** against one level (no bitmap walk, inline queue only);
+  positional slot lifecycle unit tests (slot(seq) pure; head advance counter-only;
+  eager-advance; **empty-level reset**: cancel a level to empty repeatedly until past
+  `LEVEL_CAP`, assert reuse + old claims still pay); replace equivalence property
+  (replace ≡ cancel+rest for book state and settlement, with the `OrderRef` entry
+  reused — assert no entry create/delete in the write set); nonce lifecycle
+  (`OrderExists`, reuse after claim); vault escrow + settlement (incl. escrow *delta*
+  on replace); conservation invariant test. This proves the claim
   state machine — the riskiest logic — before any book traversal exists.
 - **M2 — matching.** Multi-level fill loop, `start_tick` clamping, sweep-vs-partial,
   generation semantics, `Best` maintenance (incl. stale-bit lazy clearing), bitmap
@@ -122,7 +137,9 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
   `LevelFull` at `LEVEL_CAP`, and **stale-slot tests** (invariant 9: generation reset
   over dirty pages, then reuse — decode rule `seq < tail_seq`); taker fee accrual
   (ceil) + `claim_fees` to recipient; `route` with in-memory netting, shared caps
-  across legs, and event-byte assertions at the route worst case.
+  across legs, and event-byte assertions at the route worst case; `replace_batch`
+  with netted settlement and the `MAX_REPLACE_BATCH` bound (fee gate: a 40-quote
+  refresh stays ~0.03 XLM with zero rent — ADR-005's headline number).
 - **M4 — resource hardening.** Build the **worst-case state-transition matrix** first
   (per op: entries touched × bytes, incl. bitmap dispersal, windows, page cleanup, TTL
   bumps, SAC entries), then footprint-count and write-byte assertions per op against
