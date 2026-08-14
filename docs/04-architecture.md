@@ -294,22 +294,67 @@ those, or ~13 max sweeps, per close — the reason every hot entry is a few hund
 (SLP history suggests the ceiling rises; per-op bytes here are ~50–100× under a
 whole-book-blob design.)
 
+### Estimated resource fees per operation
+
+Computed from live mainnet rates (Aug 2026; see 03 §Fees and ADR-004): instructions
+7/10k stroops, 2,500 per write entry, write/rent floor 1,000 per KB, events 5,000/KB
+(refundable), tx bytes ≈ 4.4 stroops each, live reads free, and rent ≈ **1,667 stroops
+per byte per 120-day minimum TTL**. Instruction counts are rough (±3×) but immaterial —
+**rent on newly created entries dominates everything else**:
+
+| Op | Est. resource fee | Dominated by |
+|---|---|---|
+| rest (existing level) | **~0.029 XLM** | `OrderRef` rent (160 B × 120 d ≈ 0.027) |
+| rest (first touch / restore of a tick) | **~0.094 XLM** | + `Level` rent (384 B ≈ 0.064) |
+| cancel / claim | **~0.002 XLM** | write entries; no rent (only deletes/rewrites) |
+| taker, 8 levels swept, no rest | **~0.009 XLM** | write entries + tx size |
+| taker, 8 levels + rested remainder | **~0.037 XLM** | the remainder's `OrderRef` rent |
+| max sweep (32 levels) | **~0.027 XLM** | write entries (70 × 2,500) |
+| `create_market` | **~0.043 XLM** | `Market` rent |
+| `claim_fees` | **~0.001 XLM** | — |
+| `keepalive` (whole venue, per ~120 d) | **~2.3 XLM** | wasm code-entry rent (~40 KB at ⅓ discount) |
+
+Readings, in design terms:
+
+- **Matching is nearly free; placement pays rent.** A 32-level sweep costs about the
+  same as one `OrderRef`. The book's carrying cost sits with makers at ~0.027 XLM per
+  open order per 120 days — an anti-spam economics that arrives for free and stacks
+  with `min_order_lots` (a dust-storm of K orders now has a hard cost of ~0.027 K XLM,
+  non-refundable).
+- **Padding is negligible:** ~300 stroops (0.00003 XLM) per declared-but-untouched
+  key — a 100-key band costs ~0.003 XLM. Pad generously; the budget constraint is the
+  400-entry cap, not the fee.
+- **Level rent is paid once per tick per ~120 days of activity**, by whoever
+  creates/restores it (`Level`s are never deleted, so re-activating a swept tick is a
+  rewrite, not a create).
+- **Volatility caveat:** the 1,000/KB rate is the protocol *floor*; it climbs toward
+  10,000/KB as live Soroban state approaches the 3 GB target — rent-dominated rows
+  scale with it (worst case ~10×). M4 regression-gates measured fees against this
+  table.
+
 ## 5. TTL / archival policy
 
-| Entry | Extended by | Target TTL | On archival |
-|---|---|---|---|
-| `Admin` (instance) | admin ops + permissionless `keepalive()` crank — **never bumped by market ops** | ~90 d | auto-restore |
-| `Market` | any op on the market | ~90 d | auto-restore on touch |
-| `Best`, `L1`, `L0` | ops that touch them | ~30 d | auto-restore on touch |
-| `Level`, `Page` | ops that touch them | ~30 d | auto-restore on touch (generation survives) |
-| `OrderRef` | maker at rest (+ re-bump on touch) | 90–180 d | claimant auto-restores; costs land on beneficiary |
-| `Fees` | fee ops | ~90 d | recipient restores |
+Mainnet's minimum persistent TTL is **2,073,600 ledgers (~120 days)**, charged as rent
+at creation/restore; the maximum is ~180 days (03 §Storage). That makes the policy
+almost entirely passive — entries live in prepaid 120-day chunks, and **no hot path
+ever extends a TTL** (matching, resting, cancel/claim pay zero rent on existing
+entries):
+
+| Entry | TTL comes from | On archival (~120 d idle) |
+|---|---|---|
+| `Admin` (instance) + wasm code | permissionless `keepalive()` crank + admin ops — **never market ops** | crank restores (~2.3 XLM/120 d, mostly code rent) |
+| `Market`, `Best`, `L1`, `L0`, `Level`, `Page`, `Fees` | 120-d minimum at creation/restore; whoever restores pays the next chunk | auto-restore on touch (generation survives) |
+| `OrderRef` | 120-d minimum at rest (maker pays); maker MAY `extend_ttl` to the 180-d max for long-lived quotes | claimant auto-restores; costs land on beneficiary |
 
 The instance rule matters for §4: a per-op `bump_instance` would put an instance
 **write** in every transaction — one global serialization point across every market and
 token, silently undoing the whole concurrency analysis. Reads of instance config are
 shared read-only and do not conflict; the TTL is maintained out-of-band by `keepalive()`
 (anyone may crank it; admin ops also bump).
+
+An order older than ~120 days unclaimed has an archived `OrderRef`; the claim
+transaction auto-restores it (P23), paying its next rent chunk — acceptable because the
+claim is the entry's last act (it is deleted on settlement).
 
 Requirements: **never `del` a `Level`** (counters must survive for claims; cold levels
 sleep in the archive — archival IS the garbage collector, and restore-on-touch is the

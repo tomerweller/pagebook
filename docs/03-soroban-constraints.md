@@ -46,8 +46,12 @@ Three durability classes: **temporary** (cheapest; deleted forever at TTL expiry
 put funds-bearing state here), **persistent** (archived at TTL expiry, restorable),
 **instance** (persistent, shares the contract instance's TTL; for config).
 
-- Persistent entries have `liveUntilLedger`; minimum TTL on create/restore ≈ 4,095
-  ledgers; TTLs are extendable (up to ~1 year ahead) via `extend_ttl`, cost = rent.
+- Persistent entries have `liveUntilLedger`; minimum TTL on create/restore is
+  **2,073,600 ledgers (~120 days at 5s)** and the maximum is 3,110,400 (~180 days) —
+  live mainnet values, Aug 2026 (the pre-P23 ~4,095-ledger minimum is long gone).
+  Rent for the full minimum is charged at creation/restore; `extend_ttl` tops up to
+  the max. Consequence: entries live in ~120-day prepaid chunks, and hot paths never
+  need to extend anything.
 - **Protocol 23 auto-restore:** simulation detects archived persistent/instance entries
   a transaction touches and the `InvokeHostFunction` op restores them in-line. Manually
   built transactions that skip simulation fail on archived entries. Restores consume
@@ -74,11 +78,29 @@ put funds-bearing state here), **persistent** (archived at TTL expiry, restorabl
 - Host types: i128/u128 native; U256 available; `Address` ≈ 32-byte payload. Arbitrary
   `Bytes`/`BytesN` keys fine. Wasm size limits are a non-issue for this contract.
 
-## Fees (shape, not values)
+## Fees (live mainnet values, Aug 2026 — re-verify via `stellar network settings`)
 
-Total tx fee = instructions + per-entry read/write + per-byte write + rent (TTL
-extensions, size × time) + events/return-value bytes + tx size. Rent means every live
-byte has a carrying cost — state that can sleep (archive) should.
+Total tx fee = instructions + write entries + write bytes + rent + events + tx size.
+Post-P23, **live-state reads are free** (in-memory; `fee_disk_read_*` applies only to
+archived/classic entries) — declared-but-untouched footprint keys cost only their tx
+bytes (~300 stroops per padded key).
+
+| Component | Rate (stroops) |
+|---|---|
+| Instructions | 7 per 10,000 |
+| Write ledger entry | 2,500 per entry |
+| Write bytes / rent rate | 1,000 per KB — the **floor**; state-size dependent, interpolates to 10,000/KB as live state approaches the 3 GB target (currently far below it) |
+| Disk read (archived/classic only) | 1,563 per entry + 447 per KB |
+| Contract events | 5,000 per KB (refundable) |
+| Tx size | 406 per KB bandwidth + 4,059 per KB historical ≈ 4.4 per byte |
+
+**Rent** = `size × rate_1kb × ledgers / (1024 × 1,215)` for persistent entries
+(denominator 2,430 for temporary; code entries get a 1/3 discount). At the current
+floor that is **~1,667 stroops (~0.000167 XLM) per byte per 120-day minimum TTL** —
+creating persistent entries is the dominant cost of any storage-heavy protocol, and
+execution (instructions, write entries) is nearly free by comparison. Design
+consequence: per-byte entry budgets are money, and entry *creation* (not rewriting)
+is what needs economic guards.
 
 ## Sources
 

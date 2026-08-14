@@ -127,9 +127,13 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
   (per op: entries touched × bytes, incl. bitmap dispersal, windows, page cleanup, TTL
   bumps, SAC entries), then footprint-count and write-byte assertions per op against
   architecture §4's corrected table (max sweep: ~70 writes / ~22 KB — construct the
-  32-level / 32-word shape explicitly); TTL policy incl. **no instance write on market
-  ops** (assert instance entry absent from fill/rest/cancel write sets) + `keepalive`
-  crank. Archival: SDK tests can expire entries and assert TTL values and that `Level`
+  32-level / 32-word shape explicitly); **fee gates**: measured resource fee per op
+  (SDK budget + testnet simulation) asserted against §4's estimate table within a
+  tolerance band, with the rent component isolated (it dominates and moves with the
+  network's state-size-dependent rate — record the rate the gate was calibrated at);
+  TTL policy incl. **no instance write on market ops** (assert instance entry absent
+  from fill/rest/cancel write sets), **no rent charged by any hot path** (no TTL
+  extensions outside `keepalive`/rest-opt-in), + `keepalive` crank. Archival: SDK tests can expire entries and assert TTL values and that `Level`
   counters survive restore — but P23 auto-restore is a simulation/tx-build feature, not
   host behavior, so the auto-restore *path* is exercised only in the testnet soak with
   a book-driving bot (which must include a quote-improving spammer and a same-level
@@ -167,7 +171,9 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
 
 1. Inline level capacity N, page capacity P, `MAX_PAGES`, `MAX_SLOTS_SCANNED` — tune
    from measured entry sizes/fees (start N=32, P=32).
-2. Exact TTL targets and whether ops re-bump neighbors' TTLs opportunistically.
+2. Whether rest should offer the optional `extend_ttl`-to-180-d flag for `OrderRef`
+   in v1 (TTL targets themselves are resolved: protocol minimum ~120 d covers every
+   entry class; see architecture §5 / ADR-004).
 3. `quote_fill` return shape for the padding helper (keys vs opaque footprint XDR) and
    the concrete `SlotWindow` encoding (per-level page ranges vs a compact global form).
 4. Self-trade prevention flag in v1 (cheap: compare owner on head consume — but that
