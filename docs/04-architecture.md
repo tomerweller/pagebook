@@ -395,8 +395,19 @@ This contract custodies every maker's escrow; "no admin story" is not an option.
   edges) to break the shared-token serialization cluster (§4); v2.
 - **Permissionless market creation** with an anti-spam fee (§6); v2.
 - **Synchronous hooks**: impossible to sandbox (no per-call cap); events instead.
-- **Self-trade prevention, oracle-pegged orders, geometric ticks, batch-auction market
-  type** (SPEEDEX-flavored sibling for hot markets): design notes exist in
+- **Geometric-tick market type** using Liquidity Book's `(1+step)^id` map — changes
+  only the id→price function (bitmaps/levels/claims untouched), removes the per-market
+  tick-band config, and makes a fixed-width pad band a constant percentage depth;
+  see `01-prior-art.md` §Liquidity Book. v2.
+- **Pooled (pro-rata) levels** — LB-style fungible per-`(level, generation)` shares as
+  a sibling market type: deletes pages/tombstones/windows/`OrderRef` (whose rent is the
+  dominant per-order cost, ADR-004) at the price of time priority within a level. MUST
+  keep generation-on-sweep for fill finality. v2.
+- **Volatility-scaled taker fee** (LB surge pricing): the fill loop already counts
+  crossings and `Fees` is already RW — zero added footprint; costs `quote_fill` exact
+  fee determinism. v2, decision note required.
+- **Self-trade prevention, oracle-pegged orders, batch-auction market type**
+  (SPEEDEX-flavored sibling for hot markets): design notes exist in
   `01-prior-art.md`; not v1.
 
 ## 8. Invariants (must hold; property-test all)

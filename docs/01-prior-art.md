@@ -75,6 +75,64 @@ tree node under per-item storage metering made operations storage-op heavy; the 
 wound down in 2024–25. Cautionary lesson for Soroban, whose per-entry framing overhead
 (~100–200 bytes) and per-entry footprint slots similarly punish node-per-item trees.
 
+## EVM contrast class: Trader Joe / LFJ Liquidity Book (2022–, v2 → v2.2)
+
+Not a CLOB — a discretized-liquidity AMM — but the closest AMM design to PageBook's
+storage model, and three of its ideas transfer. Mechanism:
+
+- **Bins = single-price levels.** Liquidity lives in discrete bins; within a bin,
+  swaps execute at exactly the bin price (constant-sum, not constant-product). This is
+  the same core insight as PageBook's `Level`: *when price is constant, positions need
+  no price-path history.* LB uses it to make LP shares fungible; PageBook uses it to
+  make three counters a complete fill proof.
+- **Geometric price grid.** `price(id) = (1 + binStep)^(id − 2²³)` over 24-bit bin ids
+  — one universal grid covers every magnitude with uniform *percentage* spacing, no
+  per-pair price bands, and the id is still a dense integer.
+- **TreeMath.** v2.1 finds the next non-empty bin via a 3-level, 256-ary bitmap tree
+  over all 2²⁴ bins. Convergent evolution with PageBook's 2-level, 2048-ary L1/L0
+  bitmap over 4.19M ticks — independent designs landing on "hierarchical presence
+  bitmap over a dense integer price grid" is strong validation. (Difference: EVM reads
+  tree nodes lazily mid-transaction; Soroban must declare them, which is why PageBook
+  still needs band padding on top.)
+- **Fungible pro-rata bins.** LP positions are ERC-1155-style shares per bin — no
+  queue, no per-order state, fees auto-compound into the bin. This is what enabled the
+  ecosystem of vaults/auto-rebalancers on top of LB.
+- **Volatility accumulator → surge fees.** Fees = base + variable, where the variable
+  part derives from an on-chain accumulator counting bin crossings per swap (decaying
+  when quiet). Oracle-free toxicity pricing: fast markets pay makers more.
+- **v2.2 hooks** on some deployments (per-pair extension contracts).
+
+**What PageBook takes from it:**
+
+1. **Geometric ticks for the v2 market type should be LB's map.** `(1+step)^id`
+   changes *only* the id→price function — bitmaps, levels, claims, padding are
+   untouched because ids stay dense integers. It also deletes the per-market
+   `[tick_min, tick_max)` band foot-gun (one universal grid) and makes `pad_end`
+   selection saner: a fixed id-width band is a constant *percentage* depth at any
+   price.
+2. **Pooled (pro-rata) levels are a serious v2 market type.** Replace the FIFO queue
+   with per-generation shares: makers mint shares of `(level, generation)`, a sweep
+   pays the whole generation at tick price, claims settle pro-rata from counters. That
+   deletes pages, tombstones, slot windows, and the per-order `OrderRef` — and the
+   ADR-004 fee numbers make this attractive: rent on `OrderRef` (~0.027 XLM/order) is
+   the dominant protocol cost, and a reusable share entry amortizes it across a
+   maker's re-quotes. Price: loses time priority within a level (pro-rata weakens the
+   incentive to quote first), which is precisely the incentive FIFO CLOBs exist to
+   provide — hence a *sibling market type*, not a replacement.
+3. **Volatility-scaled taker fees are nearly free here.** The fill loop already counts
+   levels crossed, and `Fees(token)` is already RW in every taker footprint — an
+   LB-style accumulator adds no footprint entries. Cost: the effective fee becomes
+   apply-time state, so `quote_fill` quotes it approximately. v2 candidate, decision
+   note required.
+
+**What PageBook deliberately does not take:** reversible liquidity. An LB bin is
+passive two-way liquidity — if price crosses a bin and comes back, the LP's "filled"
+position converts back; a limit order is only final if withdrawn after the cross
+(keeper work). PageBook's generation counters exist to give makers **fill finality**
+without keepers: a swept level stays swept for its claimants. Any pooled-level variant
+must keep generation-on-sweep semantics for exactly this reason. (Hooks and in-pair
+oracles stay rejected per §Convergent lessons and 04 §7 — events instead.)
+
 ## Appchains and batch designs (contrast class)
 
 dYdX v4, Hyperliquid, and Injective run the book in validator memory / protocol code —
@@ -113,3 +171,6 @@ markets — collect orders, clear once per ledger — trading latency for zero c
 - DeepBook v3 design — https://docs.sui.io/standards/deepbookv3/design
 - Econia AVL queue module docs — https://github.com/econia-labs/econia/blob/main/src/move/econia/doc/avl_queue.md
 - SPEEDEX — https://www.usenix.org/conference/nsdi23/presentation/ramseyer (SDF research)
+- Liquidity Book intro (Trader Joe) — https://joecontent.substack.com/p/introducing-liquidity-book
+- Liquidity Book contracts (LFJ, v2.x incl. TreeMath) — https://github.com/traderjoe-xyz/joe-v2
+- LB v2.1 mechanism walkthrough — https://typefully.com/eli5_defi/CF30cI3
