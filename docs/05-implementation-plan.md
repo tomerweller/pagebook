@@ -46,6 +46,13 @@ pub trait PageBook {
     fn set_paused(e: Env, paused: bool);       // pause blocks place/replace; never settle
     fn upgrade(e: Env, wasm_hash: BytesN<32>);
 
+    /// Retune a market's mutable caps as network limits move (SLPs; architecture §6,
+    /// ADR-007). Re-runs the §0 overflow proof; MAX_PAGES raise-only; quantization
+    /// and N/P are not parameters — they are frozen for the market's lifetime.
+    fn set_market_caps(e: Env, mkt: MarketId, max_levels_crossed: u32,
+                       max_slots_scanned: u32, taker_fee_bps: u32,
+                       min_order_lots: u64, max_order_lots: u64, max_pages: u32);
+
     /// Admin-gated in v1. Enforces tick_min ≥ 1, fee_bps ≤ FEE_BPS_MAX, and the §0
     /// creation bounds (LEVEL_CAP × max_order_lots × price / base, with route headroom).
     fn create_market(e: Env, base: Address, quote: Address, lot_size: u64,
@@ -121,7 +128,9 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
   (replace ≡ settle+place for book state and settlement, with the `OrderRef` entry
   reused — assert no entry create/delete in the write set); nonce lifecycle
   (`OrderExists`, reuse after settle); vault escrow + settlement (incl. escrow *delta*
-  on replace); conservation invariant test. This proves the settlement
+  on replace); `set_market_caps` tests (auth; §0 re-proof rejects breaking values;
+  `MAX_PAGES` lower rejected; live orders unaffected across a retune); conservation
+  invariant test. This proves the settlement
   state machine — the riskiest logic — before any book traversal exists.
 - **M2 — matching.** Multi-level matching loop, `start_tick` clamping, sweep-vs-partial,
   generation semantics, `Best` maintenance (incl. stale-bit lazy clearing), bitmap

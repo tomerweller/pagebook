@@ -1076,6 +1076,14 @@
         upgrade.</li>
       <li>Every hot entry carries a schema-version byte, and upgraded code migrates entries
         lazily as it touches them, so there's never a big-bang migration over live orders.</li>
+      <li><strong>Caps follow the network.</strong> Validators retune Soroban's resource limits
+        every few months, and a contract can't read that config (no host function exposes
+        limits or remaining budget). So the per-market loop caps and order-size bounds are
+        retunable through <code>set_market_caps</code>, an admin call that re-runs the creation
+        overflow proof and refuses values that break it. Quantization and queue geometry stay
+        frozen for a market's lifetime: slot positions and prices are pure functions of them,
+        so changing them would corrupt live state. Client-side knobs (pad width, windows, batch
+        sizes) need no retuning at all — clients read live config over RPC per transaction.</li>
     </ul>
   </section>
 

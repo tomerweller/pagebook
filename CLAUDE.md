@@ -11,6 +11,7 @@ entry-size behavior) contradicts the docs, follow reality and record the deviati
 2. `docs/05-implementation-plan.md` — module layout, interface, milestones (proposal).
 3. `docs/03-soroban-constraints.md` — the limits and storage semantics you must respect.
 4. `docs/01-prior-art.md`, `docs/02-deepstate-evaluation.md` — background/rationale.
+5. `docs/06-slp-sensitivity.md` — which variables track network limits and how.
 
 ## Ground rules
 

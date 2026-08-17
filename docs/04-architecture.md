@@ -427,6 +427,21 @@ This contract custodies every maker's escrow; "no admin story" is not an option.
   funds exit is never gated, under any admin state. (`replace` contains a rest, so it
   pauses with the entry side of the book; the exit half stays available through
   `settle`.)
+- **Cap retuning: `set_market_caps` (admin).** Market variables split into mutability
+  classes (full analysis in `06-slp-sensitivity.md`). Frozen forever: quantization
+  (`lot_size`, `tick_size`, tick band) and queue geometry (N, P) — slot location and
+  price are pure functions of them, so changing them corrupts live state. Retunable
+  via `set_market_caps`: `MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED`, `taker_fee_bps`
+  (≤ `FEE_BPS_MAX`), `min_order_lots`/`max_order_lots`, and `MAX_PAGES` (raise-only —
+  existing seqs may live beyond a lowered value); every call re-runs the §0 overflow
+  proof and rejects values that break it. The entry point exists because validators
+  retune Soroban's limits every few months (the SLP process) and a contract cannot
+  read network config — no host function exposes resource limits or remaining budget —
+  so stored caps can only track the network through an authorized transaction. The
+  contract can verify its own §0 proof on-chain but cannot verify caps against live
+  limits; choosing caps that fit the network is the admin's job, informed off-chain.
+  Client-side knobs (band width, windows, batch composition) need no retuning: clients
+  read live config over RPC per transaction.
 - Hot entries carry a leading schema-version byte (§1); upgraded code migrates entries
   lazily on touch.
 
