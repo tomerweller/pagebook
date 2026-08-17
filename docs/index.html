@@ -301,23 +301,23 @@
   <section id="why">
     <h2><span class="secno">§ 1</span>Why a CLOB is hard on Soroban</h2>
     <p>
-      Three properties of Soroban rule out the usual order-book designs:
+      Two properties of Soroban rule out the usual order-book designs:
     </p>
     <ul>
       <li><strong>The footprint is declared before execution.</strong> Touch one undeclared
         ledger entry and the transaction fails. A matching engine that walks to wherever the
         next order happens to sit has an unpredictable footprint, and the book can change
         between simulation and inclusion.</li>
-      <li><strong>Storage pays rent.</strong> Persistent entries have TTLs; when one lapses, the
-        network archives the entry. A design that has to keep the whole book alive pays forever,
-        while one that lets cold state sleep gets garbage collection for free.</li>
       <li><strong>Write bytes are the scarce shared resource.</strong> Each ledger allows about
         286 KB of writes for all Soroban traffic, and every byte of every rewritten entry
         counts. Hot entries have to stay small, a few hundred bytes at most.</li>
     </ul>
     <p>
-      The design's answer: make every key computable off-chain, bound every loop with a config
-      constant, and put every operation's worst case in a table.
+      The design answers each in turn. Against the footprint: every key is computable
+      off-chain and every loop has a config-defined bound, so a client can declare the full
+      key set in advance and pad it against a moving book. Against the write budget: every hot
+      entry stays a few hundred bytes, and every operation's worst-case writes are a number in
+      a table that tests enforce.
     </p>
   </section>
 
