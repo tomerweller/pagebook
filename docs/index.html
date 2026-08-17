@@ -192,6 +192,12 @@
   td.k { font-size: 12.5px; white-space: nowrap; }
   td.num { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .tbl-note { font-size: 13px; color: var(--muted); margin: -8px 0 24px; }
+  tr.band td {
+    background: var(--accent-soft);
+    font-family: -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
+    font-size: 11px; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); padding: 7px 14px;
+  }
 
   /* figures */
   figure { margin: 28px 0 8px; }
@@ -287,6 +293,7 @@
     <a href="#model">Model</a>
     <a href="#storage">Storage</a>
     <a href="#counters">The counters</a>
+    <a href="#sim">Live sim</a>
     <a href="#matching">Matching</a>
     <a href="#footprints">Footprints &amp; padding</a>
     <a href="#fees">Fees</a>
@@ -317,7 +324,7 @@
       off-chain and every loop has a config-defined bound, so a client can declare the full
       key set in advance and pad it against a moving book. Against the write budget: every hot
       entry stays a few hundred bytes, and every operation has a fixed worst-case write budget
-      (the tables in § 6); regression tests measure each operation and fail the build if it
+      (the tables in § 7); regression tests measure each operation and fail the build if it
       outgrows its budget.
     </p>
   </section>
@@ -382,7 +389,7 @@
       <code>#[contracttype]</code> enum whose variant name is the type tag and whose fields
       are the coordinates, the same shape as the token example's
       <code>DataKey::Balance(Address)</code>. The tag is what keeps types with the same
-      coordinate shape (Best and L1, Level and the bitmap words) from colliding in the shared
+      coordinate shape (BestTick and TickSummary, Level and the bitmap words) from colliding in the shared
       key space, and <code>Admin</code> is a unit variant, so even the instance entry has a
       proper key. Full-word variant names cost a few more key bytes than single characters,
       but every key already carries ~50–90 bytes of fixed framing (contract address, envelope),
@@ -399,19 +406,74 @@
         <tr><th>Entry</th><th>Key</th><th>Contents</th><th>Budget</th></tr>
       </thead>
       <tbody>
+        <tr class="band"><td colspan="4">Config &amp; fees — exact at all times, admin-governed</td></tr>
         <tr><td class="k">Admin</td><td class="k">Admin</td><td>admin, fee recipient, paused flag, market counter (instance storage)</td><td class="num">~150 B</td></tr>
         <tr><td class="k">Market</td><td class="k">Market(mkt)</td><td>token pair, quantization, fee bps, order-size bounds, loop caps, N / P / MAX_PAGES</td><td class="num">~250 B</td></tr>
-        <tr><td class="k">Best(side)</td><td class="k">Best(mkt, side)</td><td>best tick, empty flag</td><td class="num">~40 B</td></tr>
-        <tr><td class="k">L1(side)</td><td class="k">L1(mkt, side)</td><td>summary bitmap: bit w set ⇔ L0 word w has a set bit (2,048 words)</td><td class="num">256 B</td></tr>
-        <tr><td class="k">L0(side, w)</td><td class="k">L0(mkt, side, w)</td><td>presence bitmap for 2,048 ticks</td><td class="num">256 B</td></tr>
-        <tr><td class="k">Level(side, tick)</td><td class="k">Level(mkt, side, tick)</td><td>packed Bytes: version, <code>generation, head_seq, tail_seq, head_consumed, total_open</code> + N inline qty slots</td><td class="num">≤ 384 B</td></tr>
-        <tr><td class="k">Page(side, tick, p)</td><td class="k">Page(mkt, side, tick, p)</td><td>packed Bytes: version + P qty slots (queue overflow)</td><td class="num">≤ 320 B</td></tr>
-        <tr><td class="k">OrderRef(owner, nonce)</td><td class="k">OrderRef(mkt, owner, nonce)</td><td>side, tick, generation, seq, qty (coordinates stay in the contents, not in the key)</td><td class="num">≤ 160 B</td></tr>
         <tr><td class="k">Fees(token)</td><td class="k">Fees(mkt, token)</td><td>accrued protocol fees</td><td class="num">~50 B</td></tr>
+        <tr class="band"><td colspan="4">Tick index — derived, money-free; staleness allowed, healed lazily</td></tr>
+        <tr><td class="k">BestTick(side)</td><td class="k">BestTick(mkt, side)</td><td>best tick, empty flag</td><td class="num">~40 B</td></tr>
+        <tr><td class="k">TickSummary(side)</td><td class="k">TickSummary(mkt, side)</td><td>summary bitmap: bit w set ⇔ TickBitmap word w has a set bit (2,048 words)</td><td class="num">256 B</td></tr>
+        <tr><td class="k">TickBitmap(side, w)</td><td class="k">TickBitmap(mkt, side, w)</td><td>presence bitmap for 2,048 ticks</td><td class="num">256 B</td></tr>
+        <tr class="band"><td colspan="4">Order store — authoritative, funds-bearing; strict invariants</td></tr>
+        <tr><td class="k">Level(side, tick)</td><td class="k">Level(mkt, side, tick)</td><td>packed Bytes: version, <code>generation, head_seq, tail_seq, head_consumed, total_open</code> + N inline qty slots</td><td class="num">≤ 384 B</td></tr>
+        <tr><td class="k">LevelPage(side, tick, p)</td><td class="k">LevelPage(mkt, side, tick, p)</td><td>packed Bytes: version + P qty slots (queue overflow)</td><td class="num">≤ 320 B</td></tr>
+        <tr><td class="k">OrderRef(owner, nonce)</td><td class="k">OrderRef(mkt, owner, nonce)</td><td>side, tick, generation, seq, qty (coordinates stay in the contents, not in the key)</td><td class="num">≤ 160 B</td></tr>
       </tbody>
     </table>
   </div>
   <p class="tbl-note">Budgets are XDR-serialized sizes at max occupancy, enforced by tests from milestone 0.</p>
+  <figure>
+    <div class="figbox">
+      <svg viewBox="0 0 880 320" role="img" aria-label="Two subsystems. The tick index (BestTick, TickSummary, TickBitmap) is derived and money-free and finds the tick with liquidity. The order store (Level, LevelPage, OrderRef) is authoritative and funds-bearing. The index is reconstructible from the store; the store is reconstructible from nothing.">
+        <defs>
+          <marker id="arr5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <rect x="28" y="48" width="336" height="240" rx="12" fill="none" stroke="var(--accent)" stroke-dasharray="7 5"/>
+        <text x="36" y="36" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12" font-weight="650" fill="var(--accent)">TICK INDEX · derived · money-free · may go stale</text>
+        <g font-family="ui-monospace, Menlo, monospace" font-size="13">
+          <rect x="68" y="68" width="220" height="44" rx="8" fill="var(--surface)" stroke="var(--accent)"/>
+          <text x="178" y="86" text-anchor="middle" fill="currentColor">BestTick(side)</text>
+          <text x="178" y="102" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">cached extremum — the walk starts here</text>
+          <rect x="68" y="152" width="220" height="44" rx="8" fill="var(--surface)" stroke="var(--accent)"/>
+          <text x="178" y="170" text-anchor="middle" fill="currentColor">TickSummary(side)</text>
+          <text x="178" y="186" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">one bit per TickBitmap word</text>
+          <rect x="68" y="232" width="220" height="44" rx="8" fill="var(--surface)" stroke="var(--accent)"/>
+          <text x="178" y="250" text-anchor="middle" fill="currentColor">TickBitmap(side, w)</text>
+          <text x="178" y="266" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">one bit per tick</text>
+        </g>
+        <line x1="178" y1="196" x2="178" y2="228" stroke="currentColor" marker-end="url(#arr5)"/>
+        <text x="188" y="216" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">which word has bits</text>
+        <rect x="516" y="48" width="336" height="240" rx="12" fill="none" stroke="currentColor" stroke-dasharray="7 5"/>
+        <text x="524" y="36" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12" font-weight="650" fill="currentColor">ORDER STORE · authoritative · funds-bearing</text>
+        <g font-family="ui-monospace, Menlo, monospace" font-size="13">
+          <rect x="556" y="68" width="220" height="44" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+          <text x="666" y="86" text-anchor="middle" fill="currentColor">Level(side, tick)</text>
+          <text x="666" y="102" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">counters + N inline slots</text>
+          <rect x="556" y="152" width="220" height="44" rx="8" fill="var(--surface)" stroke="currentColor" stroke-dasharray="5 3"/>
+          <text x="666" y="170" text-anchor="middle" fill="currentColor">LevelPage(…, 0…p)</text>
+          <text x="666" y="186" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">overflow slots, positional</text>
+          <rect x="556" y="232" width="220" height="44" rx="8" fill="var(--surface)" stroke="var(--bid)"/>
+          <text x="666" y="250" text-anchor="middle" fill="currentColor">OrderRef(owner, nonce)</text>
+          <text x="666" y="266" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">the maker's ticket: (g, s, qty)</text>
+        </g>
+        <line x1="666" y1="112" x2="666" y2="148" stroke="currentColor" marker-end="url(#arr5)"/>
+        <text x="676" y="134" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">seq ≥ N spills over</text>
+        <path d="M 556 250 C 500 250, 500 90, 552 90" fill="none" stroke="var(--bid)" marker-end="url(#arr5)"/>
+        <text x="468" y="176" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--bid)" text-anchor="middle" transform="rotate(-90 468 176)">(g, s) vs (G, H, C) at settle</text>
+        <line x1="292" y1="254" x2="552" y2="94" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arr5)"/>
+        <text x="420" y="188" font-family="-apple-system, sans-serif" font-size="11" fill="var(--accent)">finds the tick with liquidity</text>
+      </svg>
+    </div>
+    <figcaption>
+      <b>Two subsystems, one rule between them.</b> The tick index is always reconstructible
+      from the order store; the order store is reconstructible from nothing. That asymmetry is
+      the whole design: the index may run stale (each tier in one known direction, healed by
+      the next place that walks through), while the store carries the hard rules — a Level is
+      never deleted, and nothing past tail_seq is ever read.
+    </figcaption>
+  </figure>
 </div>
 
 <div class="col">
@@ -434,7 +496,7 @@
   </p>
   <div class="callout">
     <span class="t sans">Packed encoding is mandatory</span>
-    Hot entries (<code>Level</code>, <code>Page</code>) are fixed-layout <code>Bytes</code>
+    Hot entries (<code>Level</code>, <code>LevelPage</code>) are fixed-layout <code>Bytes</code>
     blobs with a leading schema-version byte, not <code>#[contracttype]</code> structs. The map
     encoding inflates the payload by roughly 2.5x: a map-encoded Level at N=32 is about 1.2 KB
     instead of 384 B, an error that would flow into every write-byte and throughput figure
@@ -442,7 +504,7 @@
   </div>
   <p>
     Escrow sits in the contract's own SAC balances, one balance entry per token. That entry is
-    part of every settling footprint, and (as § 8 concedes) it is the real serialization point.
+    part of every settling footprint, and (as § 9 concedes) it is the real serialization point.
     Bids escrow quote; asks escrow base.
   </p>
 </div>
@@ -536,7 +598,7 @@
           <text x="636" y="186" text-anchor="middle" fill="currentColor">7</text>
           <!-- page box seq 8..9 -->
           <rect x="700" y="150" width="130" height="60" rx="6" fill="var(--surface)" stroke="currentColor" stroke-dasharray="6 3"/>
-          <text x="765" y="174" text-anchor="middle" font-size="12" fill="currentColor">Page 0</text>
+          <text x="765" y="174" text-anchor="middle" font-size="12" fill="currentColor">LevelPage 0</text>
           <text x="765" y="196" text-anchor="middle" font-size="12" fill="var(--muted)">3, 2</text>
         </g>
 
@@ -598,12 +660,359 @@
   </div>
 </div>
 
+
+<div class="col">
+  <section id="sim">
+    <h2><span class="secno">§ 5</span>A tiny book, live</h2>
+    <p>
+      This is the storage model from § 3 and § 4 running at toy scale: 16 ticks, N=4 inline
+      slots, one overflow page of 4 (so a level holds 8 orders per generation). Step through
+      the scripted lifetime or drive it by hand. After every operation, the entries the
+      transaction wrote flash <span style="color:var(--accent); font-weight:650">amber</span>,
+      entries it created (and paid ~120 days of rent on) flash
+      <span style="color:var(--bid); font-weight:650">green</span>, and deleted entries flash
+      <span style="color:var(--ask); font-weight:650">red</span> before they go. Level cards
+      show the three counters; a dimmed card is an empty level with a stale bit, waiting for
+      the next place to clean it.
+    </p>
+  </section>
+</div>
+
+<div class="wide">
+  <style>
+    .sim { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+    .sim * { font-family: -apple-system, "SF Pro Text", "Segoe UI", sans-serif; }
+    .sim .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+    .sim button {
+      font: 600 12.5px -apple-system, "Segoe UI", sans-serif; color: var(--ink);
+      background: var(--code-bg); border: 1px solid var(--line); border-radius: 7px;
+      padding: 6px 12px; cursor: pointer;
+    }
+    .sim button.primary { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+    .sim button:hover { border-color: var(--accent); }
+    .sim button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .sim select, .sim input {
+      font: 12.5px ui-monospace, Menlo, monospace; color: var(--ink); background: var(--surface);
+      border: 1px solid var(--line); border-radius: 6px; padding: 5px 6px; width: 62px;
+    }
+    .sim select { width: auto; }
+    .sim .steplabel { font-size: 12.5px; color: var(--muted); flex: 1 1 220px; min-width: 200px; }
+    .sim .manual { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding-top: 10px; border-top: 1px dashed var(--line); margin-top: 4px; }
+    .sim .manual label { font-size: 11.5px; color: var(--muted); }
+    .sim .bookwrap { overflow-x: auto; padding: 6px 0 2px; }
+    .sim .book { display: grid; grid-template-columns: repeat(16, minmax(52px, 1fr)); gap: 5px; min-width: 900px; }
+    .sim .tickcol { display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
+    .sim .ticklabel { text-align: center; font: 11px ui-monospace, Menlo, monospace; color: var(--muted); }
+    .sim .bit { height: 6px; border-radius: 3px; background: var(--code-bg); }
+    .sim .bit.on-bid { background: var(--bid); } .sim .bit.on-ask { background: var(--ask); }
+    .sim .lvl {
+      border: 1px solid var(--line); border-radius: 8px; padding: 4px; min-height: 118px;
+      display: flex; flex-direction: column; gap: 3px; background: var(--bg);
+      transition: box-shadow .15s, border-color .15s;
+    }
+    .sim .lvl.none { border-style: dashed; opacity: .45; min-height: 118px; }
+    .sim .lvl.bid { border-color: var(--bid); } .sim .lvl.ask { border-color: var(--ask); }
+    .sim .lvl.stale { opacity: .5; }
+    .sim .lvl .ctr { font: 10px ui-monospace, Menlo, monospace; color: var(--muted); text-align: center; white-space: nowrap; }
+    .sim .slots { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
+    .sim .slot {
+      height: 18px; border-radius: 4px; border: 1px solid var(--line);
+      font: 10.5px ui-monospace, Menlo, monospace; display: flex; align-items: center; justify-content: center;
+      color: var(--ink); background: var(--surface);
+    }
+    .sim .slot.page { border-style: dotted; }
+    .sim .slot.empty { border-color: transparent; background: transparent; }
+    .sim .slot.consumed { opacity: .3; text-decoration: line-through; }
+    .sim .slot.head { border-color: var(--accent); border-width: 2px; }
+    .sim .slot.tomb { color: var(--muted); background: repeating-linear-gradient(45deg, transparent, transparent 3px, var(--code-bg) 3px, var(--code-bg) 6px); }
+    .sim .flash-w { box-shadow: 0 0 0 2px var(--accent); }
+    .sim .flash-c { box-shadow: 0 0 0 2px var(--bid); }
+    .sim .flash-d { box-shadow: 0 0 0 2px var(--ask); }
+    .sim .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+    @media (max-width: 760px) { .sim .panels { grid-template-columns: 1fr; } }
+    .sim .panel { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--bg); }
+    .sim .panel h4 { margin: 0 0 6px; font: 650 11px -apple-system, "Segoe UI", sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+    .sim .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+    .sim .chip { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; background: var(--surface); transition: box-shadow .15s; }
+    .sim table.ord { width: 100%; border-collapse: collapse; font: 11px ui-monospace, Menlo, monospace; }
+    .sim table.ord th { font: 600 10px -apple-system, sans-serif; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); text-align: left; padding: 2px 6px; }
+    .sim table.ord td { padding: 3px 6px; border-top: 1px solid var(--line); transition: box-shadow .15s; }
+    .sim table.ord button { padding: 1px 7px; font-size: 10.5px; border-radius: 5px; }
+    .sim .log { font: 11px ui-monospace, Menlo, monospace; line-height: 1.5; max-height: 150px; overflow-y: auto; white-space: pre-wrap; }
+    .sim .log .op { color: var(--ink); }
+    .sim .log .cost { color: var(--muted); }
+    .sim .log .err { color: var(--ask); }
+  </style>
+  <div class="sim" id="pbsim">
+    <div class="controls">
+      <button class="primary" id="simNext">Next step ▸</button>
+      <button id="simReset">Reset</button>
+      <span class="steplabel" id="simStep"></span>
+    </div>
+    <div class="bookwrap"><div class="book" id="simBook"></div></div>
+    <div class="manual">
+      <label>maker</label>
+      <select id="mOwner"><option>M1</option><option>M2</option><option>M3</option></select>
+      <select id="mSide"><option value="bid">bid</option><option value="ask">ask</option></select>
+      <label>tick</label><input id="mTick" type="number" min="8" max="23" value="14">
+      <label>qty</label><input id="mQty" type="number" min="1" max="99" value="5">
+      <button id="mRest">rest</button>
+      <span style="width:14px"></span>
+      <label>taker</label>
+      <select id="tSide"><option value="buy">buy</option><option value="sell">sell</option></select>
+      <label>qty</label><input id="tQty" type="number" min="1" max="99" value="6">
+      <label>limit</label><input id="tLimit" type="number" min="8" max="23" value="17">
+      <button id="tPlace">place</button>
+    </div>
+    <div class="panels">
+      <div class="panel">
+        <h4>Small entries</h4>
+        <div class="chips" id="simChips"></div>
+        <h4 style="margin-top:8px">OrderRefs (settle / replace to a tick you pick)</h4>
+        <table class="ord"><thead><tr><th>nonce</th><th>owner</th><th>coords</th><th>qty</th><th>state</th><th></th><th></th></tr></thead><tbody id="simOrds"></tbody></table>
+      </div>
+      <div class="panel">
+        <h4>Operation log <span id="simTotals" style="text-transform:none; letter-spacing:0"></span></h4>
+        <div class="log" id="simLog"></div>
+      </div>
+    </div>
+  </div>
+  <figure><figcaption>
+    <b>What to watch.</b> Sweeps rewrite one Level and never touch slots or OrderRefs; the
+    abandoned makers' entries stay until they settle, and the generation counter is their
+    proof. A settle that empties a level leaves its bit and BestTick stale (the dimmed card);
+    the next place that walks through cleans it. Replace flashes the same OrderRef amber
+    (rewrite) instead of red-then-green (delete-then-create): that is the rent story in one
+    blink. Rent shown is cumulative for created entries at current mainnet rates.
+  </figcaption></figure>
+</div>
+
+<script>
+(function () {
+  var TMIN = 8, TMAX = 23, N = 4, P = 4, CAP = 8, MAXLV = 4;
+  var S, scenario, stepIx;
+
+  function fresh() {
+    return { lv: {}, best: { bid: null, ask: null }, ords: {}, nonce: 0,
+             rent: 0, writes: 0, log: [] };
+  }
+  function key(side, tick) { return side + ':' + tick; }
+  function getLvl(s, side, tick, t) {
+    var k = key(side, tick);
+    if (!S.lv[k]) { S.lv[k] = { gen: 0, head: 0, hc: 0, tail: 0, open: 0, slots: [] }; t.creates.push(['L', k]); S.rent += 0.064; }
+    return S.lv[k];
+  }
+  function bitOn(side, tick) { var l = S.lv[key(side, tick)]; return l && l.bitSet; }
+  function touchInit() { return { writes: [], creates: [], deletes: [], note: '' }; }
+
+  function nextSet(side, from) {
+    if (side === 'ask') { for (var t = from; t <= TMAX; t++) if (bitOn('ask', t)) return t; }
+    else { for (var t2 = from; t2 >= TMIN; t2--) if (bitOn('bid', t2)) return t2; }
+    return null;
+  }
+
+  function rest(owner, side, tick, qty, t, nonce) {
+    var opp = side === 'bid' ? 'ask' : 'bid';
+    var ob = S.best[opp];
+    if (ob !== null && (side === 'bid' ? tick >= ob : tick <= ob)) throw 'Crossed: ' + side + '@' + tick + ' vs best ' + opp + ' ' + ob;
+    var l = getLvl(S, side, tick, t);
+    if (l.open === 0 && l.tail > 0) { l.gen++; l.head = 0; l.hc = 0; l.tail = 0; l.slots = []; t.note += ' [empty-level reset → gen ' + l.gen + ']'; }
+    if (l.tail >= CAP) throw 'LevelFull at ' + side + ' ' + tick;
+    var seq = l.tail++; l.slots[seq] = qty; l.open += qty;
+    t.writes.push(['L', key(side, tick)]);
+    if (!l.bitSet) { l.bitSet = true; t.writes.push(['W', side]); }
+    if (S.best[side] === null || (side === 'bid' ? tick > S.best[side] : tick < S.best[side])) { S.best[side] = tick; t.writes.push(['B', side]); }
+    if (nonce === undefined) { nonce = ++S.nonce; S.ords[nonce] = { owner: owner, side: side, tick: tick, gen: l.gen, seq: seq, qty: qty }; t.creates.push(['O', nonce]); S.rent += 0.027; }
+    else { var o = S.ords[nonce]; o.side = side; o.tick = tick; o.gen = l.gen; o.seq = seq; o.qty = qty; t.writes.push(['O', nonce]); }
+    return nonce;
+  }
+
+  function place(dir, qty, limit, t) {
+    var takeSide = dir === 'buy' ? 'ask' : 'bid', crossed = 0, taken = 0;
+    var best = S.best[takeSide];
+    while (qty > 0 && best !== null && (dir === 'buy' ? best <= limit : best >= limit) && crossed < MAXLV) {
+      var l = S.lv[key(takeSide, best)];
+      if (!l || l.open === 0) { if (l) { l.bitSet = false; t.writes.push(['W', takeSide]); t.writes.push(['L', key(takeSide, best)]); t.note += ' [stale bit cleared @' + best + ']'; } crossed++; best = nextSet(takeSide, dir === 'buy' ? best + 1 : best - 1); continue; }
+      t.writes.push(['L', key(takeSide, best)]);
+      if (l.open <= qty) {
+        qty -= l.open; taken += l.open; l.gen++; l.head = 0; l.hc = 0; l.tail = 0; l.slots = []; l.open = 0;
+        l.bitSet = false; t.writes.push(['W', takeSide]);
+        t.note += ' [swept ' + best + ' → gen ' + l.gen + ']';
+        best = nextSet(takeSide, dir === 'buy' ? best + 1 : best - 1);
+      } else {
+        var want = qty;
+        while (want > 0) {
+          while (l.head < l.tail && l.slots[l.head] === 0) l.head++;
+          var avail = l.slots[l.head] - l.hc;
+          if (avail <= want) { want -= avail; taken += avail; l.open -= avail; l.head++; l.hc = 0; }
+          else { l.hc += want; l.open -= want; taken += want; want = 0; }
+        }
+        qty = 0;
+      }
+      crossed++;
+    }
+    if (S.best[takeSide] !== best) { S.best[takeSide] = best; t.writes.push(['B', takeSide]); }
+    var restedNote = '';
+    if (qty > 0) {
+      var stillCrosses = best !== null && (dir === 'buy' ? best <= limit : best >= limit);
+      if (stillCrosses) { t.note += ' [cap hit → remainder ' + qty + ' refunded]'; }
+      else { var n = rest('T', dir === 'buy' ? 'bid' : 'ask', limit, qty, t); restedNote = ', rested ' + qty + ' as #' + n; }
+    }
+    return 'took ' + taken + restedNote;
+  }
+
+  function settleState(o) {
+    var l = S.lv[key(o.side, o.tick)];
+    if (o.gen < l.gen) return ['filled', o.qty, 0];
+    if (o.seq < l.head) return ['filled', o.qty, 0];
+    if (o.seq === l.head && l.hc > 0) return ['partial', l.hc, o.qty - l.hc];
+    return ['open', 0, o.qty];
+  }
+  function settle(nonce, t) {
+    var o = S.ords[nonce]; if (!o) throw 'UnknownOrder #' + nonce;
+    var l = S.lv[key(o.side, o.tick)], st = settleState(o);
+    t.writes.push(['L', key(o.side, o.tick)]);
+    if (st[0] === 'partial') { l.open -= st[2]; l.slots[o.seq] = 0; l.head = o.seq + 1; l.hc = 0; while (l.head < l.tail && l.slots[l.head] === 0) l.head++; }
+    else if (st[0] === 'open') { l.open -= o.qty; l.slots[o.seq] = 0; }
+    delete S.ords[nonce]; t.deletes.push(['O', nonce]);
+    return st[0] + ': paid ' + st[1] + ' lot(s), refunded ' + st[2];
+  }
+  function replace(nonce, tick, qty, t) {
+    var o = S.ords[nonce]; if (!o) throw 'UnknownOrder #' + nonce;
+    var side = o.side, st = settleState(o), l = S.lv[key(o.side, o.tick)];
+    t.writes.push(['L', key(o.side, o.tick)]);
+    if (st[0] === 'partial') { l.open -= st[2]; l.slots[o.seq] = 0; l.head = o.seq + 1; l.hc = 0; }
+    else if (st[0] === 'open') { l.open -= o.qty; l.slots[o.seq] = 0; }
+    rest(o.owner, side, tick, qty, t, nonce);
+    return 'settled old (' + st[0] + '), re-rested ' + qty + '@' + tick + ' — same OrderRef, zero rent';
+  }
+
+  function run(desc, fn) {
+    var t = touchInit(), msg, err = false;
+    try { msg = fn(t); } catch (e) { msg = String(e); err = true; }
+    S.writes += t.writes.length + t.creates.length + t.deletes.length;
+    var cost = err ? '' : '  ⟶  wrote ' + (t.writes.length + t.creates.length) + ' entr' + ((t.writes.length + t.creates.length) === 1 ? 'y' : 'ies')
+      + (t.creates.length ? ', created ' + t.creates.length + ' (rent ' + (t.creates.reduce(function (a, c) { return a + (c[0] === 'O' ? 0.027 : 0.064); }, 0)).toFixed(3) + ' XLM)' : '')
+      + (t.deletes.length ? ', deleted ' + t.deletes.length : '');
+    S.log.unshift({ d: desc, m: (msg || '') + (t.note || ''), c: cost, e: err });
+    if (S.log.length > 9) S.log.pop();
+    render(t);
+  }
+
+  function fid(pair) { return pair[0] + ':' + pair[1]; }
+  function flashClass(t, id) {
+    if (t.creates.some(function (p) { return fid(p) === id; })) return ' flash-c';
+    if (t.deletes.some(function (p) { return fid(p) === id; })) return ' flash-d';
+    if (t.writes.some(function (p) { return fid(p) === id; })) return ' flash-w';
+    return '';
+  }
+
+  function render(t) {
+    t = t || touchInit();
+    var book = document.getElementById('simBook'), html = '';
+    for (var tick = TMIN; tick <= TMAX; tick++) {
+      var col = '<div class="tickcol"><div class="ticklabel">' + tick + '</div>';
+      ['bid', 'ask'].forEach(function (side) {
+        var l = S.lv[key(side, tick)];
+        col += '<div class="bit' + (l && l.bitSet ? ' on-' + side : '') + '"></div>';
+      });
+      var lv = null, side0 = null;
+      ['bid', 'ask'].forEach(function (side) { var l = S.lv[key(side, tick)]; if (l && (lv === null || l.open > 0 || l.bitSet)) if (!lv || l.open > 0 || l.bitSet) { lv = l; side0 = side; } });
+      if (!lv) col += '<div class="lvl none"></div>';
+      else {
+        var stale = lv.bitSet && lv.open === 0;
+        col += '<div class="lvl ' + side0 + (stale ? ' stale' : '') + flashClass(t, 'L:' + key(side0, tick)) + '">';
+        col += '<div class="ctr">G' + lv.gen + ' H' + lv.head + ' C' + lv.hc + '</div><div class="ctr">tail ' + lv.tail + ' · open ' + lv.open + '</div><div class="slots">';
+        for (var sq = 0; sq < CAP; sq++) {
+          var cls = 'slot' + (sq >= N ? ' page' : '');
+          var txt = '';
+          if (sq < lv.tail) {
+            txt = lv.slots[sq];
+            if (lv.slots[sq] === 0) cls += ' tomb';
+            if (sq < lv.head) cls += ' consumed';
+            if (sq === lv.head && lv.open > 0) cls += ' head';
+            if (sq === lv.head && lv.hc > 0) txt = (lv.slots[sq] - lv.hc) + '/' + lv.slots[sq];
+          } else cls += ' empty';
+          col += '<div class="' + cls + '">' + txt + '</div>';
+        }
+        col += '</div></div>';
+      }
+      html += col + '</div>';
+    }
+    book.innerHTML = html;
+
+    var chips = '';
+    ['bid', 'ask'].forEach(function (side) {
+      chips += '<span class="chip' + flashClass(t, 'B:' + side) + '">BestTick(' + side + ') = ' + (S.best[side] === null ? '∅' : S.best[side]) + '</span>';
+      chips += '<span class="chip' + flashClass(t, 'W:' + side) + '">TickBitmap(' + side + ')</span>';
+    });
+    document.getElementById('simChips').innerHTML = chips;
+
+    var rows = '';
+    Object.keys(S.ords).forEach(function (n) {
+      var o = S.ords[n], st = settleState(o);
+      rows += '<tr><td' + flashClass(t, 'O:' + n) + '>#' + n + '</td><td>' + o.owner + '</td><td>' + o.side + ' ' + o.tick + ' g' + o.gen + ' s' + o.seq + '</td><td>' + o.qty + '</td><td>' + st[0] + '</td>'
+        + '<td><button data-settle="' + n + '">settle</button></td><td><button data-replace="' + n + '">replace→</button></td></tr>';
+    });
+    document.getElementById('simOrds').innerHTML = rows || '<tr><td colspan="7" style="color:var(--muted)">none — every maker has settled</td></tr>';
+
+    document.getElementById('simTotals').textContent = ' · cumulative: ' + S.writes + ' entry writes, ' + S.rent.toFixed(3) + ' XLM rent';
+    document.getElementById('simLog').innerHTML = S.log.map(function (e) {
+      return '<div><span class="' + (e.e ? 'err' : 'op') + '">' + e.d + ': ' + e.m + '</span><span class="cost">' + e.c + '</span></div>';
+    }).join('');
+    document.getElementById('simStep').textContent = stepIx < scenario.length ? 'Step ' + (stepIx + 1) + '/' + scenario.length + ': ' + scenario[stepIx][0] : 'Scenario done — keep driving it by hand below.';
+  }
+
+  scenario = [
+    ['M1 rests 5 @ bid 14', function (t) { return 'rested #' + rest('M1', 'bid', 14, 5, t); }],
+    ['M1 rests 5 @ bid 13', function (t) { return 'rested #' + rest('M1', 'bid', 13, 5, t); }],
+    ['M2 rests 4 @ ask 16', function (t) { return 'rested #' + rest('M2', 'ask', 16, 4, t); }],
+    ['M2 rests 6 @ ask 17', function (t) { return 'rested #' + rest('M2', 'ask', 17, 6, t); }],
+    ['M3 joins the ask 16 queue with 3', function (t) { return 'rested #' + rest('M3', 'ask', 16, 3, t); }],
+    ['Taker buys 6, limit 17 (partial take at 16)', function (t) { return place('buy', 6, 17, t); }],
+    ['M2 settles its ask-16 order (fully filled)', function (t) { return settle(3, t); }],
+    ['Taker buys 8, limit 17 (sweeps 16 and 17, rests remainder)', function (t) { return place('buy', 8, 17, t); }],
+    ['M3 settles: swept mid-queue, gen proves the fill', function (t) { return settle(5, t); }],
+    ['M1 settles bid 13 unfilled (level goes stale)', function (t) { return settle(2, t); }],
+    ['M1 replaces bid 14 → bid 15 (same OrderRef, zero rent)', function (t) { return replace(1, 15, 5, t); }],
+    ['Taker sells 3, limit 15 (cleans nothing stale, takes M1)', function (t) { return place('sell', 3, 15, t); }]
+  ];
+
+  function reset() { S = fresh(); stepIx = 0; render(); }
+  document.getElementById('simNext').addEventListener('click', function () {
+    if (stepIx >= scenario.length) return;
+    var st = scenario[stepIx]; stepIx++; run(st[0], st[1]);
+  });
+  document.getElementById('simReset').addEventListener('click', reset);
+  document.getElementById('mRest').addEventListener('click', function () {
+    var o = document.getElementById('mOwner').value, sd = document.getElementById('mSide').value;
+    var tk = +document.getElementById('mTick').value, q = +document.getElementById('mQty').value;
+    run(o + ' rests ' + q + ' @ ' + sd + ' ' + tk, function (t) { return 'rested #' + rest(o, sd, tk, q, t); });
+  });
+  document.getElementById('tPlace').addEventListener('click', function () {
+    var d = document.getElementById('tSide').value, q = +document.getElementById('tQty').value, lm = +document.getElementById('tLimit').value;
+    run('Taker ' + d + 's ' + q + ', limit ' + lm, function (t) { return place(d, q, lm, t); });
+  });
+  document.getElementById('pbsim').addEventListener('click', function (ev) {
+    var n = ev.target.getAttribute && ev.target.getAttribute('data-settle');
+    if (n) { run('Settle #' + n, function (t) { return settle(+n, t); }); return; }
+    n = ev.target.getAttribute && ev.target.getAttribute('data-replace');
+    if (n) {
+      var tk = prompt('Replace #' + n + ' to tick (8–23):', '15'); if (tk === null) return;
+      var q = prompt('New qty:', '5'); if (q === null) return;
+      run('Replace #' + n + ' → ' + tk, function (t) { return replace(+n, +tk, +q, t); });
+    }
+  });
+  reset();
+})();
+</script>
+
 <div class="col">
   <section id="matching">
-    <h2><span class="secno">§ 5</span>Matching: a bounded walk over bitmaps</h2>
+    <h2><span class="secno">§ 6</span>Matching: a bounded walk over bitmaps</h2>
     <p>
-      Price discovery is a two-tier bitmap per side. <code>L1</code> summarizes 2,048 words and
-      each <code>L0</code> word covers 2,048 ticks, which gives 4.19 million ticks per side with
+      Price discovery is a two-tier bitmap per side. <code>TickSummary</code> summarizes 2,048 words and
+      each <code>TickBitmap</code> word covers 2,048 ticks, which gives 4.19 million ticks per side with
       the next set price always O(1) reads away. Sweeping a level clears its bit and walks on;
       the walk only ever reads bitmap words.
     </p>
@@ -613,22 +1022,22 @@
 <div class="wide">
   <figure>
     <div class="figbox">
-      <svg viewBox="0 0 880 360" role="img" aria-label="Three tiers: a Best pointer, the L1 summary bitmap, and one L0 word. Sweeping the level at the best tick clears its L0 bit, and next_set_tick walks right to the following set bit, which resolves to a Level key.">
-        <!-- Best chip -->
+      <svg viewBox="0 0 880 360" role="img" aria-label="Three tiers: a BestTick pointer, the TickSummary summary bitmap, and one TickBitmap word. Sweeping the level at the best tick clears its TickBitmap bit, and next_set_tick walks right to the following set bit, which resolves to a Level key.">
+        <!-- BestTick chip -->
         <g font-family="ui-monospace, Menlo, monospace" font-size="13">
           <rect x="40" y="24" width="230" height="34" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
-          <text x="155" y="46" text-anchor="middle" fill="currentColor">Best(ask) = 6244</text>
+          <text x="155" y="46" text-anchor="middle" fill="currentColor">BestTick(ask) = 6244</text>
         </g>
 
-        <!-- L1 strip -->
-        <text x="40" y="102" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12" fill="var(--muted)">L1 — 2,048 bits · bit w ⇔ “word w has liquidity”</text>
+        <!-- TickSummary strip -->
+        <text x="40" y="102" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12" fill="var(--muted)">TickSummary — 2,048 bits · bit w ⇔ “word w has liquidity”</text>
         <g>
           <rect x="40" y="110" width="800" height="30" rx="4" fill="var(--surface)" stroke="currentColor"/>
           <!-- cell grid ticks (every 20px) subtle -->
           <g stroke="var(--line)">
             <line x1="60" y1="110" x2="60" y2="140"/><line x1="80" y1="110" x2="80" y2="140"/><line x1="100" y1="110" x2="100" y2="140"/><line x1="120" y1="110" x2="120" y2="140"/><line x1="140" y1="110" x2="140" y2="140"/><line x1="160" y1="110" x2="160" y2="140"/><line x1="180" y1="110" x2="180" y2="140"/><line x1="200" y1="110" x2="200" y2="140"/><line x1="220" y1="110" x2="220" y2="140"/><line x1="240" y1="110" x2="240" y2="140"/><line x1="260" y1="110" x2="260" y2="140"/><line x1="280" y1="110" x2="280" y2="140"/><line x1="300" y1="110" x2="300" y2="140"/><line x1="320" y1="110" x2="320" y2="140"/><line x1="340" y1="110" x2="340" y2="140"/><line x1="360" y1="110" x2="360" y2="140"/><line x1="380" y1="110" x2="380" y2="140"/><line x1="400" y1="110" x2="400" y2="140"/><line x1="420" y1="110" x2="420" y2="140"/><line x1="440" y1="110" x2="440" y2="140"/><line x1="460" y1="110" x2="460" y2="140"/><line x1="480" y1="110" x2="480" y2="140"/><line x1="500" y1="110" x2="500" y2="140"/><line x1="520" y1="110" x2="520" y2="140"/><line x1="540" y1="110" x2="540" y2="140"/><line x1="560" y1="110" x2="560" y2="140"/><line x1="580" y1="110" x2="580" y2="140"/><line x1="600" y1="110" x2="600" y2="140"/><line x1="620" y1="110" x2="620" y2="140"/><line x1="640" y1="110" x2="640" y2="140"/><line x1="660" y1="110" x2="660" y2="140"/><line x1="680" y1="110" x2="680" y2="140"/><line x1="700" y1="110" x2="700" y2="140"/><line x1="720" y1="110" x2="720" y2="140"/><line x1="740" y1="110" x2="740" y2="140"/><line x1="760" y1="110" x2="760" y2="140"/><line x1="780" y1="110" x2="780" y2="140"/><line x1="800" y1="110" x2="800" y2="140"/><line x1="820" y1="110" x2="820" y2="140"/>
           </g>
-          <!-- set bits in L1 -->
+          <!-- set bits in TickSummary -->
           <rect x="100" y="110" width="20" height="30" fill="var(--accent)"/>
           <rect x="380" y="110" width="20" height="30" fill="var(--dead)"/>
           <rect x="700" y="110" width="20" height="30" fill="var(--dead)"/>
@@ -639,8 +1048,8 @@
         <line x1="100" y1="140" x2="40" y2="210" stroke="currentColor" stroke-dasharray="4 4"/>
         <line x1="120" y1="140" x2="840" y2="210" stroke="currentColor" stroke-dasharray="4 4"/>
 
-        <!-- L0 strip -->
-        <text x="70" y="196" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12" fill="var(--muted)">L0(word 3) — ticks 6,144 … 8,191</text>
+        <!-- TickBitmap strip -->
+        <text x="70" y="196" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12" fill="var(--muted)">TickBitmap(word 3) — ticks 6,144 … 8,191</text>
         <g>
           <rect x="40" y="210" width="800" height="30" rx="4" fill="var(--surface)" stroke="currentColor"/>
           <g stroke="var(--line)">
@@ -678,7 +1087,7 @@
     </div>
     <figcaption>
       <b>The price walk.</b> Sweeping tick 6244 bumps the level's generation (one small write)
-      and clears its presence bit; <code>next_set_tick</code> hops to 6250, via L1 if the word
+      and clears its presence bit; <code>next_set_tick</code> hops to 6250, via TickSummary if the word
       empties. There are no pointers to chase and no keys the client couldn't have predicted.
     </figcaption>
   </figure>
@@ -692,7 +1101,7 @@
     taker path, compressed:
   </p>
   <pre><code>place(taker, mkt, side, limit_tick, qty, start_tick, nonce, window, flags):
-  best = worse_of(Best(opposite), start_tick)   # never visit better ticks
+  best = worse_of(BestTick(opposite), start_tick)   # never visit better ticks
   while qty &gt; 0 and best crosses limit_tick
         and levels &lt; MAX_LEVELS_CROSSED
         and slots_scanned &lt; MAX_SLOTS_SCANNED:
@@ -717,8 +1126,8 @@
     The write side stays flat: a rest appends one quantity slot at <code>tail_seq++</code>,
     writes one <code>OrderRef</code>, and moves escrow in a single transfer.
     <strong>Post-only is conservative on purpose.</strong> It compares its tick against
-    <code>Best</code> as stored, one read, and fails with <code>Crossed</code> even when that
-    best is a stale bit over an emptied level. Since <code>Best</code> is never worse than the
+    <code>BestTick</code> as stored, one read, and fails with <code>Crossed</code> even when that
+    best is a stale bit over an emptied level. Since <code>BestTick</code> is never worse than the
     true best, the check may falsely reject near stale state but can never rest an order that
     actually crosses; hunting for the true best would either grow the footprint or cross the
     book. Top-of-book changes are <strong>events</strong>. Soroban can't cap the resources of a
@@ -735,13 +1144,13 @@
     <code>MAX_REPLACE_BATCH</code> with settlement netted into one transfer per token: a full
     book refresh is one transaction. Replace never takes liquidity; it applies the same
     conservative post-only check and fails <code>Crossed</code> instead. Why this operation
-    exists at all is a fee story, told in § 7.
+    exists at all is a fee story, told in § 8.
   </p>
 </div>
 
 <div class="col">
   <section id="footprints">
-    <h2><span class="secno">§ 6</span>Footprints: the product surface</h2>
+    <h2><span class="secno">§ 7</span>Footprints: the product surface</h2>
     <p>
       Everything above exists so this section can work. A taker's client simulates the fill,
       learns which ticks it crosses, and then has to declare a footprint that stays valid while
@@ -872,7 +1281,7 @@
   <p class="tbl-note">
     Compare against the per-transaction limits of 400 entries, 200 writes, and 132 KB. The
     max-sweep row shows its own arithmetic so the ceiling can be checked rather than trusted:
-    32 Levels at 384 B, 32 L0 words at 256 B, plus L1, Best, Fees, two vault
+    32 Levels at 384 B, 32 TickBitmap words at 256 B, plus TickSummary, BestTick, Fees, two vault
     balances, and the taker's own rest comes to about 22 KB and 70 writes. Legal, but 7.6% of a
     whole ledger's 286,720 write bytes. Typical operations are the rows at or under 1.2 KB; a
     ledger sustains hundreds of those, or about 13 max sweeps. This is why every hot entry stays
@@ -882,7 +1291,7 @@
 
 <div class="col">
   <section id="fees">
-    <h2><span class="secno">§ 7</span>What operations cost</h2>
+    <h2><span class="secno">§ 8</span>What operations cost</h2>
     <p>
       Estimates use live mainnet rates from August 2026: 7 stroops per 10k instructions, 2,500
       per write entry, a 1,000-stroop-per-KB write and rent floor, 5,000 per KB of events
@@ -951,7 +1360,7 @@
 
 <div class="col">
   <section id="concurrency">
-    <h2><span class="secno">§ 8</span>Concurrency: the true limits</h2>
+    <h2><span class="secno">§ 9</span>Concurrency: the true limits</h2>
     <p>
       Bid and ask clusters do not parallelize, and markets are not disjoint under protocol 23.
       <strong>The vault's SAC balance entries are the real serialization points:</strong> one
@@ -1029,7 +1438,7 @@
 
 <div class="col">
   <section id="lifecycle">
-    <h2><span class="secno">§ 9</span>Rent &amp; archival: the archive is the garbage collector</h2>
+    <h2><span class="secno">§ 10</span>Rent &amp; archival: the archive is the garbage collector</h2>
     <p>
       Cold state isn't deleted; it lapses. A level far from the market's price stops being
       touched, its TTL runs out, and it sleeps in the archive costing nothing, counters intact.
@@ -1050,7 +1459,7 @@
       </thead>
       <tbody>
         <tr><td class="k">Admin (instance) + wasm code</td><td>permissionless keepalive() crank + admin ops; never market ops</td><td>crank restores (~2.3 XLM / 120 d, mostly code rent)</td></tr>
-        <tr><td class="k">Market, Best, L1, L0, Level, Page, Fees</td><td>120-day protocol minimum, prepaid at creation/restore; whoever restores pays the next chunk</td><td>auto-restore on touch; generation survives</td></tr>
+        <tr><td class="k">Market, BestTick, TickSummary, TickBitmap, Level, LevelPage, Fees</td><td>120-day protocol minimum, prepaid at creation/restore; whoever restores pays the next chunk</td><td>auto-restore on touch; generation survives</td></tr>
         <tr><td class="k">OrderRef</td><td>120-day minimum at rest (maker pays); optional extend to the 180-d max for long-lived quotes</td><td>claimant restores as its last act; cost on beneficiary</td></tr>
       </tbody>
     </table>
@@ -1065,7 +1474,7 @@
 
 <div class="col">
   <section id="admin">
-    <h2><span class="secno">§ 10</span>Administration and trust model</h2>
+    <h2><span class="secno">§ 11</span>Administration and trust model</h2>
     <p>
       The contract custodies every maker's escrow, so the admin surface is narrow and
       deliberately asymmetric:
@@ -1098,7 +1507,7 @@
   </section>
 
   <section id="invariants">
-    <h2><span class="secno">§ 11</span>The nine invariants</h2>
+    <h2><span class="secno">§ 12</span>The nine invariants</h2>
     <p>Property tests hold all nine across random operation interleavings:</p>
     <ol class="inv">
       <li><strong>Conservation.</strong> The vault balance per token equals open escrows plus
@@ -1127,13 +1536,13 @@
   </section>
 
   <section id="deferred">
-    <h2><span class="secno">§ 12</span>Deliberately not in v1</h2>
+    <h2><span class="secno">§ 13</span>Deliberately not in v1</h2>
     <ul>
       <li><strong>Global cross-market maker capital</strong> (Manifest style). It puts
         third-party entries back into taker footprints and reopens simulation-to-apply races.
         Not in v1.</li>
       <li><strong>Per-market vault sub-accounts</strong>, which would break up the shared-token
-        serialization cluster from § 8. v2.</li>
+        serialization cluster from § 9. v2.</li>
       <li><strong>Permissionless market creation.</strong> It needs an anti-spam fee first.
         v2.</li>
       <li><strong>Synchronous hooks.</strong> Soroban can't put a resource cap on them, so

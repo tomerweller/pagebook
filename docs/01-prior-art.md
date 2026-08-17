@@ -89,7 +89,7 @@ storage model, and three of its ideas transfer. Mechanism:
   — one universal grid covers every magnitude with uniform *percentage* spacing, no
   per-pair price bands, and the id is still a dense integer.
 - **TreeMath.** v2.1 finds the next non-empty bin via a 3-level, 256-ary bitmap tree
-  over all 2²⁴ bins. Convergent evolution with PageBook's 2-level, 2048-ary L1/L0
+  over all 2²⁴ bins. Convergent evolution with PageBook's 2-level, 2048-ary TickSummary/TickBitmap
   bitmap over 4.19M ticks — independent designs landing on "hierarchical presence
   bitmap over a dense integer price grid" is strong validation. (Difference: EVM reads
   tree nodes lazily mid-transaction; Soroban must declare them, which is why PageBook

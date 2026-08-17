@@ -68,23 +68,41 @@ at max occupancy; enforce with tests.
 
 Keys use the idiomatic `DataKey` pattern (cf. soroban-examples' token contract): one
 `#[contracttype]` enum, variant name as type tag, coordinates as fields. The tag keeps
-same-shaped types (Best vs L1, Level vs L0) from colliding in the shared key space;
+same-shaped types (BestTick vs TickSummary, Level vs TickBitmap) from colliding in the shared key space;
 `Admin` is a unit variant so the instance entry has a proper key too. Full-word variant
 names cost a few bytes more per key than single characters, but fixed per-key framing
 (~50–90 B: contract address, envelope) dwarfs that; legibility in explorers and test
 dumps wins.
 
-| # | Entry | Durability | Key | Contents | Target size |
-|---|---|---|---|---|---|
-| 1 | `Admin` | instance | `Admin` | admin `Address`, fee recipient `Address`, paused flag, market counter | ~150 B |
-| 2 | `Market` | persistent | `Market(mkt_id)` | base/quote SAC addrs, lot_size, tick_size, tick band, fee bps, min/max order lots, `MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED`, N, P, `MAX_PAGES` | ~250 B |
-| 3 | `Best(side)` | persistent | `Best(mkt, side)` | best tick (u32), empty flag | ~40 B |
-| 4 | `L1(side)` | persistent | `L1(mkt, side)` | summary bitmap: bit w = "L0 word w has any set bit" (2,048 words) | 256 B |
-| 5 | `L0(side, w)` | persistent | `L0(mkt, side, w)` | presence bitmap for ticks `[w·2048, (w+1)·2048)` | 256 B |
-| 6 | `Level(side, tick)` | persistent | `Level(mkt, side, tick)` | packed `Bytes`: version u8, `generation:u32, head_seq:u32, tail_seq:u32, head_consumed:u64, total_open:u64`, then N × qty:u64 inline slots (target N=32) | ≤ 384 B |
-| 7 | `Page(side, tick, p)` | persistent | `Page(mkt, side, tick, p)` | packed `Bytes`: version u8, then P × qty:u64 slots (target P=32) | ≤ 320 B |
-| 8 | `OrderRef(owner, nonce)` | persistent | `OrderRef(mkt, owner, nonce)` | side, tick, generation, seq, qty_lots | ≤ 160 B |
-| 9 | `Fees(token)` | persistent | `Fees(mkt, token)` | accrued protocol fees (i128) | ~50 B |
+**Config & fees** — exact at all times, admin-governed:
+
+| Entry | Durability | Key | Contents | Target size |
+|---|---|---|---|---|
+| `Admin` | instance | `Admin` | admin `Address`, fee recipient `Address`, paused flag, market counter | ~150 B |
+| `Market` | persistent | `Market(mkt_id)` | base/quote SAC addrs, lot_size, tick_size, tick band, fee bps, min/max order lots, `MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED`, N, P, `MAX_PAGES` | ~250 B |
+| `Fees(token)` | persistent | `Fees(mkt, token)` | accrued protocol fees (i128) | ~50 B |
+
+**Tick index** — derived, money-free; staleness allowed (each tier in one known
+direction), healed lazily by the next place that walks through:
+
+| Entry | Durability | Key | Contents | Target size |
+|---|---|---|---|---|
+| `BestTick(side)` | persistent | `BestTick(mkt, side)` | best tick (u32), empty flag | ~40 B |
+| `TickSummary(side)` | persistent | `TickSummary(mkt, side)` | summary bitmap: bit w = "TickBitmap word w has any set bit" (2,048 words) | 256 B |
+| `TickBitmap(side, w)` | persistent | `TickBitmap(mkt, side, w)` | presence bitmap for ticks `[w·2048, (w+1)·2048)` | 256 B |
+
+**Order store** — authoritative, funds-bearing; strict invariants, never stale:
+
+| Entry | Durability | Key | Contents | Target size |
+|---|---|---|---|---|
+| `Level(side, tick)` | persistent | `Level(mkt, side, tick)` | packed `Bytes`: version u8, `generation:u32, head_seq:u32, tail_seq:u32, head_consumed:u64, total_open:u64`, then N × qty:u64 inline slots (target N=32) | ≤ 384 B |
+| `LevelPage(side, tick, p)` | persistent | `LevelPage(mkt, side, tick, p)` | packed `Bytes`: version u8, then P × qty:u64 slots (target P=32) | ≤ 320 B |
+| `OrderRef(owner, nonce)` | persistent | `OrderRef(mkt, owner, nonce)` | side, tick, generation, seq, qty_lots | ≤ 160 B |
+
+The rule that ties the two non-trivial groups together: **the tick index is always
+reconstructible from the order store; the order store is reconstructible from
+nothing.** That asymmetry is why the index may run stale and heal lazily while the
+store carries the hard rules (never delete a `Level`; never read past `tail_seq`).
 
 **Order identity.** An order's handle is `(owner, nonce)` — the nonce is chosen by the
 client *before* submission, so the `OrderRef` key is declarable at simulation time no
@@ -98,7 +116,7 @@ rewrite never changes the entry size — the property that makes `replace` rent-
 concurrent rest at the same level moves `tail_seq`, any concurrent sweep bumps
 `generation`, and the simulated key is wrong. See ADR-003.)
 
-**Packed encoding is mandatory for hot entries.** `Level` and `Page` are fixed-layout
+**Packed encoding is mandatory for hot entries.** `Level` and `LevelPage` are fixed-layout
 `Bytes` blobs with a leading schema-version byte, not `#[contracttype]` structs —
 symbol-keyed `ScVal::Map` encoding roughly 2–2.5×'s the payload (a map-encoded Level at
 N=32 is ~1.2 KB) and would cascade into every write-byte and ops/ledger figure below.
@@ -111,7 +129,7 @@ recoverable). Pages wholly behind `head_seq` MAY be deleted by the operation tha
 advances past them (settlement never reads slots — it derives from counters +
 `OrderRef.qty`), so live pages are bounded by queue *depth*, not by history.
 
-**Stale-slot rule (page reuse).** `Page` keys do not include the generation, and a
+**Stale-slot rule (page reuse).** `LevelPage` keys do not include the generation, and a
 generation reset does not clear old pages — stale slot data from a prior generation can
 sit under a live key. Therefore: a slot is meaningful **iff its seq < tail_seq of the
 current generation**; appends write slots strictly sequentially with no gaps; readers
@@ -119,7 +137,7 @@ MUST ignore everything at or beyond `tail_seq`. This is invariant 9 and gets its
 tests (generation reset over dirty pages, then reuse).
 
 The bitmap hierarchy covers `2048 × 2048 ≈ 4.19M` ticks per side per market — the
-market's tick band MUST fit inside one L1 entry (plenty at sane tick sizes; wider-range
+market's tick band MUST fit inside one TickSummary entry (plenty at sane tick sizes; wider-range
 assets choose a coarser `tick_size` or a geometric-tick market type, out of scope for v1).
 
 Vault: the contract holds escrow in its own SAC balances (one balance entry per token —
@@ -129,10 +147,10 @@ quote (`qty × t × tick_size`); asks escrow base (`qty × lot_size`).
 ## 2. Level accounting (the core mechanism)
 
 **Queue layout (positional, append-only).** Within a generation, seq `s` occupies inline
-slot `s` if `s < N`, else slot `(s − N) mod P` of `Page((s − N) / P)`. Slots are never
+slot `s` if `s < N`, else slot `(s − N) mod P` of `LevelPage((s − N) / P)`. Slots are never
 moved or compacted; "remove head" always means counter advance, never element removal.
 Every slot's location is therefore a pure function of coordinates the maker knows after
-resting — a settling maker declares at most one specific Page.
+resting — a settling maker declares at most one specific LevelPage.
 
 Three counters carry all fill history:
 
@@ -194,19 +212,19 @@ place(taker, market, side, limit_tick, qty_lots, start_tick, nonce, window, flag
   # the tx read an undeclared key, so it cannot fail the tx.
   # window = the slot access the client declared pages for: per-band-level page
   # ranges for consumption, plus the append range for the taker's own rest.
-  best = worse_of(Best(opposite), start_tick)   # bitmap walk from start_tick if needed
+  best = worse_of(BestTick(opposite), start_tick)   # bitmap walk from start_tick if needed
   while qty_lots > 0 and best crosses limit_tick
         and levels_crossed < MAX_LEVELS_CROSSED
         and slots_scanned < MAX_SLOTS_SCANNED:
     lvl = Level(opposite, best)
     if lvl.total_open == 0:                     # stale bit (lazy clear — see §8 inv. 3)
-      clear bit in L0/L1; best = next_set_tick(); continue   # counts as a crossed level
+      clear bit in TickBitmap/TickSummary; best = next_set_tick(); continue   # counts as a crossed level
     if lvl.total_open <= qty_lots:              # sweep whole level — no slot reads
       qty_lots -= lvl.total_open
       quote += lvl.total_open * best * tick_size
       lvl.generation += 1; reset queue          # ONE small write; orders abandoned
-      clear bit in L0(word(best)) [and L1 if word empties]
-      best = next_set_tick(L0/L1)               # bitmap walk, reads only
+      clear bit in TickBitmap(word(best)) [and TickSummary if word empties]
+      best = next_set_tick(TickBitmap/TickSummary)               # bitmap walk, reads only
     else:                                       # partial: advance head
       if head slot lies outside window[best]: break   # graceful stop, like a cap
       consume from head (skip tombstones; bounded by MAX_SLOTS_SCANNED and window)
@@ -219,7 +237,7 @@ place(taker, market, side, limit_tick, qty_lots, start_tick, nonce, window, flag
     else: rest remainder at limit_tick (append must land in window, below)
   transfer: SAC moves taker↔vault (base, quote)
   fee = ceil(taker_output × fee_bps / 10_000) → Fees(token)   # the only rounding
-  update Best(opposite) if moved; emit events
+  update BestTick(opposite) if moved; emit events
 ```
 
 **Resting** (the remainder, or a pure maker order): enforce `[min_order_lots,
@@ -233,9 +251,9 @@ page(tail_sim)+1, page 0}` covers concurrent same-level rests up to a full page 
 orders) *and* a concurrent sweep or reset (which sends the tail back toward 0).
 
 **Post-only semantics (deliberately conservative).** A post-only rest compares its tick
-against the recorded `Best(opposite)` **as stored** — one read, footprint-stable. If it
+against the recorded `BestTick(opposite)` **as stored** — one read, footprint-stable. If it
 would cross the recorded best, it fails `Crossed`, *even if that best is a stale bit
-over an emptied level*. Because `Best` is never worse than the true best (inv. 3), this
+over an emptied level*. Because `BestTick` is never worse than the true best (inv. 3), this
 check can false-reject near stale state (until the next place that takes there cleans it) but can never
 rest a truly crossing order. Trying to be smarter — walking past stale levels to find
 the "true" best — would either widen the footprint unboundedly or create a crossed
@@ -251,11 +269,11 @@ is charged**: the maker's nonce is a durable quote slot whose 120-day rent amort
 across every update. This is what makes market making economical (§4 fee table,
 ADR-005) — settle+place re-creates the `OrderRef` and re-pays ~0.027 XLM of rent per
 update; replace pays only write fees (~0.003 XLM). Replace never takes liquidity: it
-applies the same conservative post-only check against recorded `Best` and fails
+applies the same conservative post-only check against recorded `BestTick` and fails
 `Crossed` instead. And it is atomic — the maker is never unquoted between the
 settlement and the re-rest, which a settle-then-place pair cannot guarantee.
 
-Pages: slots beyond N spill into `Page(side, tick, p)` positionally (§2). Matching
+Pages: slots beyond N spill into `LevelPage(side, tick, p)` positionally (§2). Matching
 consumes inline first, then pages in order; an op that advances `head_seq` past the end
 of a page MAY delete it. (Deep single-level queues are the only case that grows
 footprint per maker *count* — bounded by P per entry.)
@@ -285,7 +303,7 @@ Everything above exists so this section works:
 - **Padding rule (contiguous band + slot windows).** The client simulates, gets crossed
   ticks starting at simulated best `t1`, passes `start_tick = t1`, and declares RW:
   **every `Level` key in the contiguous tick band `[t1, pad_end]`** — set or not (unset
-  keys cost only footprint slots) — plus the L0 words covering the band, L1, `Best`,
+  keys cost only footprint slots) — plus the TickBitmap words covering the band, TickSummary, `BestTick`,
   both vault balances, `Fees`, and the slot windows: for each *set* level in the band,
   pages `[page(head_sim), page(head_sim) + w]` (w small; unset/fresh levels need none —
   their queues are inline); for the taker's own possible rest, `OrderRef(taker, nonce)`,
@@ -323,10 +341,10 @@ resource tests gate against these):
 | replace (one quote) | ~14 | ~8 | ~1.5 KB |
 | replace_batch (40-quote full refresh) | ~130 | ~90 | ~24 KB |
 | place — take only, 8 levels swept (band ~24 + windows) | ~55 | ~21 | ~6 KB |
-| place — maximal take (32 levels, 32 distinct L0 words) | ~85 + pad | ~70 | ~22 KB |
+| place — maximal take (32 levels, 32 distinct TickBitmap words) | ~85 + pad | ~70 | ~22 KB |
 
 Worst-case write-byte arithmetic for the max sweep, so nobody trusts the table blindly:
-32 Level (×384 B) + 32 L0 (×256 B) + L1 + Best + Fees + 2 vault balances + own-rest
+32 Level (×384 B) + 32 TickBitmap (×256 B) + TickSummary + BestTick + Fees + 2 vault balances + own-rest
 entries ≈ 12.3 + 8.2 + 0.3 + ~1.2 KB ≈ **22 KB** and ~70 writes — within per-tx limits
 (400 entries / 200 writes / 132 KB) but **7.6% of a whole ledger's 286,720 write
 bytes**. Typical ops are the rest/settle rows (≤ 1 KB); the ledger sustains hundreds of
@@ -393,7 +411,7 @@ entries):
 | Entry | TTL comes from | On archival (~120 d idle) |
 |---|---|---|
 | `Admin` (instance) + wasm code | permissionless `keepalive()` crank + admin ops — **never market ops** | crank restores (~2.3 XLM/120 d, mostly code rent) |
-| `Market`, `Best`, `L1`, `L0`, `Level`, `Page`, `Fees` | 120-d minimum at creation/restore; whoever restores pays the next chunk | auto-restore on touch (generation survives) |
+| `Market`, `BestTick`, `TickSummary`, `TickBitmap`, `Level`, `LevelPage`, `Fees` | 120-d minimum at creation/restore; whoever restores pays the next chunk | auto-restore on touch (generation survives) |
 | `OrderRef` | 120-d minimum at rest (maker pays); maker MAY `extend_ttl` to the 180-d max for long-lived quotes | the settling maker auto-restores; costs land on beneficiary |
 
 The instance rule matters for §4: a per-op `bump_instance` would put an instance
@@ -485,8 +503,8 @@ This contract custodies every maker's escrow; "no admin story" is not an option.
    excluded per invariant 9).
 3. `total_open > 0` ⇒ bitmap bit set. The converse is deliberately weak: a stale set
    bit over an empty level is permitted (cancel-to-empty is O(1) and does not walk
-   bitmaps or move `Best`) and is cleared lazily by the next place that takes through it.
-   `Best` is never *worse* than the true best set tick; matching may walk forward from it.
+   bitmaps or move `BestTick`) and is cleared lazily by the next place that takes through it.
+   `BestTick` is never *worse* than the true best set tick; matching may walk forward from it.
 4. Settlement is exact and path-independent: any interleaving of takes and settles
    ending in the same counters pays the same amounts (single-price levels make this
    provable).
@@ -500,7 +518,7 @@ This contract custodies every maker's escrow; "no admin story" is not an option.
    `MAX_SLOTS_SCANNED`, `MAX_ROUTE_LEGS`, `MAX_REPLACE_BATCH`, N, P, `MAX_PAGES`) —
    route caps shared across legs, not multiplied by them.
 8. The book is never crossed after any operation completes: a matching loop terminated by a
-   cap or window refunds its remainder; post-only compares against recorded `Best` and
+   cap or window refunds its remainder; post-only compares against recorded `BestTick` and
    fails closed.
 9. Slot validity: a queue slot is meaningful iff `seq < tail_seq` of the current
    generation; appends are gapless and sequential; stale page contents from prior

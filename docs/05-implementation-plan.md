@@ -15,8 +15,8 @@ pagebook/
 │           ├── admin.rs       # constructor, admin rotation, pause, upgrade, keepalive
 │           ├── market.rs      # market create/config, quantization + §0 bound checks
 │           ├── keys.rs        # DataKey enum (contracttype, full-word variants) + TTL policy
-│           ├── level.rs       # Level/Page packed encoding, positional queue, resets, settlement state machine
-│           ├── bitmap.rs      # L0/L1 ops: set/clear/next_set_tick(at_or_after)
+│           ├── level.rs       # Level/LevelPage packed encoding, positional queue, resets, settlement state machine
+│           ├── bitmap.rs      # TickBitmap/TickSummary ops: set/clear/next_set_tick(at_or_after)
 │           ├── matching.rs    # matching loop (place), sweep/partial, caps + windows, best maintenance
 │           ├── settle.rs      # vault SAC transfers, fee accrual (ceil), route netting
 │           ├── events.rs      # typed event emitters
@@ -83,7 +83,7 @@ pub trait PageBook {
 
     /// Maker quote update (ADR-005): settle the old order per the settlement table,
     /// rewrite the SAME OrderRef in place (fixed size ⇒ zero rent), append at the
-    /// new tick. Never matches — conservative post-only check vs recorded Best.
+    /// new tick. Never matches — conservative post-only check vs recorded BestTick.
     /// owner.require_auth(). Blocked when paused (contains a rest).
     fn replace(e: Env, owner: Address, mkt: MarketId, nonce: u64, is_bid: bool,
                tick: u32, qty_lots: u64, window: SlotWindow) -> (i128, i128);
@@ -133,9 +133,9 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
   invariant test. This proves the settlement
   state machine — the riskiest logic — before any book traversal exists.
 - **M2 — matching.** Multi-level matching loop, `start_tick` clamping, sweep-vs-partial,
-  generation semantics, `Best` maintenance (incl. stale-bit lazy clearing), bitmap
-  L0/L1 walk, cap + **window** termination (remainder refunded — book never crossed),
-  post_only (conservative vs recorded `Best`, incl. stale-best false-reject test),
+  generation semantics, `BestTick` maintenance (incl. stale-bit lazy clearing), bitmap
+  TickBitmap/TickSummary walk, cap + **window** termination (remainder refunded — book never crossed),
+  post_only (conservative vs recorded `BestTick`, incl. stale-best false-reject test),
   FoK/no_rest. Property tests (below), plus the **sim-to-apply race tests** — the
   padding rule gets coverage here, not first on testnet: simulate a place, mutate the
   book (better-priced rest; new level inside the band; level emptied; **head advanced
@@ -172,7 +172,7 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
 
 - **Property/fuzz (proptest):** random op sequences (place/replace/settle interleavings) vs
   a naive in-memory reference book. Assert: identical takes (price-time priority scoped
-  by `start_tick`), conservation, settlement path-independence (invariant 4), bitmap/Best
+  by `start_tick`), conservation, settlement path-independence (invariant 4), bitmap/BestTick
   coherence (weakened invariant 3), `total_open` (invariant 2 with stale-slot
   exclusion), slot validity (invariant 9), **book never crossed (invariant 8)**.
 - **Differential settlement:** for every random history, settle every order at the end and
