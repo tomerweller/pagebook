@@ -183,12 +183,12 @@
     One contract hosts many markets. A market is a token pair plus two numbers, <code>lot_size</code> and <code>tick_size</code>, that turn every quantity into an integer count of lots and every price into an integer tick. Each side of a market (bids, asks) is a set of price levels; each level is a FIFO queue of maker orders at exactly one price. A taker calls <code>place</code>, which crosses the book and settles in the same transaction. A maker's order rests, and later the maker calls <code>settle</code>, the one exit: it pays whatever happened, proceeds if the order filled, a refund if it did not, both if it partly filled. There is no rounding anywhere in matching, because <code>lots × tick × tick_size</code> is exact; the taker fee is the only place the contract rounds, and it rounds up.
   </p>
   <p>
-    Soroban is the reason the design looks the way it does. A Soroban transaction declares every ledger entry it will read or write before it executes, and touching an undeclared entry fails the transaction. So the question that shapes everything below is: can a client name every key a place or settle will touch, before it knows what the book will look like when the transaction lands?
+    Soroban is the reason the design looks the way it does. A Soroban transaction declares every ledger entry it will read or write before it executes, and touching an undeclared entry fails the transaction. So a client has to be able to name every key a place or settle will touch before it knows what the book will look like when the transaction lands. Everything below follows from that.
   </p>
 </section>
 
 <h2 class="part" id="part1">Part I: data structures</h2>
-<p class="lead">Ten storage entries, three groups. Two rules govern all of them: every key is a pure function of things the client already knows, and the tick index can always be rebuilt from the order store.</p>
+<p class="lead">There are ten storage entries in three groups, and two rules apply to all of them: every key is a pure function of things the client already knows, and the tick index can always be rebuilt from the order store.</p>
 
 <section id="storage">
   <h3>Storage map <span class="ref"><a href="04-architecture.md#part-i--data-structures">04 Part I</a></span></h3>
@@ -247,7 +247,7 @@
         </g>
       </svg>
     </div>
-    <figcaption><b>The asymmetry that lets the index be sloppy.</b> The order store carries the hard rules (a Level is never deleted; nothing past the tail is ever read). The index only has to satisfy a staleness contract: a bit may be set over an empty level, but never clear over a live one, and BestTick is never worse than the true best.</figcaption>
+    <figcaption>This asymmetry is what lets the index be sloppy. The order store carries the hard rules (a Level is never deleted; nothing past the tail is ever read). The index only has to satisfy a staleness contract: a bit may be set over an empty level, but never clear over a live one, and BestTick is never worse than the true best.</figcaption>
   </figure>
 </section>
 
@@ -323,10 +323,10 @@
         </g>
       </svg>
     </div>
-    <figcaption><b>What the counters say.</b> Everything before seq 3 is fully filled. Seq 3 is the head with 4 of its 10 lots taken. Seq 4 was cancelled mid-queue and is skipped. Seqs 5 to 9 are open, and 6 + 7 + 9 + 4 + 6 + 4 = 36 = <code>open_lots</code>. Slots 10 and 11 exist in the page but sit past <code>tail_seq</code>, so whatever bytes are there (possibly leftovers from an earlier generation) are never read.</figcaption>
+    <figcaption>Reading the counters: everything before seq 3 is fully filled. Seq 3 is the head with 4 of its 10 lots taken. Seq 4 was cancelled mid-queue and is skipped. Seqs 5 to 9 are open, and 6 + 7 + 9 + 4 + 6 + 4 = 36 = <code>open_lots</code>. Slots 10 and 11 exist in the page but sit past <code>tail_seq</code>, so whatever bytes are there (possibly leftovers from an earlier generation) are never read.</figcaption>
   </figure>
   <p>
-    Two rules keep this sound over years. When matching empties a whole level, or the first rest arrives at a level that cancels emptied, <code>generation</code> increments and seqs restart at 0; every earlier order's settlement is unaffected, because an old generation number reads as "fully filled" (next section). And a page holds <code>PAGE_SLOTS</code> seqs; one generation holds at most <code>INLINE_SLOTS + PAGE_SLOTS × MAX_PAGES</code> orders, after which rests fail with <code>LevelFull</code> until the level empties and resets.
+    Generations and capacity keep the queue sound over time. When matching empties a whole level, or the first rest arrives at a level that cancels emptied, <code>generation</code> increments and seqs restart at 0; every earlier order's settlement is unaffected, because an old generation number reads as "fully filled" (next section). And a page holds <code>PAGE_SLOTS</code> seqs; one generation holds at most <code>INLINE_SLOTS + PAGE_SLOTS × MAX_PAGES</code> orders, after which rests fail with <code>LevelFull</code> until the level empties and resets.
   </p>
 </section>
 
@@ -403,15 +403,15 @@
         </g>
       </svg>
     </div>
-    <figcaption><b>Staleness is one-directional.</b> A rest always sets its bit; a sweep always clears one. A settle that empties a level does not touch the bitmaps (that would widen its footprint), so a set bit over an empty level is allowed. The next walk that lands on it reads <code>open_lots = 0</code>, clears the bit, and moves on. Nothing else repairs the index.</figcaption>
+    <figcaption>Staleness runs in one direction only. A rest always sets its bit; a sweep always clears one. A settle that empties a level does not touch the bitmaps (that would widen its footprint), so a set bit over an empty level is allowed. The next walk that lands on it reads <code>open_lots = 0</code>, clears the bit, and moves on; no other operation touches stale bits.</figcaption>
   </figure>
 </section>
 
 <h2 class="part" id="part2">Part II: processes</h2>
-<p class="lead">Four mechanisms do the work: settlement, the matching walk, rest, and replace. The entry points compose them. The client runs the fifth process off-chain: simulate, pad, submit.</p>
+<p class="lead">Four mechanisms do the work (settlement, the matching walk, rest, and replace) and the entry points compose them. The client runs a fifth process off-chain: simulate, pad, submit.</p>
 
 <section id="settle">
-  <h3>Settlement: three counters are the whole fill history <span class="ref"><a href="04-architecture.md#7-the-settlement-state-machine">04 §7</a></span></h3>
+  <h3>Settlement <span class="ref"><a href="04-architecture.md#7-the-settlement-state-machine">04 §7</a></span></h3>
   <p>
     Because every take at a level happens at exactly the tick price, it does not matter when a fill happened, only whether the queue moved past you. So an order's stored coordinates <code>(g, s, q)</code> compared with the level's counters <code>(G, H, C)</code> decide everything. Matching writes nothing per maker; the maker reads the answer off the counters when they settle.
   </p>
@@ -468,7 +468,7 @@
         </g>
       </svg>
     </div>
-    <figcaption><b>Four orders, one level, one table.</b> These are the orders from the queue figure above. Any interleaving of takes and settles that ends at the same counters pays the same amounts (invariant 4). It replaces Phoenix seats and DeepBook's settled/owed ledger without a crank.</figcaption>
+    <figcaption>These are the four orders from the queue figure above, judged against that level's counters. Any interleaving of takes and settles that ends at the same counters pays the same amounts (invariant 4). It replaces Phoenix seats and DeepBook's settled/owed ledger without a crank.</figcaption>
   </figure>
 </section>
 
@@ -538,7 +538,7 @@
         </g>
       </svg>
     </div>
-    <figcaption><b>Three levels, three writes.</b> Two caps and one window bound the walk: at most <code>MAX_LEVELS_CROSSED</code> levels, at most <code>MAX_SLOTS_SCANNED</code> slots while skipping tombstones at the head, and the partial level's slots must lie inside the pages the client declared. Hitting any of them ends the loop with progress kept and the remainder refunded, never rested crossing (invariant 8). <code>route</code> runs this once per leg with the caps shared across legs.</figcaption>
+    <figcaption><b>Two sweeps and one partial take cost three Level writes.</b> The walk is bounded by two caps and one window: at most <code>MAX_LEVELS_CROSSED</code> levels, at most <code>MAX_SLOTS_SCANNED</code> slots while skipping tombstones at the head, and the partial level's slots must lie inside the pages the client declared. Hitting any of them ends the loop with progress kept and the remainder refunded, never rested crossing (invariant 8). <code>route</code> runs this once per leg with the caps shared across legs.</figcaption>
   </figure>
 </section>
 
@@ -587,14 +587,14 @@
         </g>
       </svg>
     </div>
-    <figcaption><b>The maker's nonce is a durable quote slot.</b> Its 120-day rent is paid once and amortizes across every update. A 40-quote refresh in one transaction costs about 0.03 XLM.</figcaption>
+    <figcaption>The maker's nonce becomes a durable quote slot whose 120-day rent is paid once and amortizes across every update. A 40-quote refresh in one transaction costs about 0.03 XLM.</figcaption>
   </figure>
 </section>
 
 <section id="client">
-  <h3>The client's half: simulate, pad, submit <span class="ref"><a href="04-architecture.md#14-the-clients-process-simulate--pad--submit">04 §14</a></span></h3>
+  <h3>The client's process <span class="ref"><a href="04-architecture.md#14-the-clients-process-simulate--pad--submit">04 §14</a></span></h3>
   <p>
-    The contract's promise is that every key it touches is a function of <code>(market, side, tick, word, page, owner, nonce)</code>. The client's job is to declare enough of them that the transaction still fits the book it lands on, which may differ from the one it simulated against. Two things move between simulation and inclusion: new levels can appear at any tick inside the walk range, and heads and tails can cross page boundaries.
+    The contract's promise is that every key it touches is a function of <code>(market, side, tick, word, page, owner, nonce)</code>. The client's job is to declare enough of them that the transaction still fits the book it lands on, which may differ from the one it simulated against. Between simulation and inclusion, new levels can appear at any tick inside the walk range, and heads and tails can cross page boundaries.
   </p>
   <figure>
     <div class="box">
@@ -642,12 +642,12 @@
         </g>
       </svg>
     </div>
-    <figcaption><b>Only one thing traps.</b> If the walk needs a level past <code>pad_end</code>, the transaction fails. Everything else that can move between simulation and inclusion ends gracefully: a cap ends the loop with the remainder refunded, an append outside its window returns <code>RetryRest</code>. Padding is cheap (a 100-key band is ~0.003 XLM); the 400-entry footprint cap is the limit that binds, and on a sparse book the client trades band depth against trap probability.</figcaption>
+    <figcaption><b>One failure mode traps; the rest degrade.</b> If the walk needs a level past <code>pad_end</code>, the transaction fails. Everything else that can move between simulation and inclusion ends gracefully: a cap ends the loop with the remainder refunded, an append outside its window returns <code>RetryRest</code>. Padding is cheap (a 100-key band is ~0.003 XLM); the 400-entry footprint cap is the limit that binds, and on a sparse book the client trades band depth against trap probability.</figcaption>
   </figure>
 </section>
 
 <h2 class="part" id="part3">Part III: what comes out</h2>
-<p class="lead">Small hot entries, capped loops, and client-side padding add up to transactions that a router can simulate, declare, and run in parallel.</p>
+<p class="lead">Because hot entries are small, loops are capped, and the client pads its footprint, a router can simulate a PageBook transaction, declare it, and run it alongside others.</p>
 
 <section id="budgets">
   <h3>Budgets and fees <span class="ref"><a href="04-architecture.md#17-budgets-and-fees">04 §17</a></span></h3>
@@ -666,16 +666,16 @@
     </table>
   </div>
   <p>
-    Two readings. Matching is nearly free and placement pays rent: a 32-level sweep costs about the same as resting one order, so the book's carrying cost sits with makers at roughly 0.027 XLM per open order per 120 days, which doubles as anti-spam. And write bytes, not fees, are the throughput ceiling: the max sweep is 7.6% of a ledger's 286,720 write bytes, so a ledger fits about 13 of them, or hundreds of rests and settles. Every hot entry is a few hundred bytes for that reason.
+    Matching is nearly free and placement pays rent: a 32-level sweep costs about the same as resting one order, so the book's carrying cost sits with makers at roughly 0.027 XLM per open order per 120 days, which doubles as anti-spam. And write bytes, not fees, are the throughput ceiling: the max sweep is 7.6% of a ledger's 286,720 write bytes, so a ledger fits about 13 of them, or hundreds of rests and settles. Every hot entry is a few hundred bytes for that reason.
   </p>
   <div class="callout">
-    <p>Concurrency, stated plainly: the vault's SAC balance entries are the serialization points. Every settling transaction writes one or both, so all markets sharing a token form one cluster. v1 accepts this because write bytes bind first; per-market vault sub-accounts are the v2 fix. No market operation ever writes the instance entry, which is what keeps that cluster analysis the whole story. <a href="04-architecture.md#16-concurrency-and-serialization">04 §16</a></p>
+    <p>Concurrency: the vault's SAC balance entries are the serialization points. Every settling transaction writes one or both, so all markets sharing a token form one cluster. v1 accepts this because write bytes bind first; per-market vault sub-accounts are the v2 fix. No market operation ever writes the instance entry, so that cluster analysis is complete. <a href="04-architecture.md#16-concurrency-and-serialization">04 §16</a></p>
   </div>
 </section>
 
 <section id="invariants">
   <h3>Invariants <span class="ref"><a href="04-architecture.md#19-invariants-must-hold-property-test-all">04 §19</a></span></h3>
-  <p>Nine properties, all property-tested. Numbers match the architecture doc.</p>
+  <p>Nine properties, all covered by property tests; the numbers match the architecture doc.</p>
   <ol class="inv">
     <li>Conservation: vault balance per token equals open escrows plus unclaimed proceeds plus accrued fees. <span class="ref">vault</span></li>
     <li><code>open_lots</code> equals the sum of live slot quantities (tombstones and stale slots excluded). <span class="ref">level queue</span></li>
