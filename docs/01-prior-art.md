@@ -131,7 +131,7 @@ position converts back; a limit order is only final if withdrawn after the cross
 (keeper work). PageBook's generation counters exist to give makers **fill finality**
 without keepers: a swept level stays swept for its claimants. Any pooled-level variant
 must keep generation-on-sweep semantics for exactly this reason. (Hooks and in-pair
-oracles stay rejected per §Convergent lessons and 04 §7 — events instead.)
+oracles stay rejected per §Convergent lessons and 04 §20 — events instead.)
 
 ## Appchains and batch designs (contrast class)
 

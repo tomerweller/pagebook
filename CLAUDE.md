@@ -19,14 +19,14 @@ entry-size behavior) contradicts the docs, follow reality and record the deviati
   `stellar contract build`; test with `cargo test` against the SDK's test environment.
 - Every storage entry type in the architecture doc has a target byte size. Treat entry
   size as a budgeted resource: add a test that XDR-serializes each entry type at max
-  occupancy and asserts it stays under budget (`docs/04-architecture.md` §Storage).
+  occupancy and asserts it stays under budget (`docs/04-architecture.md` Part I).
 - Footprint discipline is the product. For each public function, write an integration
   test that asserts the number of entries read/written (the SDK test env exposes
   resource/footprint info via budget & snapshot APIs; if exact counts are awkward,
   assert upper bounds).
 - No panics in reachable paths; use typed `contracterror` codes. No unbounded loops:
   every loop bounds on a config constant (`MAX_LEVELS_CROSSED`, page capacity, etc.).
-- Operation vocabulary is normative (architecture §0): entry points are `place`,
+- Operation vocabulary is normative (architecture §0.1): entry points are `place`,
   `replace`, `settle`, `route`, and the cranks; behaviors are take/rest/sweep; "fill"
   is only an order state. Use these names in code, tests, events, and docs.
 - No synchronous calls out to untrusted contracts. Token movement is SAC `transfer`

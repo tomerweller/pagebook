@@ -13,7 +13,7 @@ pagebook/
 │       └── src/
 │           ├── lib.rs         # contract trait impl, entry points only
 │           ├── admin.rs       # constructor, admin rotation, pause, upgrade, keepalive
-│           ├── market.rs      # market create/config, quantization + §0 bound checks
+│           ├── market.rs      # market create/config, quantization + §0.3 bound checks
 │           ├── keys.rs        # DataKey enum (contracttype, full-word variants) + TTL policy
 │           ├── level.rs       # Level/LevelPage packed encoding, positional queue, resets, settlement state machine
 │           ├── bitmap.rs      # TickWord/TickSummary ops: set/clear/next_set_tick(at_or_after)
@@ -31,13 +31,13 @@ pagebook/
 ```rust
 pub struct PlaceFlags { pub post_only: bool, pub fill_or_kill: bool, pub no_rest: bool }
 
-/// Slot-access windows the client declared pages for (architecture §3/§4).
+/// Slot-access windows the client declared pages for (architecture §8/§14).
 /// Exact encoding is implementer's choice (decision note) — semantically:
 /// per-band-level consume windows + the taker's own append window.
 pub struct SlotWindow { /* ... */ }
 
 pub trait PageBook {
-    // ---- deploy-time; no init entry point, no first-caller race (architecture §6) ----
+    // ---- deploy-time; no init entry point, no first-caller race (architecture §12) ----
     // __constructor(e: Env, admin: Address, fee_recipient: Address);
 
     // ---- admin (admin.require_auth() on all four) ----
@@ -46,15 +46,15 @@ pub trait PageBook {
     fn set_paused(e: Env, paused: bool);       // pause blocks place/replace; never settle
     fn upgrade(e: Env, wasm_hash: BytesN<32>);
 
-    /// Retune a market's mutable caps as network limits move (SLPs; architecture §6,
-    /// ADR-007). Re-runs the §0 overflow proof; MAX_PAGES raise-only; quantization
+    /// Retune a market's mutable caps as network limits move (SLPs; architecture §12,
+    /// ADR-007). Re-runs the §0.3 overflow proof; MAX_PAGES raise-only; quantization
     /// and INLINE_SLOTS/PAGE_SLOTS are not parameters — they are frozen for the
     /// market's lifetime.
     fn set_market_caps(e: Env, market: MarketId, max_levels_crossed: u32,
                        max_slots_scanned: u32, taker_fee_bps: u32,
                        min_order_lots: u64, max_order_lots: u64, max_pages: u32);
 
-    /// Admin-gated in v1. Enforces tick_min ≥ 1, fee_bps ≤ FEE_BPS_MAX, and the §0
+    /// Admin-gated in v1. Enforces tick_min ≥ 1, fee_bps ≤ FEE_BPS_MAX, and the §0.3
     /// creation bounds (LEVEL_CAP × max_order_lots × price / base, with route headroom).
     fn create_market(e: Env, base: Address, quote: Address, lot_size: u64,
                      tick_size: u64, tick_min: u32, tick_max: u32,
@@ -75,7 +75,7 @@ pub trait PageBook {
 
     /// Multi-leg atomic route; legs.len() ≤ MAX_ROUTE_LEGS and ONE shared
     /// MAX_LEVELS_CROSSED / MAX_SLOTS_SCANNED budget across all legs (architecture
-    /// §3) — a route's resource ceiling equals one maximal place + per-leg constants.
+    /// §8) — a route's resource ceiling equals one maximal place + per-leg constants.
     fn route(e: Env, taker: Address, legs: Vec<PlaceLeg>) -> Vec<LegResult>;
 
     /// The only maker exit: pays the filled part, refunds the open part.
@@ -116,11 +116,11 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
 
 - **M0 — scaffold.** Workspace, CI (`fmt`, `clippy`, test), `keys.rs` +
   `pagebook-types` packed entry layouts, a serialized-size test per entry type at max
-  occupancy (budgets from architecture §1 — these assume the packed-`Bytes` encoding;
+  occupancy (budgets from architecture Part I — these assume the packed-`Bytes` encoding;
   `contracttype` maps blow the Level budget ~2.5×, which is why packing is mandated,
   not optional). Empty contract deploys to testnet via constructor.
 - **M1 — single level end-to-end.** Constructor/admin/pause skeleton + auth tests
-  (malicious-caller per entry point); market creation with the full §0 bound checks
+  (malicious-caller per entry point); market creation with the full §0.3 bound checks
   (property tests at each maximum: max order, full level, route headroom, fee cap);
   rest/settle/**replace** against one level (no bitmap walk, inline queue only);
   positional slot lifecycle unit tests (slot(seq) pure; head advance counter-only;
@@ -129,7 +129,7 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
   (replace ≡ settle+place for book state and settlement, with the `Order` entry
   reused — assert no entry create/delete in the write set); nonce lifecycle
   (`OrderExists`, reuse after settle); vault escrow + settlement (incl. escrow *delta*
-  on replace); `set_market_caps` tests (auth; §0 re-proof rejects breaking values;
+  on replace); `set_market_caps` tests (auth; §0.3 re-proof rejects breaking values;
   `MAX_PAGES` lower rejected; live orders unaffected across a retune); conservation
   invariant test. This proves the settlement
   state machine — the riskiest logic — before any book traversal exists.
@@ -153,9 +153,9 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
 - **M4 — resource hardening.** Build the **worst-case state-transition matrix** first
   (per op: entries touched × bytes, incl. bitmap dispersal, windows, page cleanup, TTL
   bumps, SAC entries), then footprint-count and write-byte assertions per op against
-  architecture §4's corrected table (max sweep: ~70 writes / ~22 KB — construct the
+  architecture §17's corrected table (max sweep: ~70 writes / ~22 KB — construct the
   32-level / 32-word shape explicitly); **fee gates**: measured resource fee per op
-  (SDK budget + testnet simulation) asserted against §4's estimate table within a
+  (SDK budget + testnet simulation) asserted against §17's estimate table within a
   tolerance band, with the rent component isolated (it dominates and moves with the
   network's state-size-dependent rate — record the rate the gate was calibrated at);
   TTL policy incl. **no instance write on market ops** (assert instance entry absent
@@ -186,7 +186,7 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
   reset at sweep **and over dirty pages**, seq monotonicity, nonce collision/reuse,
   bound-saturating amounts on every public path.
 - **Resource tests (the novel part):** the SDK test env exposes budget/footprint data —
-  assert per-op entry counts and write bytes against architecture §4's table (derived
+  assert per-op entry counts and write bytes against architecture §17's table (derived
   from the worst-case matrix, not sampled). Regression gates, like Deepstate's
   `.gas-snapshot.runtime` but for footprints. Include the negative assertion: market
   ops never write the instance entry.
@@ -201,13 +201,13 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
    constants at 32).
 2. Whether rest should offer the optional `extend_ttl`-to-180-d flag for `Order`
    in v1 (TTL targets themselves are resolved: protocol minimum ~120 d covers every
-   entry class; see architecture §5 / ADR-004).
+   entry class; see architecture §18 / ADR-004).
 3. `quote_place` return shape for the padding helper (keys vs opaque footprint XDR) and
    the concrete `SlotWindow` encoding (per-level page ranges vs a compact global form).
 4. Self-trade prevention flag in v1 (cheap: compare owner on head consume — but that
    reads `Order` in the hot path; likely defer).
 5. Fee *split* (protocol/integrator) — custody and recipient are defined (architecture
-   §6); Deepstate's dual-fee model remains a reasonable template for the split (both
+   §1, §4, §12); Deepstate's dual-fee model remains a reasonable template for the split (both
    capped, both on taker output).
 6. Whether settle-at-head should also advance past tombstones in its declared page
    (cheap win) or stay counter-minimal.
