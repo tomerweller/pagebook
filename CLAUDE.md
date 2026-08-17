@@ -35,7 +35,7 @@ entry-size behavior) contradicts the docs, follow reality and record the deviati
   Matching math is exact by quantization (no rounding); the only rounding is the
   taker fee, which rounds up (`ceil`); dust accrues to fees.
 - Persistent entries: never `del` a `Level` (generation counters must survive; archival
-  handles cold ones). `OrderRef` is deleted on settle and reused in place by replace.
+  handles cold ones). `Order` is deleted on settle and reused in place by replace.
   Extend TTLs per the policy table in the architecture doc.
 
 ## Definition of done per milestone

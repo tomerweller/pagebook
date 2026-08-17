@@ -89,7 +89,7 @@ storage model, and three of its ideas transfer. Mechanism:
   — one universal grid covers every magnitude with uniform *percentage* spacing, no
   per-pair price bands, and the id is still a dense integer.
 - **TreeMath.** v2.1 finds the next non-empty bin via a 3-level, 256-ary bitmap tree
-  over all 2²⁴ bins. Convergent evolution with PageBook's 2-level, 2048-ary TickSummary/TickBitmap
+  over all 2²⁴ bins. Convergent evolution with PageBook's 2-level, 2048-ary TickSummary/TickWord
   bitmap over 4.19M ticks — independent designs landing on "hierarchical presence
   bitmap over a dense integer price grid" is strong validation. (Difference: EVM reads
   tree nodes lazily mid-transaction; Soroban must declare them, which is why PageBook
@@ -113,14 +113,14 @@ storage model, and three of its ideas transfer. Mechanism:
 2. **Pooled (pro-rata) levels are a serious v2 market type.** Replace the FIFO queue
    with per-generation shares: makers mint shares of `(level, generation)`, a sweep
    pays the whole generation at tick price, claims settle pro-rata from counters. That
-   deletes pages, tombstones, slot windows, and the per-order `OrderRef` — and the
-   ADR-004 fee numbers make this attractive: rent on `OrderRef` (~0.027 XLM/order) is
+   deletes pages, tombstones, slot windows, and the per-order `Order` — and the
+   ADR-004 fee numbers make this attractive: rent on `Order` (~0.027 XLM/order) is
    the dominant protocol cost, and a reusable share entry amortizes it across a
    maker's re-quotes. Price: loses time priority within a level (pro-rata weakens the
    incentive to quote first), which is precisely the incentive FIFO CLOBs exist to
    provide — hence a *sibling market type*, not a replacement.
 3. **Volatility-scaled taker fees are nearly free here.** The fill loop already counts
-   levels crossed, and `Fees(token)` is already RW in every taker footprint — an
+   levels crossed, and `FeeAccrual(token)` is already RW in every taker footprint — an
    LB-style accumulator adds no footprint entries. Cost: the effective fee becomes
    apply-time state, so `quote_fill` quotes it approximately. v2 candidate, decision
    note required.

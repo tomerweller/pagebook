@@ -16,7 +16,7 @@ pagebook/
 │           ├── market.rs      # market create/config, quantization + §0 bound checks
 │           ├── keys.rs        # DataKey enum (contracttype, full-word variants) + TTL policy
 │           ├── level.rs       # Level/LevelPage packed encoding, positional queue, resets, settlement state machine
-│           ├── bitmap.rs      # TickBitmap/TickSummary ops: set/clear/next_set_tick(at_or_after)
+│           ├── bitmap.rs      # TickWord/TickSummary ops: set/clear/next_set_tick(at_or_after)
 │           ├── matching.rs    # matching loop (place), sweep/partial, caps + windows, best maintenance
 │           ├── settle.rs      # vault SAC transfers, fee accrual (ceil), route netting
 │           ├── events.rs      # typed event emitters
@@ -48,8 +48,9 @@ pub trait PageBook {
 
     /// Retune a market's mutable caps as network limits move (SLPs; architecture §6,
     /// ADR-007). Re-runs the §0 overflow proof; MAX_PAGES raise-only; quantization
-    /// and N/P are not parameters — they are frozen for the market's lifetime.
-    fn set_market_caps(e: Env, mkt: MarketId, max_levels_crossed: u32,
+    /// and INLINE_SLOTS/PAGE_SLOTS are not parameters — they are frozen for the
+    /// market's lifetime.
+    fn set_market_caps(e: Env, market: MarketId, max_levels_crossed: u32,
                        max_slots_scanned: u32, taker_fee_bps: u32,
                        min_order_lots: u64, max_order_lots: u64, max_pages: u32);
 
@@ -62,12 +63,12 @@ pub trait PageBook {
 
     /// Cross and/or rest. taker.require_auth().
     /// `start_tick` = client's simulated best opposite tick — matching never visits
-    /// better ticks. `nonce` = client-chosen order handle (OrderRef key is
+    /// better ticks. `nonce` = client-chosen order handle (Order key is
     /// (taker, nonce), declarable pre-submission). `window` = declared slot access;
     /// window edges end the take gracefully (refund) or fail the rest as RetryRest —
     /// only walking past the padded band traps.
     /// Returns (rested: bool, filled_lots, quote_atoms).
-    fn place(e: Env, taker: Address, mkt: MarketId, is_bid: bool,
+    fn place(e: Env, taker: Address, market: MarketId, is_bid: bool,
             limit_tick: u32, qty_lots: u64, start_tick: u32, nonce: u64,
             window: SlotWindow, flags: PlaceFlags)
         -> (bool, u64, i128);
@@ -79,29 +80,29 @@ pub trait PageBook {
 
     /// The only maker exit: pays the filled part, refunds the open part.
     /// owner.require_auth(). Returns (paid, refunded).
-    fn settle(e: Env, owner: Address, mkt: MarketId, nonce: u64) -> (i128, i128);
+    fn settle(e: Env, owner: Address, market: MarketId, nonce: u64) -> (i128, i128);
 
     /// Maker quote update (ADR-005): settle the old order per the settlement table,
-    /// rewrite the SAME OrderRef in place (fixed size ⇒ zero rent), append at the
+    /// rewrite the SAME Order in place (fixed size ⇒ zero rent), append at the
     /// new tick. Never matches — conservative post-only check vs recorded BestTick.
     /// owner.require_auth(). Blocked when paused (contains a rest).
-    fn replace(e: Env, owner: Address, mkt: MarketId, nonce: u64, is_bid: bool,
+    fn replace(e: Env, owner: Address, market: MarketId, nonce: u64, is_bid: bool,
                tick: u32, qty_lots: u64, window: SlotWindow) -> (i128, i128);
 
     /// Batched replace: items.len() ≤ MAX_REPLACE_BATCH, settlement deltas netted,
     /// one transfer per token. A full book refresh is one transaction.
-    fn replace_batch(e: Env, owner: Address, mkt: MarketId, items: Vec<ReplaceItem>)
+    fn replace_batch(e: Env, owner: Address, market: MarketId, items: Vec<ReplaceItem>)
         -> Vec<(i128, i128)>;
 
     // Views (RO footprints; for routers/UIs):
-    fn best(e: Env, mkt: MarketId, is_bid: bool) -> Option<u32>;
-    fn level(e: Env, mkt: MarketId, is_bid: bool, tick: u32) -> LevelInfo;
-    fn order(e: Env, mkt: MarketId, owner: Address, nonce: u64) -> OrderInfo; // coords + settlement preview
-    fn quote_place(e: Env, mkt: MarketId, is_bid: bool, limit_tick: u32, qty: u64)
+    fn best(e: Env, market: MarketId, is_bid: bool) -> Option<u32>;
+    fn level(e: Env, market: MarketId, is_bid: bool, tick: u32) -> LevelInfo;
+    fn order(e: Env, market: MarketId, owner: Address, nonce: u64) -> OrderInfo; // coords + settlement preview
+    fn quote_place(e: Env, market: MarketId, is_bid: bool, limit_tick: u32, qty: u64)
         -> QuoteResult;  // start_tick + band + slot windows the client should declare
 
     /// Permissionless cranks (no auth; effects defined by config, not caller):
-    fn collect_fees(e: Env, mkt: MarketId, token: Address) -> i128;  // pays recipient
+    fn collect_fees(e: Env, market: MarketId, token: Address) -> i128;  // pays recipient
     fn keepalive(e: Env);   // bumps instance TTL — market ops never write instance
 }
 ```
@@ -125,7 +126,7 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
   positional slot lifecycle unit tests (slot(seq) pure; head advance counter-only;
   eager-advance; **empty-level reset**: empty a level via settles repeatedly until past
   `LEVEL_CAP`, assert reuse + old settlements still pay); replace equivalence property
-  (replace ≡ settle+place for book state and settlement, with the `OrderRef` entry
+  (replace ≡ settle+place for book state and settlement, with the `Order` entry
   reused — assert no entry create/delete in the write set); nonce lifecycle
   (`OrderExists`, reuse after settle); vault escrow + settlement (incl. escrow *delta*
   on replace); `set_market_caps` tests (auth; §0 re-proof rejects breaking values;
@@ -134,7 +135,7 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
   state machine — the riskiest logic — before any book traversal exists.
 - **M2 — matching.** Multi-level matching loop, `start_tick` clamping, sweep-vs-partial,
   generation semantics, `BestTick` maintenance (incl. stale-bit lazy clearing), bitmap
-  TickBitmap/TickSummary walk, cap + **window** termination (remainder refunded — book never crossed),
+  TickWord/TickSummary walk, cap + **window** termination (remainder refunded — book never crossed),
   post_only (conservative vs recorded `BestTick`, incl. stale-best false-reject test),
   FoK/no_rest. Property tests (below), plus the **sim-to-apply race tests** — the
   padding rule gets coverage here, not first on testnet: simulate a place, mutate the
@@ -173,7 +174,7 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
 - **Property/fuzz (proptest):** random op sequences (place/replace/settle interleavings) vs
   a naive in-memory reference book. Assert: identical takes (price-time priority scoped
   by `start_tick`), conservation, settlement path-independence (invariant 4), bitmap/BestTick
-  coherence (weakened invariant 3), `total_open` (invariant 2 with stale-slot
+  coherence (weakened invariant 3), `open_lots` (invariant 2 with stale-slot
   exclusion), slot validity (invariant 9), **book never crossed (invariant 8)**.
 - **Differential settlement:** for every random history, settle every order at the end and
   assert Σ payouts + fees == Σ deposits exactly (fee dust included — the ceil is the
@@ -190,20 +191,21 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
   `.gas-snapshot.runtime` but for footprints. Include the negative assertion: market
   ops never write the instance entry.
 - **Archival tests:** cold level expired in test env → touched → counters intact;
-  dormant `OrderRef` expired → settle still pays. (Auto-restore path itself: testnet
+  dormant `Order` expired → settle still pays. (Auto-restore path itself: testnet
   soak only — see M4.)
 
 ## Open questions for the implementer to resolve (with decision notes)
 
-1. Inline level capacity N, page capacity P, `MAX_PAGES`, `MAX_SLOTS_SCANNED` — tune
-   from measured entry sizes/fees (start N=32, P=32).
-2. Whether rest should offer the optional `extend_ttl`-to-180-d flag for `OrderRef`
+1. Inline level capacity `INLINE_SLOTS`, page capacity `PAGE_SLOTS`, `MAX_PAGES`,
+   `MAX_SLOTS_SCANNED` — tune from measured entry sizes/fees (start both slot
+   constants at 32).
+2. Whether rest should offer the optional `extend_ttl`-to-180-d flag for `Order`
    in v1 (TTL targets themselves are resolved: protocol minimum ~120 d covers every
    entry class; see architecture §5 / ADR-004).
 3. `quote_place` return shape for the padding helper (keys vs opaque footprint XDR) and
    the concrete `SlotWindow` encoding (per-level page ranges vs a compact global form).
 4. Self-trade prevention flag in v1 (cheap: compare owner on head consume — but that
-   reads `OrderRef` in the hot path; likely defer).
+   reads `Order` in the hot path; likely defer).
 5. Fee *split* (protocol/integrator) — custody and recipient are defined (architecture
    §6); Deepstate's dual-fee model remains a reasonable template for the split (both
    capped, both on taker output).

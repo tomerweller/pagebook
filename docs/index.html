@@ -390,7 +390,7 @@
       are the coordinates, the same shape as the token example's
       <code>DataKey::Balance(Address)</code>. The tag is what keeps types with the same
       coordinate shape (BestTick and TickSummary, Level and the bitmap words) from colliding in the shared
-      key space, and <code>Admin</code> is a unit variant, so even the instance entry has a
+      key space, and <code>Config</code> is a unit variant, so even the instance entry has a
       proper key. Full-word variant names cost a few more key bytes than single characters,
       but every key already carries ~50–90 bytes of fixed framing (contract address, envelope),
       so the difference is noise, and spelled-out names read plainly in explorers and test
@@ -406,25 +406,25 @@
         <tr><th>Entry</th><th>Key</th><th>Contents</th><th>Budget</th></tr>
       </thead>
       <tbody>
-        <tr class="band"><td colspan="4">Config &amp; fees — exact at all times, admin-governed</td></tr>
-        <tr><td class="k">Admin</td><td class="k">Admin</td><td>admin, fee recipient, paused flag, market counter (instance storage)</td><td class="num">~150 B</td></tr>
-        <tr><td class="k">Market</td><td class="k">Market(mkt)</td><td>token pair, quantization, fee bps, order-size bounds, loop caps, N / P / MAX_PAGES</td><td class="num">~250 B</td></tr>
-        <tr><td class="k">Fees(token)</td><td class="k">Fees(mkt, token)</td><td>accrued protocol fees</td><td class="num">~50 B</td></tr>
+        <tr class="band"><td colspan="4">Configuration — money-free, admin-governed, exact at all times</td></tr>
+        <tr><td class="k">Config</td><td class="k">Config</td><td>admin, fee recipient, paused flag, market counter (instance storage)</td><td class="num">~150 B</td></tr>
+        <tr><td class="k">Market</td><td class="k">Market(market_id)</td><td>token pair, quantization, fee bps, order-size bounds, loop caps, INLINE_SLOTS / PAGE_SLOTS / MAX_PAGES</td><td class="num">~250 B</td></tr>
+        <tr class="band"><td colspan="4">Order store — authoritative, funds-bearing; strict invariants; reconstructible from nothing</td></tr>
+        <tr><td class="k">Level</td><td class="k">Level(market, side, tick)</td><td>packed Bytes: version, <code>generation, head_seq, tail_seq, head_consumed_lots, open_lots</code> + INLINE_SLOTS inline qty slots</td><td class="num">≤ 384 B</td></tr>
+        <tr><td class="k">LevelPage</td><td class="k">LevelPage(market, side, tick, page)</td><td>packed Bytes: version + PAGE_SLOTS qty slots (queue overflow; the first seqs past the inline slots land in page 0)</td><td class="num">≤ 320 B</td></tr>
+        <tr><td class="k">Order</td><td class="k">Order(market, owner, nonce)</td><td>side, tick, generation, seq, qty (coordinates stay in the contents, not in the key)</td><td class="num">≤ 160 B</td></tr>
+        <tr><td class="k">FeeAccrual</td><td class="k">FeeAccrual(market, token)</td><td>accrued protocol fees</td><td class="num">~50 B</td></tr>
         <tr class="band"><td colspan="4">Tick index — derived, money-free; staleness allowed, healed lazily</td></tr>
-        <tr><td class="k">BestTick(side)</td><td class="k">BestTick(mkt, side)</td><td>best tick, empty flag</td><td class="num">~40 B</td></tr>
-        <tr><td class="k">TickSummary(side)</td><td class="k">TickSummary(mkt, side)</td><td>summary bitmap: bit w set ⇔ TickBitmap word w has a set bit (2,048 words)</td><td class="num">256 B</td></tr>
-        <tr><td class="k">TickBitmap(side, w)</td><td class="k">TickBitmap(mkt, side, w)</td><td>presence bitmap for 2,048 ticks</td><td class="num">256 B</td></tr>
-        <tr class="band"><td colspan="4">Order store — authoritative, funds-bearing; strict invariants</td></tr>
-        <tr><td class="k">Level(side, tick)</td><td class="k">Level(mkt, side, tick)</td><td>packed Bytes: version, <code>generation, head_seq, tail_seq, head_consumed, total_open</code> + N inline qty slots</td><td class="num">≤ 384 B</td></tr>
-        <tr><td class="k">LevelPage(side, tick, p)</td><td class="k">LevelPage(mkt, side, tick, p)</td><td>packed Bytes: version + P qty slots (queue overflow)</td><td class="num">≤ 320 B</td></tr>
-        <tr><td class="k">OrderRef(owner, nonce)</td><td class="k">OrderRef(mkt, owner, nonce)</td><td>side, tick, generation, seq, qty (coordinates stay in the contents, not in the key)</td><td class="num">≤ 160 B</td></tr>
+        <tr><td class="k">BestTick</td><td class="k">BestTick(market, side)</td><td>best tick, empty flag</td><td class="num">~40 B</td></tr>
+        <tr><td class="k">TickSummary</td><td class="k">TickSummary(market, side)</td><td>summary bitmap: bit <code>word</code> set ⇔ TickWord(word) has a set bit (2,048 words)</td><td class="num">256 B</td></tr>
+        <tr><td class="k">TickWord</td><td class="k">TickWord(market, side, word)</td><td>presence bitmap for 2,048 ticks</td><td class="num">256 B</td></tr>
       </tbody>
     </table>
   </div>
   <p class="tbl-note">Budgets are XDR-serialized sizes at max occupancy, enforced by tests from milestone 0.</p>
   <figure>
     <div class="figbox">
-      <svg viewBox="0 0 880 320" role="img" aria-label="Two subsystems. The tick index (BestTick, TickSummary, TickBitmap) is derived and money-free and finds the tick with liquidity. The order store (Level, LevelPage, OrderRef) is authoritative and funds-bearing. The index is reconstructible from the store; the store is reconstructible from nothing.">
+      <svg viewBox="0 0 880 320" role="img" aria-label="Two subsystems. The tick index (BestTick, TickSummary, TickWord) is derived and money-free and finds the tick with liquidity. The order store (Level, LevelPage, Order) is authoritative and funds-bearing. The index is reconstructible from the store; the store is reconstructible from nothing.">
         <defs>
           <marker id="arr5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
@@ -438,9 +438,9 @@
           <text x="178" y="102" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">cached extremum — the walk starts here</text>
           <rect x="68" y="152" width="220" height="44" rx="8" fill="var(--surface)" stroke="var(--accent)"/>
           <text x="178" y="170" text-anchor="middle" fill="currentColor">TickSummary(side)</text>
-          <text x="178" y="186" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">one bit per TickBitmap word</text>
+          <text x="178" y="186" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">one bit per TickWord word</text>
           <rect x="68" y="232" width="220" height="44" rx="8" fill="var(--surface)" stroke="var(--accent)"/>
-          <text x="178" y="250" text-anchor="middle" fill="currentColor">TickBitmap(side, w)</text>
+          <text x="178" y="250" text-anchor="middle" fill="currentColor">TickWord(side, word)</text>
           <text x="178" y="266" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">one bit per tick</text>
         </g>
         <line x1="178" y1="196" x2="178" y2="228" stroke="currentColor" marker-end="url(#arr5)"/>
@@ -450,16 +450,16 @@
         <g font-family="ui-monospace, Menlo, monospace" font-size="13">
           <rect x="556" y="68" width="220" height="44" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
           <text x="666" y="86" text-anchor="middle" fill="currentColor">Level(side, tick)</text>
-          <text x="666" y="102" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">counters + N inline slots</text>
+          <text x="666" y="102" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">counters + INLINE_SLOTS inline slots</text>
           <rect x="556" y="152" width="220" height="44" rx="8" fill="var(--surface)" stroke="currentColor" stroke-dasharray="5 3"/>
-          <text x="666" y="170" text-anchor="middle" fill="currentColor">LevelPage(…, 0…p)</text>
+          <text x="666" y="170" text-anchor="middle" fill="currentColor">LevelPage(…, 0…page)</text>
           <text x="666" y="186" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">overflow slots, positional</text>
           <rect x="556" y="232" width="220" height="44" rx="8" fill="var(--surface)" stroke="var(--bid)"/>
-          <text x="666" y="250" text-anchor="middle" fill="currentColor">OrderRef(owner, nonce)</text>
+          <text x="666" y="250" text-anchor="middle" fill="currentColor">Order(owner, nonce)</text>
           <text x="666" y="266" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">the maker's ticket: (g, s, qty)</text>
         </g>
         <line x1="666" y1="112" x2="666" y2="148" stroke="currentColor" marker-end="url(#arr5)"/>
-        <text x="676" y="134" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">seq ≥ N spills over</text>
+        <text x="676" y="134" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--muted)">seq ≥ INLINE_SLOTS spills over</text>
         <path d="M 556 250 C 500 250, 500 90, 552 90" fill="none" stroke="var(--bid)" marker-end="url(#arr5)"/>
         <text x="468" y="176" font-family="-apple-system, sans-serif" font-size="10.5" fill="var(--bid)" text-anchor="middle" transform="rotate(-90 468 176)">(g, s) vs (G, H, C) at settle</text>
         <line x1="292" y1="254" x2="552" y2="94" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arr5)"/>
@@ -479,11 +479,11 @@
 <div class="col">
   <p>
     A maker's handle is <code>(owner, nonce)</code>, with the nonce chosen by the client before
-    submission. That makes the <code>OrderRef</code> key known at simulation time, whatever the
+    submission. That makes the <code>Order</code> key known at simulation time, whatever the
     book does in flight. Execution assigns the queue coordinates and stores them inside the
     entry:
   </p>
-  <div class="idstrip" role="img" aria-label="The OrderRef key is owner plus client-chosen nonce; its contents carry the execution-assigned coordinates side, tick, generation, seq, and qty">
+  <div class="idstrip" role="img" aria-label="The Order key is owner plus client-chosen nonce; its contents carry the execution-assigned coordinates side, tick, generation, seq, and qty">
     <div class="fld" style="border-color: var(--accent)"><span class="fn">owner · nonce</span><span class="fb">key: the client selects it before submission</span></div>
     <div class="fld"><span class="fn">side · tick · generation · seq · qty</span><span class="fb">contents: set at execution, given in the rested event</span></div>
   </div>
@@ -498,7 +498,7 @@
     <span class="t sans">Packed encoding is mandatory</span>
     Hot entries (<code>Level</code>, <code>LevelPage</code>) are fixed-layout <code>Bytes</code>
     blobs with a leading schema-version byte, not <code>#[contracttype]</code> structs. The map
-    encoding inflates the payload by roughly 2.5x: a map-encoded Level at N=32 is about 1.2 KB
+    encoding inflates the payload by roughly 2.5x: a map-encoded Level at INLINE_SLOTS = 32 is about 1.2 KB
     instead of 384 B, an error that would flow into every write-byte and throughput figure
     downstream. Slots store only a quantity; the seq is implicit in the slot's position.
   </div>
@@ -514,8 +514,8 @@
     <h2><span class="secno">§ 4</span>Three counters are a complete fill proof</h2>
     <p>
       A level's queue is positional and append-only. Within a generation, seq <code>s</code>
-      lives in inline slot <code>s</code> when <code>s &lt; N</code>, otherwise in page
-      <code>(s−N)/P</code>. Slots never move or compact; removing the head means a counter
+      lives in inline slot <code>s</code> when <code>s &lt; INLINE_SLOTS</code>, otherwise in page
+      <code>(s−INLINE_SLOTS)/PAGE_SLOTS</code>. Slots never move or compact; removing the head means a counter
       advanced, nothing more. Three counters carry the entire fill history:
     </p>
     <ul>
@@ -523,13 +523,13 @@
         by matching or reset by the first rest at a cancelled-empty level (below). Seqs restart
         at 0.</li>
       <li><code>head_seq</code> (H) is the first seq not yet fully filled.</li>
-      <li><code>head_consumed</code> (C) counts lots taken from the head order. C stays strictly
+      <li><code>head_consumed_lots</code> (C) counts lots taken from the head order. C stays strictly
         below the head's quantity; the moment it would reach it, H advances and C resets
         to 0.</li>
     </ul>
     <p>
       Two lifecycle rules keep this sound over the long run. The <strong>empty-level
-      reset</strong>: a rest that finds <code>total_open = 0</code> with
+      reset</strong>: a rest that finds <code>open_lots = 0</code> with
       <code>tail_seq &gt; 0</code> resets the queue, bumping G and zeroing the counters. This is
       safe because every unclaimed order at that point is fully filled, and after the bump the
       <code>g &lt; G</code> row pays it exactly the same amount. Without the rule, a level
@@ -545,7 +545,7 @@
 <div class="wide">
   <figure>
     <div class="figbox">
-      <svg viewBox="0 0 880 330" role="img" aria-label="A price level's queue: slots 0 to 2 are behind the head and fully filled, slot 3 is the partially consumed head, slot 4 is a tombstone from a cancel, slots 5 through 9 are open, with seqs 8 and 9 in an overflow page. Counters generation, head_seq, head_consumed, tail_seq and total_open summarize all of it.">
+      <svg viewBox="0 0 880 330" role="img" aria-label="A price level's queue: slots 0 to 2 are behind the head and fully filled, slot 3 is the partially consumed head, slot 4 is a tombstone from a cancel, slots 5 through 9 are open, with seqs 8 and 9 in an overflow page. Counters generation, head_seq, head_consumed_lots, tail_seq and open_lots summarize all of it.">
         <!-- counter chips -->
         <g font-family="ui-monospace, Menlo, monospace" font-size="13">
           <rect x="40" y="28" width="128" height="32" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
@@ -557,7 +557,7 @@
           <rect x="460" y="28" width="150" height="32" rx="7" fill="none" stroke="var(--line)"/>
           <text x="535" y="49" text-anchor="middle" fill="currentColor">tail_seq = 10</text>
           <rect x="622" y="28" width="180" height="32" rx="7" fill="none" stroke="var(--line)"/>
-          <text x="712" y="49" text-anchor="middle" fill="currentColor">total_open = 36</text>
+          <text x="712" y="49" text-anchor="middle" fill="currentColor">open_lots = 36</text>
         </g>
 
         <!-- region brackets -->
@@ -625,7 +625,7 @@
       </svg>
     </div>
     <figcaption>
-      <b>One ask level at one price, drawn with N=8 to fit.</b> Matching writes no per-maker
+      <b>One ask level at one price, drawn with 8 slots to fit.</b> Matching writes no per-maker
       state; it advances H and C, or bumps G on a full sweep. An order's coordinates
       <code>(g, s)</code> against the counters <code>(G, H, C)</code> decide its fate at
       settlement time.
@@ -665,8 +665,9 @@
   <section id="sim">
     <h2><span class="secno">§ 5</span>A tiny book, live</h2>
     <p>
-      This is the storage model from § 3 and § 4 running at toy scale: 16 ticks, N=4 inline
-      slots, one overflow page of 4 (so a level holds 8 orders per generation). Step through
+      This is the storage model from § 3 and § 4 running at toy scale: 16 ticks,
+      INLINE_SLOTS = 4, one overflow page of PAGE_SLOTS = 4 (so a level holds 8 orders per
+      generation). Step through
       the scripted lifetime or drive it by hand. After every operation, the entries the
       transaction wrote flash <span style="color:var(--accent); font-weight:650">amber</span>,
       entries it created (and paid ~120 days of rent on) flash
@@ -768,7 +769,7 @@
       <div class="panel">
         <h4>Small entries</h4>
         <div class="chips" id="simChips"></div>
-        <h4 style="margin-top:8px">OrderRefs (settle / replace to a tick you pick)</h4>
+        <h4 style="margin-top:8px">Orders (settle / replace to a tick you pick)</h4>
         <table class="ord"><thead><tr><th>nonce</th><th>owner</th><th>coords</th><th>qty</th><th>state</th><th></th><th></th></tr></thead><tbody id="simOrds"></tbody></table>
       </div>
       <div class="panel">
@@ -778,10 +779,10 @@
     </div>
   </div>
   <figure><figcaption>
-    <b>What to watch.</b> Sweeps rewrite one Level and never touch slots or OrderRefs; the
+    <b>What to watch.</b> Sweeps rewrite one Level and never touch slots or Orders; the
     abandoned makers' entries stay until they settle, and the generation counter is their
     proof. A settle that empties a level leaves its bit and BestTick stale (the dimmed card);
-    the next place that walks through cleans it. Replace flashes the same OrderRef amber
+    the next place that walks through cleans it. Replace flashes the same Order amber
     (rewrite) instead of red-then-green (delete-then-create): that is the rent story in one
     blink. Rent shown is cumulative for created entries at current mainnet rates.
   </figcaption></figure>
@@ -789,7 +790,7 @@
 
 <script>
 (function () {
-  var TMIN = 8, TMAX = 23, N = 4, P = 4, CAP = 8, MAXLV = 4;
+  var TMIN = 8, TMAX = 23, INLINE_SLOTS = 4, PAGE_SLOTS = 4, CAP = 8, MAXLV = 4;
   var S, scenario, stepIx;
 
   function fresh() {
@@ -884,7 +885,7 @@
     if (st[0] === 'partial') { l.open -= st[2]; l.slots[o.seq] = 0; l.head = o.seq + 1; l.hc = 0; }
     else if (st[0] === 'open') { l.open -= o.qty; l.slots[o.seq] = 0; }
     rest(o.owner, side, tick, qty, t, nonce);
-    return 'settled old (' + st[0] + '), re-rested ' + qty + '@' + tick + ' — same OrderRef, zero rent';
+    return 'settled old (' + st[0] + '), re-rested ' + qty + '@' + tick + ' — same Order, zero rent';
   }
 
   function run(desc, fn) {
@@ -924,7 +925,7 @@
         col += '<div class="lvl ' + side0 + (stale ? ' stale' : '') + flashClass(t, 'L:' + key(side0, tick)) + '">';
         col += '<div class="ctr">G' + lv.gen + ' H' + lv.head + ' C' + lv.hc + '</div><div class="ctr">tail ' + lv.tail + ' · open ' + lv.open + '</div><div class="slots">';
         for (var sq = 0; sq < CAP; sq++) {
-          var cls = 'slot' + (sq >= N ? ' page' : '');
+          var cls = 'slot' + (sq >= INLINE_SLOTS ? ' page' : '');
           var txt = '';
           if (sq < lv.tail) {
             txt = lv.slots[sq];
@@ -944,7 +945,7 @@
     var chips = '';
     ['bid', 'ask'].forEach(function (side) {
       chips += '<span class="chip' + flashClass(t, 'B:' + side) + '">BestTick(' + side + ') = ' + (S.best[side] === null ? '∅' : S.best[side]) + '</span>';
-      chips += '<span class="chip' + flashClass(t, 'W:' + side) + '">TickBitmap(' + side + ')</span>';
+      chips += '<span class="chip' + flashClass(t, 'W:' + side) + '">TickWord(' + side + ')</span>';
     });
     document.getElementById('simChips').innerHTML = chips;
 
@@ -974,7 +975,7 @@
     ['Taker buys 8, limit 17 (sweeps 16 and 17, rests remainder)', function (t) { return place('buy', 8, 17, t); }],
     ['M3 settles: swept mid-queue, gen proves the fill', function (t) { return settle(5, t); }],
     ['M1 settles bid 13 unfilled (level goes stale)', function (t) { return settle(2, t); }],
-    ['M1 replaces bid 14 → bid 15 (same OrderRef, zero rent)', function (t) { return replace(1, 15, 5, t); }],
+    ['M1 replaces bid 14 → bid 15 (same Order, zero rent)', function (t) { return replace(1, 15, 5, t); }],
     ['Taker sells 3, limit 15 (cleans nothing stale, takes M1)', function (t) { return place('sell', 3, 15, t); }]
   ];
 
@@ -1012,7 +1013,7 @@
     <h2><span class="secno">§ 6</span>Matching: a bounded walk over bitmaps</h2>
     <p>
       Price discovery is a two-tier bitmap per side. <code>TickSummary</code> summarizes 2,048 words and
-      each <code>TickBitmap</code> word covers 2,048 ticks, which gives 4.19 million ticks per side with
+      each <code>TickWord</code> word covers 2,048 ticks, which gives 4.19 million ticks per side with
       the next set price always O(1) reads away. Sweeping a level clears its bit and walks on;
       the walk only ever reads bitmap words.
     </p>
@@ -1022,7 +1023,7 @@
 <div class="wide">
   <figure>
     <div class="figbox">
-      <svg viewBox="0 0 880 360" role="img" aria-label="Three tiers: a BestTick pointer, the TickSummary summary bitmap, and one TickBitmap word. Sweeping the level at the best tick clears its TickBitmap bit, and next_set_tick walks right to the following set bit, which resolves to a Level key.">
+      <svg viewBox="0 0 880 360" role="img" aria-label="Three tiers: a BestTick pointer, the TickSummary summary bitmap, and one TickWord word. Sweeping the level at the best tick clears its TickWord bit, and next_set_tick walks right to the following set bit, which resolves to a Level key.">
         <!-- BestTick chip -->
         <g font-family="ui-monospace, Menlo, monospace" font-size="13">
           <rect x="40" y="24" width="230" height="34" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
@@ -1048,8 +1049,8 @@
         <line x1="100" y1="140" x2="40" y2="210" stroke="currentColor" stroke-dasharray="4 4"/>
         <line x1="120" y1="140" x2="840" y2="210" stroke="currentColor" stroke-dasharray="4 4"/>
 
-        <!-- TickBitmap strip -->
-        <text x="70" y="196" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12" fill="var(--muted)">TickBitmap(word 3) — ticks 6,144 … 8,191</text>
+        <!-- TickWord strip -->
+        <text x="70" y="196" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12" fill="var(--muted)">TickWord(word 3) — ticks 6,144 … 8,191</text>
         <g>
           <rect x="40" y="210" width="800" height="30" rx="4" fill="var(--surface)" stroke="currentColor"/>
           <g stroke="var(--line)">
@@ -1095,19 +1096,19 @@
 
 <div class="col">
   <p>
-    A sweep never reads the level's slots, since <code>total_open × tick × tick_size</code> is
+    A sweep never reads the level's slots, since <code>open_lots × tick × tick_size</code> is
     already exact. The only slot access in matching is partial consumption at the final level,
     and a client-declared page <em>window</em> bounds it, behaving exactly like a loop cap. The
     taker path, compressed:
   </p>
-  <pre><code>place(taker, mkt, side, limit_tick, qty, start_tick, nonce, window, flags):
+  <pre><code>place(taker, market, side, limit_tick, qty, start_tick, nonce, window, flags):
   best = worse_of(BestTick(opposite), start_tick)   # never visit better ticks
   while qty &gt; 0 and best crosses limit_tick
         and levels &lt; MAX_LEVELS_CROSSED
         and slots_scanned &lt; MAX_SLOTS_SCANNED:
     lvl = Level(opposite, best)
-    if lvl.total_open == 0:        # stale bit → clear lazily, walk on
-    if lvl.total_open &lt;= qty:      # sweep: generation += 1, clear bit (no slot reads)
+    if lvl.open_lots == 0:        # stale bit → clear lazily, walk on
+    if lvl.open_lots &lt;= qty:      # sweep: generation += 1, clear bit (no slot reads)
     else:                          # partial: advance head within declared window;
                                    #   window edge ⇒ graceful stop, like a cap
   if qty &gt; 0:
@@ -1124,7 +1125,7 @@
   </div>
   <p>
     The write side stays flat: a rest appends one quantity slot at <code>tail_seq++</code>,
-    writes one <code>OrderRef</code>, and moves escrow in a single transfer.
+    writes one <code>Order</code>, and moves escrow in a single transfer.
     <strong>Post-only is conservative on purpose.</strong> It compares its tick against
     <code>BestTick</code> as stored, one read, and fails with <code>Crossed</code> even when that
     best is a stale bit over an emptied level. Since <code>BestTick</code> is never worse than the
@@ -1138,7 +1139,7 @@
   <p>
     Makers update quotes with <strong><code>replace</code></strong> rather than settle+place. It
     settles the old order exactly per the settlement table, rewrites the <em>same</em>
-    <code>OrderRef</code> in place with the new coordinates, and appends at the new tick.
+    <code>Order</code> in place with the new coordinates, and appends at the new tick.
     Reusing the entry at fixed size means zero rent, and the update is atomic, so the maker is
     never unquoted in between. <code>replace_batch</code> bounds a list of these at
     <code>MAX_REPLACE_BATCH</code> with settlement netted into one transfer per token: a full
@@ -1281,7 +1282,7 @@
   <p class="tbl-note">
     Compare against the per-transaction limits of 400 entries, 200 writes, and 132 KB. The
     max-sweep row shows its own arithmetic so the ceiling can be checked rather than trusted:
-    32 Levels at 384 B, 32 TickBitmap words at 256 B, plus TickSummary, BestTick, Fees, two vault
+    32 Levels at 384 B, 32 TickWord entries at 256 B, plus TickSummary, BestTick, FeeAccrual, two vault
     balances, and the taker's own rest comes to about 22 KB and 70 writes. Legal, but 7.6% of a
     whole ledger's 286,720 write bytes. Typical operations are the rows at or under 1.2 KB; a
     ledger sustains hundreds of those, or about 13 max sweeps. This is why every hot entry stays
@@ -1311,13 +1312,13 @@
         <tr><th>Entry point — outcome</th><th>Est. resource fee</th><th>Dominated by</th></tr>
       </thead>
       <tbody>
-        <tr><td>place — rest only (existing level)</td><td class="num">~0.029 XLM</td><td>OrderRef rent (160 B × 120 d ≈ 0.027)</td></tr>
+        <tr><td>place — rest only (existing level)</td><td class="num">~0.029 XLM</td><td>Order rent (160 B × 120 d ≈ 0.027)</td></tr>
         <tr><td>place — rest only (first touch / restore of a tick)</td><td class="num">~0.094 XLM</td><td>+ Level rent (384 B ≈ 0.064)</td></tr>
         <tr><td>settle</td><td class="num">~0.002 XLM</td><td>write entries; zero rent</td></tr>
         <tr><td>replace (one quote; entry reused)</td><td class="num">~0.003 XLM</td><td>write entries; zero rent</td></tr>
         <tr><td>replace_batch (40-quote refresh, one tx)</td><td class="num">~0.03 XLM</td><td>write entries (~90 × 2,500)</td></tr>
         <tr><td>place — take only, 8 levels swept</td><td class="num">~0.009 XLM</td><td>write entries + tx size</td></tr>
-        <tr><td>place — take 8 levels + rest remainder</td><td class="num">~0.037 XLM</td><td>the remainder's OrderRef rent</td></tr>
+        <tr><td>place — take 8 levels + rest remainder</td><td class="num">~0.037 XLM</td><td>the remainder's Order rent</td></tr>
         <tr><td>place — maximal take (32 levels)</td><td class="num">~0.027 XLM</td><td>write entries (70 × 2,500)</td></tr>
         <tr><td>create_market</td><td class="num">~0.043 XLM</td><td>Market rent</td></tr>
         <tr><td>collect_fees</td><td class="num">~0.001 XLM</td><td>—</td></tr>
@@ -1336,7 +1337,7 @@
 <div class="col">
   <div class="callout">
     <span class="t sans">Matching is nearly free; placement pays rent</span>
-    A 32-level sweep costs about the same as creating one <code>OrderRef</code>. The book's
+    A 32-level sweep costs about the same as creating one <code>Order</code>. The book's
     carrying cost sits with makers, about 0.027 XLM per open order per 120 days, an anti-spam
     floor that comes free with the storage model and stacks with <code>min_order_lots</code>: a
     K-order dust storm costs about 0.027 K XLM and none of it comes back. Level rent (about
@@ -1348,7 +1349,7 @@
     <span class="t sans">Market making: churn is priced separately from holding</span>
     On the classic Stellar DEX, makers re-center whole books every ledger or two because offer
     updates cost ~100 stroops and reserves come back. The settle+place path here re-pays
-    OrderRef rent on every update (~0.031 XLM per quote), so a 40-order book refreshed every
+    Order rent on every update (~0.031 XLM per quote), so a 40-order book refreshed every
     minute would burn ~1,800 XLM a day. That's why <code>replace</code> exists: with the entry
     reused, the same full refresh is one ~0.03 XLM transaction and per-quote carrying cost
     stays 0.000225 XLM/day at any update frequency. Capacity binds before fees do, though: at
@@ -1458,16 +1459,16 @@
         <tr><th>Entry</th><th>TTL comes from</th><th>On archival (~120 d idle)</th></tr>
       </thead>
       <tbody>
-        <tr><td class="k">Admin (instance) + wasm code</td><td>permissionless keepalive() crank + admin ops; never market ops</td><td>crank restores (~2.3 XLM / 120 d, mostly code rent)</td></tr>
-        <tr><td class="k">Market, BestTick, TickSummary, TickBitmap, Level, LevelPage, Fees</td><td>120-day protocol minimum, prepaid at creation/restore; whoever restores pays the next chunk</td><td>auto-restore on touch; generation survives</td></tr>
-        <tr><td class="k">OrderRef</td><td>120-day minimum at rest (maker pays); optional extend to the 180-d max for long-lived quotes</td><td>claimant restores as its last act; cost on beneficiary</td></tr>
+        <tr><td class="k">Config (instance) + wasm code</td><td>permissionless keepalive() crank + admin ops; never market ops</td><td>crank restores (~2.3 XLM / 120 d, mostly code rent)</td></tr>
+        <tr><td class="k">Market, BestTick, TickSummary, TickWord, Level, LevelPage, FeeAccrual</td><td>120-day protocol minimum, prepaid at creation/restore; whoever restores pays the next chunk</td><td>auto-restore on touch; generation survives</td></tr>
+        <tr><td class="k">Order</td><td>120-day minimum at rest (maker pays); optional extend to the 180-d max for long-lived quotes</td><td>claimant restores as its last act; cost on beneficiary</td></tr>
       </tbody>
     </table>
   </div>
   <p class="tbl-note">
     Two rules are firm. A <code>Level</code> is <strong>never deleted</strong>, because its
     counters are other people's fill proofs. And temporary storage never holds funds-bearing
-    state. Pages behind the head and claimed <code>OrderRef</code>s do get deleted; their
+    state. Pages behind the head and claimed <code>Order</code>s do get deleted; their
     lifecycles are genuinely over.
   </p>
 </div>
@@ -1512,7 +1513,7 @@
     <ol class="inv">
       <li><strong>Conservation.</strong> The vault balance per token equals open escrows plus
         unclaimed proceeds plus accrued fees, across all markets, exactly.</li>
-      <li><strong>Open interest.</strong> <code>total_open</code> equals the sum of live queue
+      <li><strong>Open interest.</strong> <code>open_lots</code> equals the sum of live queue
         quantities, excluding tombstones and stale slots.</li>
       <li><strong>Bitmap coherence, deliberately weak.</strong> Liquidity implies the bit is
         set, but a stale set bit over an empty level is allowed; the next fill that visits it
@@ -1553,7 +1554,7 @@
         width into a constant percentage depth. v2.</li>
       <li><strong>Pooled pro-rata levels:</strong> fungible shares per (level, generation) as a
         sibling market type. It would delete pages, tombstones, windows, and the per-order
-        OrderRef whose rent is the largest cost, in exchange for giving up time priority within
+        Order whose rent is the largest cost, in exchange for giving up time priority within
         a level. Generation-on-sweep stays either way, because fill finality without keepers is
         the point. v2.</li>
       <li><strong>A volatility-scaled taker fee.</strong> The matching loop already counts crossings

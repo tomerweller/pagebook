@@ -36,7 +36,7 @@ on EVM — are fundamentally incompatible with Soroban's simulation-time footpri
 
 One contract hosts many markets. Each price level is one small persistent entry keyed
 `(market, side, tick)` holding a packed FIFO plus three counters (`generation`,
-`head_seq`, `head_consumed`); a per-side bitmap and a `Best` pointer index the levels.
+`head_seq`, `head_consumed_lots`); a per-side bitmap and a `Best` pointer index the levels.
 Takers sweep k levels with k small writes and settle atomically via SAC transfers —
 makers are never touched during matching. Makers claim later in O(1) by comparing their
 packed order id against the level counters (generation advanced ⇒ fully filled). All
