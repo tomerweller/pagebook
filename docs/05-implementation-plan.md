@@ -14,7 +14,7 @@ pagebook/
 │           ├── lib.rs         # contract trait impl, entry points only
 │           ├── admin.rs       # constructor, admin rotation, pause, upgrade, keepalive
 │           ├── market.rs      # market create/config, quantization + §0 bound checks
-│           ├── keys.rs        # ALL storage keys + TTL policy in one place
+│           ├── keys.rs        # DataKey enum (contracttype, full-word variants) + TTL policy
 │           ├── level.rs       # Level/Page packed encoding, positional queue, resets, settlement state machine
 │           ├── bitmap.rs      # L0/L1 ops: set/clear/next_set_tick(at_or_after)
 │           ├── matching.rs    # matching loop (place), sweep/partial, caps + windows, best maintenance

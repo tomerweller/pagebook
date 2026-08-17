@@ -66,17 +66,25 @@ seq, page index) may appear in a key the client must declare, unless the client 
 bound it; that rule shapes `OrderRef` below. Payload sizes are XDR-serialized targets
 at max occupancy; enforce with tests.
 
+Keys use the idiomatic `DataKey` pattern (cf. soroban-examples' token contract): one
+`#[contracttype]` enum, variant name as type tag, coordinates as fields. The tag keeps
+same-shaped types (Best vs L1, Level vs L0) from colliding in the shared key space;
+`Admin` is a unit variant so the instance entry has a proper key too. Full-word variant
+names cost a few bytes more per key than single characters, but fixed per-key framing
+(~50–90 B: contract address, envelope) dwarfs that; legibility in explorers and test
+dumps wins.
+
 | # | Entry | Durability | Key | Contents | Target size |
 |---|---|---|---|---|---|
-| 1 | `Admin` | instance | — | admin `Address`, fee recipient `Address`, paused flag, market counter | ~150 B |
-| 2 | `Market` | persistent | `("M", mkt_id)` | base/quote SAC addrs, lot_size, tick_size, tick band, fee bps, min/max order lots, `MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED`, N, P, `MAX_PAGES` | ~250 B |
-| 3 | `Best(side)` | persistent | `("B", mkt, side)` | best tick (u32), empty flag | ~40 B |
-| 4 | `L1(side)` | persistent | `("S", mkt, side)` | summary bitmap: bit w = "L0 word w has any set bit" (2,048 words) | 256 B |
-| 5 | `L0(side, w)` | persistent | `("W", mkt, side, w)` | presence bitmap for ticks `[w·2048, (w+1)·2048)` | 256 B |
-| 6 | `Level(side, tick)` | persistent | `("L", mkt, side, tick)` | packed `Bytes`: version u8, `generation:u32, head_seq:u32, tail_seq:u32, head_consumed:u64, total_open:u64`, then N × qty:u64 inline slots (target N=32) | ≤ 384 B |
-| 7 | `Page(side, tick, p)` | persistent | `("P", mkt, side, tick, p)` | packed `Bytes`: version u8, then P × qty:u64 slots (target P=32) | ≤ 320 B |
-| 8 | `OrderRef(owner, nonce)` | persistent | `("O", mkt, owner, nonce)` | side, tick, generation, seq, qty_lots | ≤ 160 B |
-| 9 | `Fees(token)` | persistent | `("F", mkt, token)` | accrued protocol fees (i128) | ~50 B |
+| 1 | `Admin` | instance | `Admin` | admin `Address`, fee recipient `Address`, paused flag, market counter | ~150 B |
+| 2 | `Market` | persistent | `Market(mkt_id)` | base/quote SAC addrs, lot_size, tick_size, tick band, fee bps, min/max order lots, `MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED`, N, P, `MAX_PAGES` | ~250 B |
+| 3 | `Best(side)` | persistent | `Best(mkt, side)` | best tick (u32), empty flag | ~40 B |
+| 4 | `L1(side)` | persistent | `L1(mkt, side)` | summary bitmap: bit w = "L0 word w has any set bit" (2,048 words) | 256 B |
+| 5 | `L0(side, w)` | persistent | `L0(mkt, side, w)` | presence bitmap for ticks `[w·2048, (w+1)·2048)` | 256 B |
+| 6 | `Level(side, tick)` | persistent | `Level(mkt, side, tick)` | packed `Bytes`: version u8, `generation:u32, head_seq:u32, tail_seq:u32, head_consumed:u64, total_open:u64`, then N × qty:u64 inline slots (target N=32) | ≤ 384 B |
+| 7 | `Page(side, tick, p)` | persistent | `Page(mkt, side, tick, p)` | packed `Bytes`: version u8, then P × qty:u64 slots (target P=32) | ≤ 320 B |
+| 8 | `OrderRef(owner, nonce)` | persistent | `OrderRef(mkt, owner, nonce)` | side, tick, generation, seq, qty_lots | ≤ 160 B |
+| 9 | `Fees(token)` | persistent | `Fees(mkt, token)` | accrued protocol fees (i128) | ~50 B |
 
 **Order identity.** An order's handle is `(owner, nonce)` — the nonce is chosen by the
 client *before* submission, so the `OrderRef` key is declarable at simulation time no

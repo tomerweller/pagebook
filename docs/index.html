@@ -316,8 +316,9 @@
       The design answers each in turn. Against the footprint: every key is computable
       off-chain and every loop has a config-defined bound, so a client can declare the full
       key set in advance and pad it against a moving book. Against the write budget: every hot
-      entry stays a few hundred bytes, and every operation's worst-case writes are a number in
-      a table that tests enforce.
+      entry stays a few hundred bytes, and every operation has a fixed worst-case write budget
+      (the tables in § 6); regression tests measure each operation and fail the build if it
+      outgrows its budget.
     </p>
   </section>
 
@@ -377,7 +378,16 @@
       Every key derives from identifiers the client knows before submission: market, side,
       tick, word, page, owner, nonce. A client or SDK can compute all of them without reading
       chain state. Footprint padding depends on this, so the design treats it as
-      non-negotiable.
+      non-negotiable. Keys follow Soroban's idiomatic <code>DataKey</code> pattern: one
+      <code>#[contracttype]</code> enum whose variant name is the type tag and whose fields
+      are the coordinates, the same shape as the token example's
+      <code>DataKey::Balance(Address)</code>. The tag is what keeps types with the same
+      coordinate shape (Best and L1, Level and the bitmap words) from colliding in the shared
+      key space, and <code>Admin</code> is a unit variant, so even the instance entry has a
+      proper key. Full-word variant names cost a few more key bytes than single characters,
+      but every key already carries ~50–90 bytes of fixed framing (contract address, envelope),
+      so the difference is noise, and spelled-out names read plainly in explorers and test
+      dumps.
     </p>
   </section>
 </div>
@@ -389,15 +399,15 @@
         <tr><th>Entry</th><th>Key</th><th>Contents</th><th>Budget</th></tr>
       </thead>
       <tbody>
-        <tr><td class="k">Admin</td><td class="k">instance</td><td>admin, fee recipient, paused flag, market counter</td><td class="num">~150 B</td></tr>
-        <tr><td class="k">Market</td><td class="k">("M", mkt)</td><td>token pair, quantization, fee bps, order-size bounds, loop caps, N / P / MAX_PAGES</td><td class="num">~250 B</td></tr>
-        <tr><td class="k">Best(side)</td><td class="k">("B", mkt, side)</td><td>best tick, empty flag</td><td class="num">~40 B</td></tr>
-        <tr><td class="k">L1(side)</td><td class="k">("S", mkt, side)</td><td>summary bitmap: bit w set ⇔ L0 word w has a set bit (2,048 words)</td><td class="num">256 B</td></tr>
-        <tr><td class="k">L0(side, w)</td><td class="k">("W", mkt, side, w)</td><td>presence bitmap for 2,048 ticks</td><td class="num">256 B</td></tr>
-        <tr><td class="k">Level(side, tick)</td><td class="k">("L", mkt, side, tick)</td><td>packed Bytes: version, <code>generation, head_seq, tail_seq, head_consumed, total_open</code> + N inline qty slots</td><td class="num">≤ 384 B</td></tr>
-        <tr><td class="k">Page(side, tick, p)</td><td class="k">("P", mkt, side, tick, p)</td><td>packed Bytes: version + P qty slots (queue overflow)</td><td class="num">≤ 320 B</td></tr>
-        <tr><td class="k">OrderRef(owner, nonce)</td><td class="k">("O", mkt, owner, nonce)</td><td>side, tick, generation, seq, qty (coordinates stay in the contents, not in the key)</td><td class="num">≤ 160 B</td></tr>
-        <tr><td class="k">Fees(token)</td><td class="k">("F", mkt, token)</td><td>accrued protocol fees</td><td class="num">~50 B</td></tr>
+        <tr><td class="k">Admin</td><td class="k">Admin</td><td>admin, fee recipient, paused flag, market counter (instance storage)</td><td class="num">~150 B</td></tr>
+        <tr><td class="k">Market</td><td class="k">Market(mkt)</td><td>token pair, quantization, fee bps, order-size bounds, loop caps, N / P / MAX_PAGES</td><td class="num">~250 B</td></tr>
+        <tr><td class="k">Best(side)</td><td class="k">Best(mkt, side)</td><td>best tick, empty flag</td><td class="num">~40 B</td></tr>
+        <tr><td class="k">L1(side)</td><td class="k">L1(mkt, side)</td><td>summary bitmap: bit w set ⇔ L0 word w has a set bit (2,048 words)</td><td class="num">256 B</td></tr>
+        <tr><td class="k">L0(side, w)</td><td class="k">L0(mkt, side, w)</td><td>presence bitmap for 2,048 ticks</td><td class="num">256 B</td></tr>
+        <tr><td class="k">Level(side, tick)</td><td class="k">Level(mkt, side, tick)</td><td>packed Bytes: version, <code>generation, head_seq, tail_seq, head_consumed, total_open</code> + N inline qty slots</td><td class="num">≤ 384 B</td></tr>
+        <tr><td class="k">Page(side, tick, p)</td><td class="k">Page(mkt, side, tick, p)</td><td>packed Bytes: version + P qty slots (queue overflow)</td><td class="num">≤ 320 B</td></tr>
+        <tr><td class="k">OrderRef(owner, nonce)</td><td class="k">OrderRef(mkt, owner, nonce)</td><td>side, tick, generation, seq, qty (coordinates stay in the contents, not in the key)</td><td class="num">≤ 160 B</td></tr>
+        <tr><td class="k">Fees(token)</td><td class="k">Fees(mkt, token)</td><td>accrued protocol fees</td><td class="num">~50 B</td></tr>
       </tbody>
     </table>
   </div>
