@@ -155,7 +155,7 @@
 <header class="top">
   <div class="in">
     <h1>PageBook</h1>
-    <p class="sub">A central limit order book for Soroban, built so that every transaction can name its storage before it runs. This page is the short version of the <a href="04-architecture.md">architecture doc</a>: the same data structures and processes, with pictures and worked numbers.</p>
+    <p class="sub">A central limit order book for Soroban with deterministic footprints: every ledger key an operation touches is computable at simulation time. This page is the short version of the <a href="04-architecture.md">architecture doc</a>: the same data structures and processes, with pictures and worked numbers.</p>
   </div>
 </header>
 
@@ -180,20 +180,20 @@
 <section id="model">
   <h3>The model in one paragraph <span class="ref"><a href="04-architecture.md#01-model-and-vocabulary">04 §0</a></span></h3>
   <p>
-    One contract hosts many markets. A market is a token pair plus two numbers, <code>lot_size</code> and <code>tick_size</code>, that turn every quantity into an integer count of lots and every price into an integer tick. Each side of a market (bids, asks) is a set of price levels; each level is a FIFO queue of maker orders at exactly one price. A taker calls <code>place</code>, which crosses the book and settles in the same transaction. A maker's order rests, and later the maker calls <code>settle</code>, the one exit: it pays whatever happened, proceeds if the order filled, a refund if it did not, both if it partly filled. There is no rounding anywhere in matching, because <code>lots × tick × tick_size</code> is exact; the taker fee is the only place the contract rounds, and it rounds up.
+    One contract hosts many markets. A market is a pair of SAC addresses plus two numbers, <code>lot_size</code> and <code>tick_size</code>, that turn every quantity into an integer count of lots and every price into an integer tick. Each side of a market (bids, asks) is a set of price levels; each level is a FIFO queue of maker orders at exactly one price. A taker calls <code>place</code>, which crosses the book and settles in the same transaction. A maker's order rests, and later the maker calls <code>settle</code>, the one exit: it pays whatever happened, proceeds if the order filled, a refund if it did not, both if it partly filled. There is no rounding anywhere in matching, because <code>lots × tick × tick_size</code> is exact; the taker fee is the only place the contract rounds, and it rounds up.
   </p>
   <p>
-    Soroban is the reason the design looks the way it does. A Soroban transaction declares every ledger entry it will read or write before it executes, and touching an undeclared entry fails the transaction. So a client has to be able to name every key a place or settle will touch before it knows what the book will look like when the transaction lands. Everything below follows from that.
+    The footprint is the reason the design looks the way it does. A transaction's read/write footprint is fixed at submission, and the book keeps moving between simulation and inclusion. So place and settle need footprints a client can compute from simulation and pad against whatever the book does before the transaction lands. Everything below follows from that.
   </p>
 </section>
 
 <h2 class="part" id="part1">Part I: data structures</h2>
-<p class="lead">There are ten storage entries in three groups, and two rules apply to all of them: every key is a pure function of things the client already knows, and the tick index can always be rebuilt from the order store.</p>
+<p class="lead">There are ten ledger entries in three groups, and two rules apply to all of them: every key is a pure function of client-known identifiers, and the tick index can always be rebuilt from the order store.</p>
 
 <section id="storage">
   <h3>Storage map <span class="ref"><a href="04-architecture.md#part-i--data-structures">04 Part I</a></span></h3>
   <p>
-    Keys are one <code>DataKey</code> enum: the variant name is the type, the fields are coordinates. Nothing that execution assigns (a generation, a queue position, a page index) may appear in a key the client has to declare. Sizes are byte budgets that tests enforce.
+    Keys are one <code>#[contracttype]</code> <code>DataKey</code> enum: the variant name is the type, the fields are coordinates. Nothing that execution assigns (a generation, a queue position, a page index) may appear in a key the client has to put in the footprint. All entries are persistent except <code>Config</code>. Sizes are XDR-serialized budgets at max occupancy, enforced by tests; the hot entries are packed <code>Bytes</code> because a <code>contracttype</code> map would be about 2.5× larger.
   </p>
   <div class="tablewrap">
     <table>
@@ -215,7 +215,7 @@
     </table>
   </div>
   <p>
-    Plus the vault: the contract's own balance inside each token contract. PageBook does not define that entry, but every settling transaction touches it, which makes it the point where transactions serialize (Part III).
+    Plus the vault: the contract's own SAC balance entries, one per token. PageBook does not define them, but every settling transaction has them in its read-write footprint, which makes them the point where transactions serialize (Part III).
   </p>
   <figure>
     <div class="box">
@@ -344,7 +344,7 @@
     <div class="card">
       <div class="t">Contents: assigned at execution</div>
       <div class="v">side · tick · generation · seq · qty</div>
-      <div class="d">Reported in the <code>rested</code> event. Fixed size, so <code>replace</code> can rewrite it in place without changing the entry's size (and therefore without paying rent again).</div>
+      <div class="d">Reported in the <code>rested</code> event. Fixed size, so <code>replace</code> rewrites it in place; a same-size rewrite pays write fees but no rent.</div>
     </div>
   </div>
   <p>
@@ -475,7 +475,7 @@
 <section id="walk">
   <h3>The matching walk <span class="ref"><a href="04-architecture.md#8-the-matching-walk-the-taker-path">04 §8</a></span></h3>
   <p>
-    A taker's <code>place</code> starts at <code>start_tick</code>, the best opposite tick the client saw when it simulated, and walks toward its limit. Ticks better than <code>start_tick</code> are never visited: an order that arrived there after simulation is unreachable, so it cannot make the transaction read an undeclared key. Sweeping a whole level needs no slot reads (<code>open_lots × tick × tick_size</code> is exact) and is one small write: bump the generation. Only the last, partial level touches slots.
+    A taker's <code>place</code> starts at <code>start_tick</code>, the best opposite tick the client saw when it simulated, and walks toward its limit. Ticks better than <code>start_tick</code> are never visited: an order that arrived there after simulation is outside the footprint by construction, and the walk never reaches for it. Sweeping a whole level needs no slot reads (<code>open_lots × tick × tick_size</code> is exact) and is one small write: bump the generation. Only the last, partial level touches slots.
   </p>
   <figure>
     <div class="box">
@@ -545,7 +545,7 @@
 <section id="rest">
   <h3>Rest, and replace <span class="ref"><a href="04-architecture.md#9-rest-append">04 §9</a>, <a href="04-architecture.md#10-replace-the-maker-update-path">§10</a></span></h3>
   <p>
-    A rest is an append: <code>seq = tail_seq++</code>, write the quantity into that slot, write the <code>Order</code>, set the tick's bit if the level was empty, move <code>BestTick</code> if this is a new best, escrow one transfer. The slot must land inside the append window the client declared (the pages around the simulated tail); if a concurrent rest pushed the tail past it, the result is the typed error <code>RetryRest</code>, not a footprint violation.
+    A rest is an append: <code>seq = tail_seq++</code>, write the quantity into that slot, write the <code>Order</code>, set the tick's bit if the level was empty, move <code>BestTick</code> if this is a new best, escrow with one SAC transfer. The slot must land inside the append window the client declared (the pages around the simulated tail); if a concurrent rest pushed the tail past it, the result is the typed error <code>RetryRest</code>, not a host trap on an undeclared key.
   </p>
   <p>
     A maker updating a quote does not settle and place again. <code>replace</code> settles the old order per the table above, then rewrites the same <code>Order</code> entry with new coordinates and appends at the new tick, atomically. The entry keeps its key and its size, so no rent is charged, and the maker is never unquoted in between. <code>replace_batch</code> does this for up to <code>MAX_REPLACE_BATCH</code> quotes with one netted transfer per token.
@@ -587,14 +587,14 @@
         </g>
       </svg>
     </div>
-    <figcaption>The maker's nonce becomes a durable quote slot whose 120-day rent is paid once and amortizes across every update. A 40-quote refresh in one transaction costs about 0.03 XLM.</figcaption>
+    <figcaption>The maker's nonce becomes a durable quote slot whose rent (the minimum persistent TTL, about 120 days) is paid once and amortizes across every update. A 40-quote refresh in one transaction costs about 0.03 XLM.</figcaption>
   </figure>
 </section>
 
 <section id="client">
   <h3>The client's process <span class="ref"><a href="04-architecture.md#14-the-clients-process-simulate--pad--submit">04 §14</a></span></h3>
   <p>
-    The contract's promise is that every key it touches is a function of <code>(market, side, tick, word, page, owner, nonce)</code>. The client's job is to declare enough of them that the transaction still fits the book it lands on, which may differ from the one it simulated against. Between simulation and inclusion, new levels can appear at any tick inside the walk range, and heads and tails can cross page boundaries.
+    Every key the contract touches is a function of <code>(market, side, tick, word, page, owner, nonce)</code>, so the client builds the footprint itself. Its job is to pad that footprint so the transaction still fits the book it lands on, which may differ from the one <code>simulateTransaction</code> saw. Between simulation and inclusion, new levels can appear at any tick inside the walk range, and heads and tails can cross page boundaries.
   </p>
   <figure>
     <div class="box">
@@ -642,20 +642,20 @@
         </g>
       </svg>
     </div>
-    <figcaption><b>One failure mode traps; the rest degrade.</b> If the walk needs a level past <code>pad_end</code>, the transaction fails. Everything else that can move between simulation and inclusion ends gracefully: a cap ends the loop with the remainder refunded, an append outside its window returns <code>RetryRest</code>. Padding is cheap (a 100-key band is ~0.003 XLM); the 400-entry footprint cap is the limit that binds, and on a sparse book the client trades band depth against trap probability.</figcaption>
+    <figcaption><b>One failure mode traps; the rest degrade.</b> If the walk needs a level past <code>pad_end</code>, the host traps on the undeclared key. Everything else that can move between simulation and inclusion ends gracefully: a cap ends the loop with the remainder refunded, an append outside its window returns <code>RetryRest</code>. Padding is cheap (a 100-key band is ~0.003 XLM); the 400-entry per-transaction footprint limit is what binds, and on a sparse book the client trades band depth against trap probability.</figcaption>
   </figure>
 </section>
 
 <h2 class="part" id="part3">Part III: what comes out</h2>
-<p class="lead">Because hot entries are small, loops are capped, and the client pads its footprint, a router can simulate a PageBook transaction, declare it, and run it alongside others.</p>
+<p class="lead">Small hot entries, capped loops, and a client-padded footprint give a router a transaction it can simulate once and trust, and one that parallelizes with anything outside its read-write set.</p>
 
 <section id="budgets">
   <h3>Budgets and fees <span class="ref"><a href="04-architecture.md#17-budgets-and-fees">04 §17</a></span></h3>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>Operation</th><th class="num">Footprint</th><th class="num">Writes</th><th class="num">Bytes written</th><th class="num">Est. fee</th><th>Dominated by</th></tr></thead>
+      <thead><tr><th>Operation</th><th class="num">Footprint entries</th><th class="num">Write entries</th><th class="num">Write bytes</th><th class="num">Est. resource fee</th><th>Dominated by</th></tr></thead>
       <tbody>
-        <tr><td>place, rest only, existing level</td><td class="num">~12</td><td class="num">~5</td><td class="num">~0.9 KB</td><td class="num">~0.029 XLM</td><td>Order rent (120 days)</td></tr>
+        <tr><td>place, rest only, existing level</td><td class="num">~12</td><td class="num">~5</td><td class="num">~0.9 KB</td><td class="num">~0.029 XLM</td><td>Order rent (min TTL)</td></tr>
         <tr><td>place, rest only, first touch of a tick</td><td class="num">~14</td><td class="num">~7</td><td class="num">~1.2 KB</td><td class="num">~0.094 XLM</td><td>+ Level rent</td></tr>
         <tr><td>settle</td><td class="num">~9</td><td class="num">~3</td><td class="num">~0.6 KB</td><td class="num">~0.002 XLM</td><td>write entries, no rent</td></tr>
         <tr><td>replace, one quote</td><td class="num">~14</td><td class="num">~8</td><td class="num">~1.5 KB</td><td class="num">~0.003 XLM</td><td>write entries, zero rent</td></tr>
@@ -666,10 +666,10 @@
     </table>
   </div>
   <p>
-    Matching is nearly free and placement pays rent: a 32-level sweep costs about the same as resting one order, so the book's carrying cost sits with makers at roughly 0.027 XLM per open order per 120 days, which doubles as anti-spam. And write bytes, not fees, are the throughput ceiling: the max sweep is 7.6% of a ledger's 286,720 write bytes, so a ledger fits about 13 of them, or hundreds of rests and settles. Every hot entry is a few hundred bytes for that reason.
+    Matching is nearly free and placement pays rent: a 32-level sweep costs about the same as resting one order, so the book's carrying cost sits with makers at roughly 0.027 XLM per open order per minimum TTL, which doubles as anti-spam. And write bytes, not fees, are the throughput ceiling: the max sweep is 7.6% of the ledger-wide write-bytes limit (286,720), so a ledger fits about 13 of them, or hundreds of rests and settles. Every hot entry is a few hundred bytes for that reason.
   </p>
   <div class="callout">
-    <p>Concurrency: the vault's SAC balance entries are the serialization points. Every settling transaction writes one or both, so all markets sharing a token form one cluster. v1 accepts this because write bytes bind first; per-market vault sub-accounts are the v2 fix. No market operation ever writes the instance entry, so that cluster analysis is complete. <a href="04-architecture.md#16-concurrency-and-serialization">04 §16</a></p>
+    <p>Concurrency: the vault's SAC balance entries are the serialization points. Every settling transaction has one or both in its read-write footprint, so under P23 parallel execution all markets sharing a token form one dependent-transaction cluster. v1 accepts this because write bytes bind first; per-market vault sub-accounts are the v2 fix. No market operation writes the instance entry (no <code>bump_instance</code> on the hot path; <code>keepalive()</code> cranks the TTL), so instance reads stay read-only and never widen the cluster. <a href="04-architecture.md#16-concurrency-and-serialization">04 §16</a></p>
   </div>
 </section>
 
