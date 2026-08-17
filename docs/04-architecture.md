@@ -96,13 +96,15 @@ explorers and test dumps wins. The same rule applies to key coordinates and capa
 constants: `market`, `word`, `page`, `INLINE_SLOTS`, `PAGE_SLOTS` — never `mkt`, `w`,
 `p`, `N`, `P`.
 
-**The tick index is always reconstructible from the order store; the order store is
-reconstructible from nothing.** The order store — the level queue (§2), `Order` (§3),
-`FeeAccrual` (§4) — is authoritative and funds-bearing: strict invariants, never
-stale. The tick index (§5) is derived and money-free: it may run stale and heal
-lazily. That asymmetry is why the store carries the hard rules (never delete a
-`Level`; never read past `tail_seq`) while the index carries a staleness contract
-instead. Configuration (§1) is money-free and admin-governed; the vault (§6) is not
+**The order store is authoritative; the tick index is derived.** The order store —
+the level queue (§2), `Order` (§3), `FeeAccrual` (§4) — is the source of truth and
+funds-bearing: strict invariants, never stale. The tick index (§5) holds no funds and
+only decides how quickly matching finds the next live tick, so an error there costs a
+wasted step on the walk, never a wrong settlement. That is why the store carries the
+hard rules (never delete a `Level`; never read past `tail_seq`) while the index carries
+a one-directional staleness contract instead: a live level always has its bit set; a
+set bit over an emptied level is tolerated and cleared by the next place that lands on
+it. Configuration (§1) is money-free and admin-governed; the vault (§6) is not
 PageBook's storage at all, but every settling footprint touches it.
 
 Payload sizes are XDR-serialized targets at max occupancy; M0 size tests enforce
@@ -290,8 +292,11 @@ true best set tick; matching may walk forward from it.
 **Lifecycle.** Bits are set by rests that give a tick liquidity (§9), cleared by
 sweeps — or lazily, on the walk (§8). `BestTick` moves toward the book on rest and
 away from it on take. 120-day TTL at creation/restore; auto-restore on touch.
-Staleness and archival are both benign because every tier is reconstructible from the
-order store (Part I intro).
+Staleness is benign because the index carries no funds: a stale bit costs one extra
+step on the walk, and the place that lands on it clears it (§8). Archival is benign
+for the same reason: a word comes back on restore exactly as last written, and every
+write that gives a tick liquidity touches its word, so the hard direction of the
+contract holds across the gap.
 
 ### 6. The vault
 

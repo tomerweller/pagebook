@@ -219,10 +219,7 @@
   </p>
   <figure>
     <div class="box">
-      <svg viewBox="0 0 880 200" role="img" aria-label="Two groups. The order store (Level, LevelPage, Order, FeeAccrual) is authoritative and funds-bearing. An arrow labeled 'rebuilds' points from it to the tick index (BestTick, TickSummary, TickWord), which is derived and may run stale. Nothing rebuilds the order store.">
-        <defs>
-          <marker id="ar1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
-        </defs>
+      <svg viewBox="0 0 880 200" role="img" aria-label="Two groups side by side. The order store (Level, LevelPage, Order, FeeAccrual) is authoritative, funds-bearing, and never stale: the source of truth. The tick index (BestTick, TickSummary, TickWord) is derived and money-free, may run stale, and is healed lazily by the next place that walks through.">
         <g font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12">
           <rect x="30" y="34" width="360" height="130" rx="10" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
           <text x="46" y="58" font-weight="650" fill="currentColor">ORDER STORE</text>
@@ -231,7 +228,7 @@
             <text x="46" y="106">Level</text><text x="120" y="106">LevelPage</text>
             <text x="46" y="128">Order</text><text x="120" y="128">FeeAccrual</text>
           </g>
-          <text x="46" y="152" fill="var(--muted)">reconstructible from nothing</text>
+          <text x="46" y="152" fill="var(--muted)">source of truth</text>
 
           <rect x="490" y="34" width="360" height="130" rx="10" fill="var(--surface)" stroke="var(--accent)" stroke-dasharray="6 4" stroke-width="1.5"/>
           <text x="506" y="58" font-weight="650" fill="var(--accent)">TICK INDEX</text>
@@ -241,9 +238,6 @@
             <text x="506" y="128">TickWord</text>
           </g>
           <text x="506" y="152" fill="var(--muted)">healed lazily by the next place that walks through</text>
-
-          <line x1="392" y1="99" x2="486" y2="99" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar1)"/>
-          <text x="439" y="90" text-anchor="middle" fill="currentColor" font-size="11.5">rebuilds</text>
         </g>
       </svg>
     </div>
