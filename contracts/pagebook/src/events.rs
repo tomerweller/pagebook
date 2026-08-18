@@ -18,6 +18,8 @@ pub fn rested(
     );
 }
 
+/// `is_bid` is the side of the level that was consumed (the makers' side), as
+/// for `swept`; the taker is on the other side.
 pub fn filled(env: &Env, market: u32, is_bid: bool, tick: u32, lots: u64, quote: i128) {
     env.events().publish(
         (symbol_short!("filled"), market),

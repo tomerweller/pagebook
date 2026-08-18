@@ -761,7 +761,7 @@ The contract's output surface (per tx ≤ 16,384 bytes):
 | Event | Emitted by | Fields |
 |---|---|---|
 | `rested` | rest (§9), replace (§10) | `owner, nonce, side, tick, generation, seq` |
-| `filled` | walk (§8), one per crossed level | `side, tick, lots, quote` |
+| `filled` | walk (§8), one per crossed level | `side, tick, lots, quote` — `side` is the consumed level's (makers') side, as for `swept` |
 | `swept` | walk (§8) | `side, tick, generation` |
 | `settled` | settlement (§7), replace (§10) | `owner, nonce, filled_lots, refunded_lots` |
 | `top_changed` | walk (§8), rest (§9) | `side, old, new` |

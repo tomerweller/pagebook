@@ -362,13 +362,19 @@ fn walk(
             let p = pagebook_types::page(lvl.head_seq);
             Some((p, p.saturating_add(1)))
         };
+        let head_before = lvl.head_seq;
         let took = consume_partial(env, market, opp, cur, &mut lvl, left, range, budget);
         let q = quote_atoms(env, took, cur, m.tick_size);
         filled += took;
         quote = crate::math::chk_add(env, quote, q);
         left -= took;
-        if apply && took > 0 {
+        // Persist whenever the level changed: a take, or head advancement over
+        // tombstones even if the cap ended the scan before anything was taken
+        // (§8: cleanup cost amortizes across takers).
+        if apply && (took > 0 || lvl.head_seq != head_before) {
             store::save_level(env, market, opp, cur, &lvl);
+        }
+        if apply && took > 0 {
             events::filled(env, market, opp, cur, took, q);
         }
         moved = true;
@@ -484,6 +490,7 @@ fn consume_partial(
 pub fn quote_place(env: &Env, market: u32, is_bid: bool, limit_tick: u32, qty: u64) -> QuoteResult {
     let m = store::load_market(env, market);
     crate::market::require_tick(env, &m, limit_tick);
+    crate::market::require_qty(env, &m, qty);
     let recorded = store::load_best(env, market, !is_bid);
     let start_tick = if recorded.empty {
         limit_tick

@@ -321,3 +321,64 @@ fn replace_into_and_out_of_a_page() {
     assert_eq!(lvl.head_seq, 30);
     assert_eq!(lvl.open_lots, 2);
 }
+
+/// §8: head advancement over tombstones is persisted even when the scan cap
+/// ends the take before anything was consumed, so cleanup amortizes across
+/// takers instead of repeating for each one.
+#[test]
+fn tombstone_cleanup_persists_when_nothing_was_taken() {
+    use super::harness::{flags, mint, rest_ask, setup, window};
+    use soroban_sdk::{testutils::Address as _, Address};
+    let h = setup();
+    // 20 tombstones ahead of one live order; scan cap 8 → the first taker only
+    // skips 8 tombstones and takes nothing; its progress must persist.
+    h.client()
+        .set_market_caps(&h.market, &32, &8, &10, &1, &1_000_000, &1);
+    let maker = Address::generate(&h.env);
+    for n in 1..=22u64 {
+        rest_ask(&h, &maker, 10, 1, n);
+    }
+    // tombstone seqs 19..1 (s > H), then settle the head (seq 0): head moves to
+    // 1 and its eager advance skips 8 tombstones (the scan cap), stranding it at
+    // 9. Two live orders remain (seqs 20, 21) so a 1-lot taker is a partial take
+    // (a sweep would need no slot reads).
+    for n in (2..=20u64).rev() {
+        h.client().settle(&maker, &h.market, &n);
+    }
+    h.client().settle(&maker, &h.market, &1);
+    assert_eq!(h.client().level(&h.market, &false, &10).head_seq, 9);
+    let taker = Address::generate(&h.env);
+    mint(&h, &h.quote, &taker, 1_000_000);
+    let (_, filled, _) = h.client().place(
+        &taker,
+        &h.market,
+        &true,
+        &10,
+        &1,
+        &10,
+        &1,
+        &window(&h),
+        &flags(),
+    );
+    assert_eq!(filled, 0, "8 more tombstones skipped, nothing taken");
+    assert_eq!(
+        h.client().level(&h.market, &false, &10).head_seq,
+        17,
+        "progress persisted although nothing was taken"
+    );
+    let (_, filled, _) = h.client().place(
+        &taker,
+        &h.market,
+        &true,
+        &10,
+        &1,
+        &10,
+        &2,
+        &window(&h),
+        &flags(),
+    );
+    assert_eq!(
+        filled, 1,
+        "second taker skips the last 4 and reaches the live order"
+    );
+}

@@ -84,6 +84,12 @@ findings below are fixed on the branch.
     (`SelfTrade`; `OrderExists`), which is also the conservative reading of ADR-014's
     open self-trade question for v1.
 
+17. **A partial branch that only skipped tombstones was not persisted** (a
+    round-4 slip: the Level was saved only when something was taken). §8 says head
+    advancement is always persisted; restored, with a test that three takers
+    amortize a tombstone run. `quote_place` now applies `require_qty` like `place`;
+    the `filled` event's `side` is documented as the consumed level's side.
+
 ## Checked and found sound (by the reviewers)
 
 §7 settlement rows and `open_lots` accounting; escrow versus payout per token; the
