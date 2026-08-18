@@ -7,173 +7,412 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📒</text></svg>">
 <style>
   :root {
-    --bg: #F4F5F3;
+    --bg: #FAF8F3;
     --surface: #FFFFFF;
-    --ink: #1B211F;
-    --muted: #5C6763;
-    --line: #D9DEDB;
-    --accent: #2C5FAA;
-    --accent-soft: rgba(44, 95, 170, 0.10);
-    --bid: #1A7A52;
-    --bid-soft: rgba(26, 122, 82, 0.12);
-    --ask: #B8463A;
-    --ask-soft: rgba(184, 70, 58, 0.10);
-    --warn: #B7791F;
-    --warn-soft: rgba(183, 121, 31, 0.12);
-    --code-bg: #EBEEEC;
-    --dead: #C9D0CD;
+    --ink: #1C1B18;
+    --muted: #6B675E;
+    --line: #D8D3C6;
+    --accent: #2A5B8C;
+    --accent-soft: rgba(42, 91, 140, 0.10);
+    --bid: #1D7A4C;
+    --bid-soft: rgba(29, 122, 76, 0.13);
+    --ask: #B2413A;
+    --ask-soft: rgba(178, 65, 58, 0.11);
+    --warn: #A66F16;
+    --warn-soft: rgba(166, 111, 22, 0.13);
+    --code-bg: #EEEBE2;
+    --dead: #CBC5B7;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #121615;
-      --surface: #191E1C;
-      --ink: #E4E9E6;
-      --muted: #97A29D;
-      --line: #2B3330;
-      --accent: #85ABE9;
-      --accent-soft: rgba(133, 171, 233, 0.14);
-      --bid: #4FC58C;
-      --bid-soft: rgba(79, 197, 140, 0.14);
-      --ask: #E5847A;
-      --ask-soft: rgba(229, 132, 122, 0.13);
-      --warn: #E0A84A;
-      --warn-soft: rgba(224, 168, 74, 0.14);
-      --code-bg: #202724;
-      --dead: #3A4540;
+      --bg: #171613;
+      --surface: #1F1E1A;
+      --ink: #E7E3D8;
+      --muted: #9C978A;
+      --line: #35332C;
+      --accent: #7EA9E0;
+      --accent-soft: rgba(126, 169, 224, 0.15);
+      --bid: #56C48A;
+      --bid-soft: rgba(86, 196, 138, 0.15);
+      --ask: #E8887E;
+      --ask-soft: rgba(232, 136, 126, 0.14);
+      --warn: #DDA64C;
+      --warn-soft: rgba(221, 166, 76, 0.15);
+      --code-bg: #26241F;
+      --dead: #46433B;
     }
   }
   :root[data-theme="dark"] {
-    --bg: #121615;
-    --surface: #191E1C;
-    --ink: #E4E9E6;
-    --muted: #97A29D;
-    --line: #2B3330;
-    --accent: #85ABE9;
-    --accent-soft: rgba(133, 171, 233, 0.14);
-    --bid: #4FC58C;
-    --bid-soft: rgba(79, 197, 140, 0.14);
-    --ask: #E5847A;
-    --ask-soft: rgba(229, 132, 122, 0.13);
-    --warn: #E0A84A;
-    --warn-soft: rgba(224, 168, 74, 0.14);
-    --code-bg: #202724;
-    --dead: #3A4540;
+    --bg: #171613;
+    --surface: #1F1E1A;
+    --ink: #E7E3D8;
+    --muted: #9C978A;
+    --line: #35332C;
+    --accent: #7EA9E0;
+    --accent-soft: rgba(126, 169, 224, 0.15);
+    --bid: #56C48A;
+    --bid-soft: rgba(86, 196, 138, 0.15);
+    --ask: #E8887E;
+    --ask-soft: rgba(232, 136, 126, 0.14);
+    --warn: #DDA64C;
+    --warn-soft: rgba(221, 166, 76, 0.15);
+    --code-bg: #26241F;
+    --dead: #46433B;
   }
 
+  /* ---- base ---- */
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
   body {
     margin: 0;
     background: var(--bg);
     color: var(--ink);
-    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    -webkit-font-smoothing: antialiased;
+    font-family: Charter, "Bitstream Charter", "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Times New Roman", serif;
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    font-kerning: normal;
+    text-rendering: optimizeLegibility;
   }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  code, .mono {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.9em;
+  a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.16em;
+    text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
   }
-  code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
-  pre { background: var(--code-bg); padding: 14px 16px; border-radius: 8px; overflow-x: auto; line-height: 1.45; }
-  pre code { background: none; padding: 0; font-size: 13px; }
+  a:hover { text-decoration-color: currentColor; }
+  code, .mono, td.k, dd .v {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 0.86em;
+  }
+  code { color: var(--ink); }
+  pre { overflow-x: auto; line-height: 1.45; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 0.75rem 0; }
+  pre code { font-size: 0.85rem; }
+  strong, b { font-weight: 700; }
+  ::selection { background: var(--accent-soft); }
 
-  header.top {
-    border-bottom: 1px solid var(--line);
-    background: var(--surface);
-  }
-  header.top .in { max-width: 920px; margin: 0 auto; padding: 44px 24px 28px; }
-  header.top h1 { margin: 0 0 6px; font-size: 34px; letter-spacing: -0.01em; }
-  header.top p.sub { margin: 0; color: var(--muted); font-size: 17px; max-width: 640px; }
-  nav.toc {
-    position: sticky; top: 0; z-index: 5;
-    background: var(--surface);
-    border-bottom: 1px solid var(--line);
-  }
-  nav.toc .in {
-    max-width: 920px; margin: 0 auto; padding: 8px 24px;
-    display: flex; gap: 6px 18px; flex-wrap: wrap;
-    font-size: 13px;
-  }
-  nav.toc a { color: var(--muted); }
-  nav.toc a b { color: var(--ink); font-weight: 600; }
+  /* ---- page frame ---- */
+  .page { max-width: 1160px; margin: 0 auto; padding: 0 28px; }
 
-  main { max-width: 920px; margin: 0 auto; padding: 8px 24px 80px; }
+  header.masthead {
+    padding: 3.5rem 0 1.75rem;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 1.75rem;
+  }
+  header.masthead h1 {
+    margin: 0 0 0.75rem;
+    font-size: 2.6rem;
+    line-height: 1.1;
+    font-weight: 700;
+    letter-spacing: -0.012em;
+  }
+  header.masthead p.sub {
+    margin: 0;
+    font-size: 1.15rem;
+    line-height: 1.5;
+    max-width: 62ch;
+  }
+
+  /* ---- contents ---- */
+  nav.contents { font-size: 0.92rem; line-height: 1.45; }
+  nav.contents .toc-title {
+    margin: 0 0 0.6rem;
+    font-style: italic;
+    color: var(--muted);
+  }
+  nav.contents ol { list-style: none; margin: 0; padding: 0; }
+  nav.contents > ol { counter-reset: toc; }
+  nav.contents li { margin: 0; break-inside: avoid; }
+  nav.contents li.item {
+    counter-increment: toc;
+    display: grid;
+    grid-template-columns: 1.6em 1fr;
+    column-gap: 0.25em;
+    padding: 0.14rem 0;
+  }
+  nav.contents li.item::before {
+    content: counter(toc);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  nav.contents li.group > a {
+    display: block;
+    margin: 0.85rem 0 0.15rem;
+    font-style: italic;
+    color: var(--muted);
+  }
+  nav.contents a { color: var(--ink); text-decoration: none; }
+  nav.contents a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 0.16em; }
+  nav.contents a[aria-current="true"] { color: var(--accent); font-weight: 700; }
+  nav.contents li.group > a[aria-current="true"] { color: var(--accent); }
+
+  /* narrow / medium: contents inline under the masthead */
+  nav.contents {
+    padding-bottom: 1.5rem;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid var(--line);
+  }
+  @media (min-width: 600px) {
+    nav.contents > ol { columns: 2; column-gap: 2.5rem; }
+    nav.contents li.item:first-child { break-after: avoid; }
+  }
+
+  /* ---- article ---- */
+  main { counter-reset: sec; }
+  section { margin-top: 2.75rem; scroll-margin-top: 1.25rem; }
+  section > h3 {
+    position: relative;
+    margin: 0 0 0.75rem;
+    font-size: 1.45rem;
+    line-height: 1.25;
+    font-weight: 700;
+    letter-spacing: -0.006em;
+  }
+  section > h3::before {
+    counter-increment: sec;
+    content: counter(sec);
+    color: var(--muted);
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    margin-right: 0.55em;
+  }
+  section h3 .ref {
+    font-size: 0.82rem;
+    font-weight: 400;
+    color: var(--muted);
+    margin-left: 0.6em;
+    white-space: nowrap;
+    letter-spacing: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  section h3 .ref a { color: var(--muted); text-decoration-color: var(--line); }
+  section h3 .ref a:hover { color: var(--accent); text-decoration-color: currentColor; }
+
   h2.part {
-    margin: 56px 0 8px;
-    font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase;
-    color: var(--muted); font-weight: 600;
+    margin: 4rem 0 0.75rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--line);
+    font-size: 1.15rem;
+    line-height: 1.3;
+    font-weight: 700;
+    letter-spacing: 0;
+    scroll-margin-top: 1.25rem;
   }
-  h2.part + p.lead { margin-top: 0; font-size: 17px; }
-  section { margin-top: 36px; }
-  section h3 { margin: 0 0 10px; font-size: 22px; letter-spacing: -0.005em; }
-  section h3 .ref { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 8px; }
-  p { margin: 0 0 14px; }
+  h2.part + p.lead { margin-top: 0; font-size: 1.05rem; }
+
+  p { margin: 0 0 1rem; max-width: 68ch; }
   p.lead { color: var(--ink); }
 
-  figure { margin: 22px 0 26px; }
-  figure .box {
-    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
-    padding: 14px 16px; overflow-x: auto;
+  /* figures: hairline rules, no boxes */
+  figure { margin: 1.75rem 0 2rem; }
+  .fig {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 1rem 0;
   }
-  figure svg { display: block; width: 100%; height: auto; max-width: 100%; }
-  figcaption { margin-top: 10px; color: var(--muted); font-size: 14px; line-height: 1.5; }
-  figcaption b { color: var(--ink); font-weight: 600; }
-
-  .tablewrap { overflow-x: auto; margin: 18px 0 22px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
-  table { border-collapse: collapse; width: 100%; font-size: 14px; }
-  th, td { text-align: left; padding: 9px 12px; border-top: 1px solid var(--line); vertical-align: top; }
-  thead th { border-top: none; color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
-  tr.band td { background: var(--code-bg); font-weight: 600; font-size: 13px; }
-  td.k { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; white-space: nowrap; }
-  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-
-  .callout {
-    border-left: 3px solid var(--accent); background: var(--accent-soft);
-    padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 18px 0;
+  .fig svg { display: block; width: 100%; min-width: 760px; height: auto; }
+  figcaption {
+    margin-top: 0.75rem;
+    font-size: 0.92rem;
+    line-height: 1.5;
+    color: var(--muted);
+    max-width: 68ch;
   }
-  .callout p:last-child { margin-bottom: 0; }
+  figcaption b { color: var(--ink); font-weight: 700; }
+  figcaption code { color: inherit; }
 
-  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0 20px; }
-  @media (max-width: 640px) { .cards { grid-template-columns: 1fr; } }
-  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
-  .card .t { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
-  .card .v { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }
-  .card .d { color: var(--muted); font-size: 13px; margin-top: 6px; }
-  .card.key { border-color: var(--accent); }
+  /* tables: booktabs style */
+  .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 1.25rem 0 1.5rem; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.92rem;
+    line-height: 1.4;
+    border-top: 1px solid var(--ink);
+    border-bottom: 1px solid var(--ink);
+  }
+  th, td {
+    text-align: left;
+    padding: 0.5rem 1rem 0.5rem 0;
+    vertical-align: top;
+    border-top: 1px solid var(--line);
+  }
+  th:last-child, td:last-child { padding-right: 0; }
+  thead th {
+    border-top: none;
+    border-bottom: 1px solid var(--ink);
+    font-weight: 700;
+    font-size: 0.88rem;
+    padding-top: 0.55rem;
+    padding-bottom: 0.55rem;
+  }
+  tr.band td {
+    font-style: italic;
+    color: var(--muted);
+    padding-top: 0.75rem;
+  }
+  td.k { white-space: nowrap; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-  ol.inv { padding-left: 22px; }
-  ol.inv li { margin-bottom: 8px; }
-  ol.inv li .ref { color: var(--muted); font-size: 13px; }
+  /* the note */
+  aside.note {
+    margin: 1.5rem 0;
+    padding: 0.1rem 0 0.1rem 1.25rem;
+    border-left: 1px solid var(--ink);
+    font-size: 0.95rem;
+    line-height: 1.55;
+    max-width: 68ch;
+  }
+  aside.note p { margin: 0; max-width: none; }
+  aside.note .lbl { font-variant-caps: small-caps; letter-spacing: 0.02em; font-weight: 700; }
 
-  footer { max-width: 920px; margin: 0 auto; padding: 0 24px 60px; color: var(--muted); font-size: 14px; }
+  /* key/value list (replaces the stat tiles) */
+  dl.kv {
+    margin: 1.25rem 0 1.5rem;
+    max-width: 68ch;
+    border-top: 1px solid var(--line);
+    font-size: 0.95rem;
+    line-height: 1.5;
+  }
+  dl.kv > div {
+    display: grid;
+    grid-template-columns: 12rem 1fr;
+    column-gap: 1.25rem;
+    padding: 0.7rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  dl.kv dt { font-weight: 700; margin: 0; }
+  dl.kv dd { margin: 0; }
+  dl.kv dd .v { display: block; margin-bottom: 0.15rem; }
+  dl.kv dd .d { display: block; color: var(--muted); }
+  @media (max-width: 560px) {
+    dl.kv > div { grid-template-columns: 1fr; row-gap: 0.2rem; }
+  }
+
+  ol.inv { padding-left: 1.6rem; max-width: 68ch; margin: 0 0 1rem; }
+  ol.inv li { margin-bottom: 0.55rem; padding-left: 0.2rem; }
+  ol.inv li::marker { color: var(--muted); font-variant-numeric: tabular-nums; }
+  ol.inv li .ref { color: var(--muted); font-size: 0.85rem; }
+
+  footer {
+    margin-top: 3.5rem;
+    padding: 1.25rem 0 5rem;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 0.92rem;
+    line-height: 1.55;
+    max-width: 68ch;
+  }
+
+  /* back-to-contents affordance (narrow screens only) */
+  .totop {
+    display: none;
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 5;
+    padding: 0.3rem 0.65rem;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    text-decoration: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .totop:hover { border-color: var(--ink); text-decoration: none; }
+  .totop.show { display: inline-block; }
+
+  /* ---- gutter numbers on wider screens ---- */
+  @media (min-width: 900px) {
+    main { padding-left: 3rem; }
+    footer { margin-left: 3rem; }
+    section > h3::before {
+      position: absolute;
+      right: 100%;
+      width: 3rem;
+      margin-right: 0;
+      text-align: left;
+    }
+    h2.part { margin-left: -3rem; padding-left: 3rem; }
+  }
+
+  /* ---- wide screens: sidebar contents ---- */
+  @media (min-width: 1160px) {
+    .page {
+      display: grid;
+      grid-template-columns: 200px minmax(0, 840px);
+      column-gap: 60px;
+      align-items: start;
+    }
+    header.masthead { grid-column: 1 / -1; }
+    nav.contents {
+      grid-column: 1;
+      position: sticky;
+      top: 1.75rem;
+      max-height: calc(100vh - 3.5rem);
+      overflow-y: auto;
+      padding: 0 0 1rem;
+      margin: 0.35rem 0 0;
+      border-bottom: none;
+      font-size: 0.86rem;
+    }
+    nav.contents > ol { columns: 1; }
+    main { grid-column: 2; }
+    footer { grid-column: 2; }
+    .totop { display: none !important; }
+  }
+
+  @media (max-width: 600px) {
+    body { font-size: 1rem; }
+    .page { padding: 0 18px; }
+    header.masthead { padding-top: 2.25rem; }
+    header.masthead h1 { font-size: 2.1rem; }
+    header.masthead p.sub { font-size: 1.05rem; }
+    section > h3 { font-size: 1.3rem; }
+    section h3 .ref { white-space: normal; }
+  }
 </style>
 </head>
 <body>
 
-<header class="top">
-  <div class="in">
-    <h1>PageBook</h1>
-    <p class="sub">A central limit order book for Soroban with deterministic footprints: every ledger key an operation touches is computable at simulation time. This page is the short version of the <a href="04-architecture.md">architecture doc</a>: the same data structures and processes, with pictures and worked numbers.</p>
-  </div>
+<div class="page">
+
+<header class="masthead">
+  <h1>PageBook</h1>
+  <p class="sub">A central limit order book for Soroban with deterministic footprints: every ledger key an operation touches is computable at simulation time. This page is the short version of the <a href="04-architecture.md">architecture doc</a>: the same data structures and processes, with pictures and worked numbers.</p>
 </header>
 
-<nav class="toc">
-  <div class="in">
-    <a href="#why"><b>Why</b></a>
-    <a href="#model">Model</a>
-    <a href="#storage">Storage</a>
-    <a href="#level">Level queue</a>
-    <a href="#order">Order</a>
-    <a href="#index">Tick index</a>
-    <a href="#settle">Settlement</a>
-    <a href="#walk">Matching</a>
-    <a href="#rest">Rest, replace</a>
-    <a href="#client">The client</a>
-    <a href="#budgets">Budgets</a>
-    <a href="#invariants">Invariants</a>
-  </div>
+<nav class="contents" id="contents" aria-label="Contents">
+  <p class="toc-title">Contents</p>
+  <ol>
+    <li class="item"><a href="#why">Why an order book is hard on Soroban</a></li>
+    <li class="item"><a href="#model">The model in one paragraph</a></li>
+    <li class="group"><a href="#part1">Part I: data structures</a>
+      <ol>
+        <li class="item"><a href="#storage">Storage map</a></li>
+        <li class="item"><a href="#level">The level queue</a></li>
+        <li class="item"><a href="#order">Order: the maker's claim</a></li>
+        <li class="item"><a href="#index">The tick index</a></li>
+      </ol>
+    </li>
+    <li class="group"><a href="#part2">Part II: processes</a>
+      <ol>
+        <li class="item"><a href="#settle">Settlement</a></li>
+        <li class="item"><a href="#walk">The matching walk</a></li>
+        <li class="item"><a href="#rest">Rest, and replace</a></li>
+        <li class="item"><a href="#client">The client's process</a></li>
+      </ol>
+    </li>
+    <li class="group"><a href="#part3">Part III: what comes out</a>
+      <ol>
+        <li class="item"><a href="#budgets">Budgets and fees</a></li>
+        <li class="item"><a href="#invariants">Invariants</a></li>
+      </ol>
+    </li>
+  </ol>
 </nav>
 
 <main>
@@ -211,7 +450,7 @@
   </p>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>Entry</th><th>Key</th><th>What is inside</th><th>Budget</th></tr></thead>
+      <thead><tr><th>Entry</th><th>Key</th><th>What is inside</th><th class="num">Budget</th></tr></thead>
       <tbody>
         <tr class="band"><td colspan="4">Configuration: money-free, admin-governed</td></tr>
         <tr><td class="k">Config</td><td class="k">Config</td><td>admin, fee recipient, paused flag, market counter (instance storage)</td><td class="num">~150 B</td></tr>
@@ -232,7 +471,7 @@
     Plus the vault: the contract's own SAC balance entries, one per token. PageBook does not define them, but every settling transaction has them in its read-write footprint, which makes them the point where transactions serialize (Part III).
   </p>
   <figure>
-    <div class="box">
+    <div class="fig">
       <svg viewBox="0 0 880 200" role="img" aria-label="Two groups side by side. The order store (Level, LevelPage, Order, FeeAccrual) is authoritative, funds-bearing, and never stale: the source of truth. The tick index (BestTick, TickSummary, TickWord) is derived and money-free, may run stale, and is healed lazily by the next place that walks through.">
         <g font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12">
           <rect x="30" y="34" width="360" height="130" rx="10" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
@@ -265,7 +504,7 @@
     A <code>Level</code> is one price's queue: five counters and a run of quantity slots. Queue position is by seq, and seq is implicit in slot position, so a slot stores only a quantity. Seqs beyond the inline slots spill into <code>LevelPage</code> entries. Nothing is ever moved or compacted; "remove the head" means a counter advanced.
   </p>
   <figure>
-    <div class="box">
+    <div class="fig">
       <svg viewBox="0 0 880 290" role="img" aria-label="One ask level at tick 101 drawn with 8 inline slots and one overflow page of 4. Counters: generation 2, head_seq 3, head_consumed_lots 4, tail_seq 10, open_lots 36. Slots 0 to 2 are filled history, slot 3 is the head with 4 of 10 consumed, slot 4 is a tombstone, slots 5 to 9 are open, seqs 8 and 9 sit in page 0, and slots 10 and 11 are beyond the tail.">
         <g font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12">
           <text x="30" y="26" font-family="ui-monospace, Menlo, monospace" font-size="13" font-weight="600" fill="currentColor">Level(market, ask, 101)</text>
@@ -343,18 +582,16 @@
   <p>
     A resting order is one <code>Order</code> entry. Its key is <code>(market, owner, nonce)</code>, and the nonce is chosen by the client before submission. So the key is known at simulation time, whatever the book does before the transaction lands. The queue coordinates, which execution assigns, live inside the entry.
   </p>
-  <div class="cards">
-    <div class="card key">
-      <div class="t">Key: chosen by the client</div>
-      <div class="v">Order(market, owner, nonce)</div>
-      <div class="d">Declarable before submission. Fails <code>OrderExists</code> if the nonce is live; reusable after settle.</div>
+  <dl class="kv">
+    <div>
+      <dt>Key: chosen by the client</dt>
+      <dd><span class="v">Order(market, owner, nonce)</span><span class="d">Declarable before submission. Fails <code>OrderExists</code> if the nonce is live; reusable after settle.</span></dd>
     </div>
-    <div class="card">
-      <div class="t">Contents: assigned at execution</div>
-      <div class="v">side · tick · generation · seq · qty</div>
-      <div class="d">Reported in the <code>rested</code> event. Fixed size, so <code>replace</code> rewrites it in place; a same-size rewrite pays write fees but no rent.</div>
+    <div>
+      <dt>Contents: assigned at execution</dt>
+      <dd><span class="v">side · tick · generation · seq · qty</span><span class="d">Reported in the <code>rested</code> event. Fixed size, so <code>replace</code> rewrites it in place; a same-size rewrite pays write fees but no rent.</span></dd>
     </div>
-  </div>
+  </dl>
   <p>
     Keying by <code>(generation, seq)</code> would break under concurrency: any other rest at the same level moves the tail, any sweep bumps the generation, and the simulated key is wrong when the transaction executes.
   </p>
@@ -366,7 +603,7 @@
     Finding the next tick with liquidity is a two-level bitmap plus a cached best. <code>TickSummary</code> has one bit per <code>TickWord</code>; each <code>TickWord</code> has one bit per tick. Together they cover 2,048 × 2,048 ≈ 4.19 million ticks per side. <code>BestTick</code> is where the walk starts.
   </p>
   <figure>
-    <div class="box">
+    <div class="fig">
       <svg viewBox="0 0 880 250" role="img" aria-label="Three tiers. BestTick(ask) equals 100. TickSummary is a strip of 2,048 bits with bit 0 set. TickWord(0) is a strip covering ticks 0 to 2047, zoomed on ticks 99 to 104 with bits 100, 101 and 103 set. Each set bit resolves to a Level key. A settle that empties tick 101 leaves its bit set; the next walk clears it.">
         <defs>
           <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
@@ -424,7 +661,7 @@
     Because every take at a level happens at exactly the tick price, it does not matter when a fill happened, only whether the queue moved past you. So an order's stored coordinates <code>(g, s, q)</code> compared with the level's counters <code>(G, H, C)</code> decide everything. Matching writes nothing per maker; the maker reads the answer off the counters when they settle.
   </p>
   <figure>
-    <div class="box">
+    <div class="fig">
       <svg viewBox="0 0 880 300" role="img" aria-label="On the left, the level's counters: G equals 2, H equals 3, C equals 4. On the right, four orders judged against them. Order with g 1, s 5, q 8: g less than G, fully filled, pay 8. Order with g 2, s 1, q 8: s less than H, fully filled, pay 8. Order with g 2, s 3, q 10: s equals H, partly filled, pay 4, refund 6, advance H. Order with g 2, s 6, q 9: s greater than H, open, refund 9 and tombstone the slot.">
         <defs>
           <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
@@ -486,7 +723,7 @@
     A taker's <code>place</code> starts at <code>start_tick</code>, the best opposite tick the client saw when it simulated, and walks toward its limit. Ticks better than <code>start_tick</code> are never visited: an order that arrived there after simulation is outside the footprint by construction, and the walk never reaches for it. Sweeping a whole level needs no slot reads (<code>open_lots × tick × tick_size</code> is exact) and is one small write: bump the generation. Only the last, partial level touches slots.
   </p>
   <figure>
-    <div class="box">
+    <div class="fig">
       <svg viewBox="0 0 880 300" role="img" aria-label="Ask side, ticks 100 to 104. Levels at 100 (12 lots), 101 (10 lots) and 103 (15 lots); 102 and 104 empty. A taker buys 30 lots with limit 103. It sweeps 100 (generation 4 to 5, bit cleared), sweeps 101 (generation 7 to 8, bit cleared), takes 8 of 15 at 103 (head advances), and finishes with BestTick moving to 103.">
         <defs>
           <marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--bid)"/></marker>
@@ -559,7 +796,7 @@
     A maker updating a quote does not settle and place again. <code>replace</code> settles the old order per the table above, then rewrites the same <code>Order</code> entry with new coordinates and appends at the new tick, atomically. The entry keeps its key and its size, so no rent is charged, and the maker is never unquoted in between. <code>replace_batch</code> does this for up to <code>MAX_REPLACE_BATCH</code> quotes with one netted transfer per token.
   </p>
   <figure>
-    <div class="box">
+    <div class="fig">
       <svg viewBox="0 0 880 236" role="img" aria-label="One Order entry with key (market, maker, nonce 7). Before: ask, tick 101, generation 2, seq 6, qty 9. Replace to tick 102 for 12 lots. After: same key, contents ask, tick 102, generation 5, seq 3, qty 12. Steps between: settle the old order (refund 9, tombstone slot 6 at 101), rewrite in place, append at 102, escrow the delta of 3 lots.">
         <defs>
           <marker id="ar5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
@@ -605,7 +842,7 @@
     Every key the contract touches is a function of <code>(market, side, tick, word, page, owner, nonce)</code>, so the client builds the footprint itself. Its job is to pad that footprint so the transaction still fits the book it lands on, which may differ from the one <code>simulateTransaction</code> saw. Between simulation and inclusion, new levels can appear at any tick inside the walk range, and heads and tails can cross page boundaries.
   </p>
   <figure>
-    <div class="box">
+    <div class="fig">
       <svg viewBox="0 0 880 268" role="img" aria-label="A tick axis from 99 to 109. Simulated best t1 is 100; pad_end is 106. The band from 100 to 106 is shaded: every Level key in it is declared, set or not. Set levels at 100, 101 and 103 each get a small window of LevelPage keys around their simulated head. Ticks 102, 104, 105 and 106 are declared but empty. Beyond 106 is the trap zone: if the walk must pass pad_end, the transaction fails. The taker's own rest keys (Order, its level's bitmap words, append pages around the simulated tail) are declared separately.">
         <g font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12">
           <!-- band shading: ticks at x = 60 + (t-99)*70, tick 100 -> 130 ... 106 -> 550; band from 100 to 106 inclusive: 105..585 -->
@@ -676,9 +913,9 @@
   <p>
     Matching is nearly free and placement pays rent: a 32-level sweep costs about the same as resting one order, so the book's carrying cost sits with makers at roughly 0.027 XLM per open order per minimum TTL, which doubles as anti-spam. And write bytes, not fees, are the throughput ceiling: the max sweep is 7.6% of the ledger-wide write-bytes limit (286,720), so a ledger fits about 13 of them, or hundreds of rests and settles. Every hot entry is a few hundred bytes for that reason.
   </p>
-  <div class="callout">
-    <p>Concurrency: the vault's SAC balance entries are the serialization points. Every settling transaction has one or both in its read-write footprint, so under P23 parallel execution all markets sharing a token form one dependent-transaction cluster. v1 accepts this because write bytes bind first; per-market vault sub-accounts are the v2 fix. No market operation writes the instance entry (no <code>bump_instance</code> on the hot path; <code>keepalive()</code> cranks the TTL), so instance reads stay read-only and never widen the cluster. <a href="04-architecture.md#16-concurrency-and-serialization">04 §16</a></p>
-  </div>
+  <aside class="note">
+    <p><span class="lbl">Concurrency:</span> the vault's SAC balance entries are the serialization points. Every settling transaction has one or both in its read-write footprint, so under P23 parallel execution all markets sharing a token form one dependent-transaction cluster. v1 accepts this because write bytes bind first; per-market vault sub-accounts are the v2 fix. No market operation writes the instance entry (no <code>bump_instance</code> on the hot path; <code>keepalive()</code> cranks the TTL), so instance reads stay read-only and never widen the cluster. <a href="04-architecture.md#16-concurrency-and-serialization">04 §16</a></p>
+  </aside>
 </section>
 
 <section id="invariants">
@@ -702,6 +939,61 @@
 <footer>
   Deferred to v2 or a sibling market type: global cross-market orders, per-market vault sub-accounts, permissionless market creation, geometric ticks, pooled pro-rata levels, volatility-scaled fees. Full list and reasons in <a href="04-architecture.md#20-non-goals--deferred">04 §20</a>; the decisions behind the design in <a href="decisions/">docs/decisions</a>.
 </footer>
+
+</div>
+
+<a class="totop" href="#contents">&uarr; Contents</a>
+
+<script>
+(function () {
+  var nav = document.getElementById('contents');
+  if (!nav) return;
+  var links = Array.prototype.slice.call(nav.querySelectorAll('a[href^="#"]'));
+  var linkFor = {};
+  var targets = [];
+  links.forEach(function (a) {
+    var id = a.getAttribute('href').slice(1);
+    var el = document.getElementById(id);
+    if (el) { linkFor[id] = a; targets.push(el); }
+  });
+
+  var current = null;
+  function setCurrent(el) {
+    if (el === current) return;
+    if (current) linkFor[current.id].removeAttribute('aria-current');
+    current = el;
+    if (el) linkFor[el.id].setAttribute('aria-current', 'true');
+  }
+
+  if ('IntersectionObserver' in window) {
+    var visible = [];
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        var i = visible.indexOf(e.target);
+        if (e.isIntersecting && i < 0) visible.push(e.target);
+        if (!e.isIntersecting && i >= 0) visible.splice(i, 1);
+      });
+      var last = null;
+      targets.forEach(function (t) { if (visible.indexOf(t) >= 0) last = t; });
+      if (last) setCurrent(last);
+    }, { rootMargin: '0px 0px -60% 0px', threshold: 0 });
+    targets.forEach(function (t) { io.observe(t); });
+  }
+
+  var totop = document.querySelector('.totop');
+  if (totop) {
+    var queued = false;
+    var update = function () {
+      queued = false;
+      totop.classList.toggle('show', nav.getBoundingClientRect().bottom < 0);
+    };
+    window.addEventListener('scroll', function () {
+      if (!queued) { queued = true; window.requestAnimationFrame(update); }
+    }, { passive: true });
+    update();
+  }
+})();
+</script>
 
 </body>
 </html>
