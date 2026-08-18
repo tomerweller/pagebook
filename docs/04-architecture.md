@@ -125,8 +125,8 @@ it. Configuration (§1) is money-free and admin-governed; the vault (§6) is not
 PageBook's storage at all, but every settling footprint touches it.
 
 Payload sizes are XDR-serialized targets at max occupancy; M0 size tests enforce
-them. Hot entries carry a leading schema-version byte; upgraded code migrates entries
-lazily on touch. Each section below specifies one structure: purpose, key and
+them. Packed entries carry a leading schema-version byte as a guard against misreading
+a layout (a mismatch is a typed error, never a silent decode). Each section below specifies one structure: purpose, key and
 durability, layout and target size, capacity where it has one, the invariants it owns
 (indexed in §19), and its lifecycle — who creates, writes, and deletes it, and how its
 TTL behaves. TTL constants and the policy summary: §18.
@@ -696,7 +696,7 @@ Every state-changing entry point authenticates, explicitly:
 | `settle` | `owner.require_auth()` | settlement (§7) | `Order`, its `Level`, at most one `LevelPage`, both vault balances | **never** |
 | `replace` / `replace_batch` | `owner.require_auth()` | settlement (§7) + rest (§9) per item (§10) | union of settle's and rest's keys per item | yes |
 | `create_market` | `admin.require_auth()` | — | new `Market`, `Config` read | — |
-| `set_admin`, `set_fee_recipient`, `set_paused`, `upgrade` | `admin.require_auth()` | — | `Config` (write) | — |
+| `set_admin`, `set_fee_recipient`, `set_paused` | `admin.require_auth()` | — | `Config` (write) | — |
 | `set_market_caps` | `admin.require_auth()` | §0.3 re-proof | one `Market` | — |
 | `collect_fees` | none | — | `FeeAccrual`, one vault balance, recipient's balance | **never** |
 | `keepalive` | none | — | instance + code TTL bump | — |
@@ -737,11 +737,15 @@ Views (§11) authenticate nothing and write nothing.
   fallback or on a v2 reimbursing crank (§20).
 - **Initialization is the constructor.** `__constructor(admin, fee_recipient)` runs
   atomically at deploy — there is no `init` entry point and no first-caller-wins race.
-- **Trust model, stated plainly:** the admin can upgrade the wasm, and an upgraded
-  wasm can move the vault. Deployments that custody real value MUST put the admin
-  behind a multisig/timelock; "trustless" deployments set admin to a burn address and
-  accept no upgrades. This is a disclosure, not a mitigation. This contract custodies
-  every maker's escrow; "no admin story" is not an option.
+- **Trust model, stated plainly:** there is no upgrade entry point (ADR-023); the
+  deployed wasm is final for that address, and no admin action can move the vault. The
+  admin's powers are: create markets, retune caps, rotate the admin and fee recipient,
+  and pause the entry side of the book (`settle` and `collect_fees` never pause). A
+  new version is a new deployment; migrating a live book to it means makers settle
+  here and rest there. Deployments that custody real value SHOULD still put the admin
+  behind a multisig/timelock, because pause and cap retuning shape the market;
+  "trustless" deployments set admin to a burn address after market creation. This
+  contract custodies every maker's escrow; the admin story is deliberately small.
 - **Pause blocks `place`, `route`, and `replace`. `settle` and `collect_fees` ALWAYS
   work** — funds exit is never gated, under any admin state. (`replace` contains a
   rest, so it pauses with the entry side of the book; the exit half stays available
@@ -756,8 +760,10 @@ Views (§11) authenticate nothing and write nothing.
   network is the admin's job, informed off-chain. Client-side knobs (band width,
   windows, batch composition) need no retuning: clients read live config over RPC per
   transaction.
-- **Upgrade.** `upgrade(wasm_hash)`; hot entries carry a schema-version byte and
-  upgraded code migrates them lazily on touch (Part I intro).
+- **No upgrade.** Deliberately absent at this stage (ADR-023): an upgrade path is
+  only worth having with a tested lazy migration of every stored layout, and the
+  trust cost of a live-vault-moving admin power is not worth paying before then. A
+  version bump is a new address. Listed in §20.
 
 ### 13. Events
 
@@ -1032,6 +1038,9 @@ owns it; property tests cite these numbers.
   (`MarketByPair`) would come with it if duplicate pairs need refusing.
 - **Reimbursing `keepalive`** — pay the cranker's measured restore cost out of
   `FeeAccrual` so burn-address deployments do not depend on altruism (§12); v2.
+- **In-place upgrade** (`upgrade(wasm_hash)` + lazy migration of packed layouts on
+  touch, keyed by the schema-version byte) — removed for v1 (ADR-023); a version
+  is a new deployment until a migration story exists and is tested.
 - **Synchronous hooks**: impossible to sandbox (no per-call cap); events instead.
 - **Geometric-tick market type** using Liquidity Book's `(1+step)^id` map — changes
   only the id→price function (bitmaps/levels/settlement untouched), removes the

@@ -15,7 +15,7 @@ pagebook/
 │   └── pagebook/              # the contract crate (soroban-sdk)
 │       └── src/
 │           ├── lib.rs         # contract trait impl, entry points only
-│           ├── admin.rs       # constructor, admin rotation, pause, upgrade, keepalive
+│           ├── admin.rs       # constructor, admin rotation, pause, keepalive
 │           ├── market.rs      # market create/config, quantization + §0.3 bound checks
 │           ├── keys.rs        # DataKey enum (contracttype, full-word variants) + TTL policy
 │           ├── level.rs       # Level/LevelPage packed encoding, positional queue, resets, settlement state machine
@@ -53,7 +53,6 @@ pub trait PageBook {
     fn set_admin(e: Env, new_admin: Address);
     fn set_fee_recipient(e: Env, recipient: Address);
     fn set_paused(e: Env, paused: bool);       // pause blocks place/route/replace; never settle or collect_fees
-    fn upgrade(e: Env, wasm_hash: BytesN<32>);
 
     /// Retune a market's mutable caps as network limits move (SLPs; architecture §12,
     /// ADR-007). Re-runs the §0.3 overflow proof; MAX_PAGES raise-only; quantization
@@ -135,7 +134,7 @@ Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs, BadWi
 (`replace_batch` items > MAX_REPLACE_BATCH), TokenNotAuthorized (`create_market`: the
 SAC reports the vault unauthorized), CorruptEntry (a stored entry that does not decode),
 NotInitialized (no Config), SelfTrade (a `route` leg would take an earlier leg's rest)`. Error codes are the declaration order
-above, starting at 1, and are stable across upgrades (append only). `BadStartTick` is
+above, starting at 1, and are stable (append only). `BadStartTick` is
 defined in architecture §8 (`start_tick` outside `[tick_min, tick_max)`; every in-band
 value is legal). There is no `MarketExists`: the schema has no pair index and duplicate
 pairs are allowed (architecture §0.1; ADR-012).

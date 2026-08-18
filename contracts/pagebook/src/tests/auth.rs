@@ -1,6 +1,6 @@
 use super::harness::setup;
 use crate::Error;
-use soroban_sdk::{testutils::Address as _, Address, BytesN};
+use soroban_sdk::{testutils::Address as _, Address};
 
 #[test]
 fn set_admin_requires_auth() {
@@ -55,14 +55,6 @@ fn settle_requires_owner_auth() {
     super::harness::rest_ask(&h, &maker, 10, 1, 1);
     h.env.set_auths(&[]);
     assert!(h.client().try_settle(&maker, &h.market, &1).is_err());
-}
-
-#[test]
-fn upgrade_without_auth_fails() {
-    let h = setup();
-    h.env.set_auths(&[]);
-    let hash = BytesN::from_array(&h.env, &[1u8; 32]);
-    assert!(h.client().try_upgrade(&hash).is_err());
 }
 
 #[test]

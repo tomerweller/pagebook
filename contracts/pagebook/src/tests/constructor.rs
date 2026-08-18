@@ -1,5 +1,5 @@
 use crate::{PageBook, PageBookClient};
-use soroban_sdk::{testutils::Address as _, Address, BytesN, IntoVal};
+use soroban_sdk::{testutils::Address as _, Address, IntoVal};
 
 #[test]
 fn constructor_sets_admin() {
@@ -38,15 +38,4 @@ fn constructor_sets_admin() {
         },
     }]);
     client.set_paused(&true);
-}
-
-#[test]
-fn upgrade_requires_admin_auth() {
-    let env = super::env();
-    let admin = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let id = env.register(PageBook, (&admin, &recipient));
-    let client = PageBookClient::new(&env, &id);
-    let hash = BytesN::from_array(&env, &[0u8; 32]);
-    assert!(client.try_upgrade(&hash).is_err());
 }

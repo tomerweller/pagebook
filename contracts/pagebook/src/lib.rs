@@ -17,7 +17,7 @@ mod settle;
 mod store;
 mod views;
 
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
+use soroban_sdk::{contract, contractimpl, Address, Env};
 
 pub use errors::Error;
 pub use iface::{
@@ -49,10 +49,6 @@ impl PageBook {
 
     pub fn set_paused(env: Env, paused: bool) {
         admin::set_paused(&env, paused);
-    }
-
-    pub fn upgrade(env: Env, wasm_hash: BytesN<32>) {
-        admin::upgrade(&env, wasm_hash);
     }
 
     pub fn keepalive(env: Env) {

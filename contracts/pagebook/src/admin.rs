@@ -1,6 +1,6 @@
 use crate::store::{load_config, save_config};
 use pagebook_types::Config;
-use soroban_sdk::{Address, BytesN, Env};
+use soroban_sdk::{Address, Env};
 
 pub fn construct(env: &Env, admin: Address, fee_recipient: Address) {
     let config = Config {
@@ -37,11 +37,6 @@ pub fn set_paused(env: &Env, paused: bool) {
     let mut config = require_admin(env);
     config.paused = paused;
     save_config(env, &config);
-}
-
-pub fn upgrade(env: &Env, wasm_hash: BytesN<32>) {
-    let _ = require_admin(env);
-    env.deployer().update_current_contract_wasm(wasm_hash);
 }
 
 pub fn keepalive(env: &Env) {
