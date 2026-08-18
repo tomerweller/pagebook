@@ -185,7 +185,7 @@ fn replace_batch_too_large() {
         qty_lots: 1,
         window: window(&h),
     };
-    for _ in 0..65 {
+    for _ in 0..(pagebook_types::MAX_REPLACE_BATCH + 1) {
         items.push_back(dummy.clone());
     }
     super::assert_err(

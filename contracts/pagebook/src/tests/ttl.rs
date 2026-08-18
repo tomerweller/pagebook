@@ -253,3 +253,50 @@ fn collect_fees_does_not_extend_existing_ttl() {
         h.client().collect_fees(&h.market, &h.base);
     });
 }
+
+#[test]
+fn route_does_not_extend_existing_ttl() {
+    let h = super::harness::setup();
+    let maker = Address::generate(&h.env);
+    super::harness::rest_ask(&h, &maker, 10, 2, 1);
+    super::harness::rest_ask(&h, &maker, 12, 2, 2);
+    let taker = Address::generate(&h.env);
+    super::harness::mint(&h, &h.quote, &taker, 1_000_000);
+    let leg = |limit: u32, nonce: u64| crate::PlaceLeg {
+        market: h.market,
+        is_bid: true,
+        limit_tick: limit,
+        qty_lots: 2,
+        start_tick: 10,
+        nonce,
+        window: super::harness::window(&h),
+        flags: no_rest(),
+    };
+    let mut legs = soroban_sdk::Vec::new(&h.env);
+    legs.push_back(leg(10, 1));
+    legs.push_back(leg(12, 2));
+    assert_hot_path_unchanged(&h, || {
+        h.client().route(&taker, &legs);
+    });
+}
+
+#[test]
+fn replace_batch_does_not_extend_existing_ttl() {
+    let h = super::harness::setup();
+    let maker = Address::generate(&h.env);
+    super::harness::rest_ask(&h, &maker, 10, 2, 1);
+    super::harness::rest_ask(&h, &maker, 12, 2, 2);
+    let mut items = soroban_sdk::Vec::new(&h.env);
+    for (nonce, tick) in [(1u64, 11u32), (2, 13)] {
+        items.push_back(crate::ReplaceItem {
+            nonce,
+            is_bid: false,
+            tick,
+            qty_lots: 2,
+            window: super::harness::window(&h),
+        });
+    }
+    assert_hot_path_unchanged(&h, || {
+        h.client().replace_batch(&maker, &h.market, &items);
+    });
+}

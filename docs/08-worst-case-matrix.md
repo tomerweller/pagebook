@@ -46,8 +46,9 @@ Every `place` (and every `route` leg) does the same three things.
    the walk loads each opposite `Level` it visits, up to `L`. A sweep writes
    that `Level` (generation bump, counters zeroed) and `clear_tick`s its bit.
    A partial consumes inside the declared page window and the shared slot
-   budget `S`, writes the `Level`, and writes a `LevelPage` for every page
-   whose slot is touched. `clear_tick` / `set_tick` are idempotent: a
+   budget `S` and writes the `Level` only: taking never writes a `LevelPage`
+   (slots behind the head are history; only `rest` and a settle tombstone
+   write pages). `clear_tick` / `set_tick` are idempotent: a
    `TickWord` is written only when a bit changes, and `TickSummary` only when
    a word flips between empty and non-empty. After the last sweep the walk
    may load `TickSummary` and stand on the next summary-set word; it never
@@ -147,9 +148,10 @@ seq (tombstone that slot, which writes a `LevelPage` if the seq is not
 inline). Deletes `Order`. Pays proceeds and refund, one SAC transfer per
 token that is nonzero.
 
-Worst write set: `Level` + optional `LevelPage` + `Order` delete + 4 SAC
-balances (filled bid or ask that also refunds). Typical unfilled ask: `Level`,
-`Order` delete, two SAC balances.
+Two disjoint worst cases: the head row (`Level`, `Order` delete, up to 4 SAC
+balances when both proceeds and refund move; no page write, the head advance only
+reads) and the tombstone row (`Level`, one `LevelPage` if the seq is paged,
+`Order` delete, 2 SAC balances). Plus the auth nonce entry (below).
 
 In-repo (unfilled ask): 9 memory reads, 5 writes, 924 write bytes.
 
@@ -159,9 +161,10 @@ In-repo (unfilled ask): 9 memory reads, 5 writes, 924 write bytes.
 post-only check reads `BestTick(opposite)` and does not walk. Escrow pay-in
 is the full new size; old proceeds and refund flow out.
 
-Writes: old `Level` (and maybe its `LevelPage` / `TickWord` if the settle
-emptied it) + new `Level` (and maybe `TickWord` / `TickSummary` / `BestTick`
-if the new tick was empty) + `Order` rewrite + SAC balances. Same-tick
+Writes: old `Level` (and its `LevelPage` if the old seq is paged and the row is
+a tombstone; settle never clears a bit, so no old `TickWord`) + new `Level` (and
+maybe `TickWord` / `TickSummary` / `BestTick` if the new tick was empty) +
+`Order` rewrite + SAC balances. Same-tick
 replace collapses the two `Level` writes into one entry.
 
 In-repo (ask at 10, replace to 12): 13 memory reads, 7 writes, 1,980 write
@@ -178,7 +181,9 @@ any index entries that actually change. Shared across the batch: `TickSummary`
 and `BestTick` (one each per side that moves), and at most two SAC tokens.
 
 Formula, distinct old and new ticks, no page writes:
-`3 × items + D_old + D_new + [summaries] + [bests] + SAC`.
+`3 × items + D_new + [summaries] + [bests] + SAC + 1 (auth nonce)`, where
+`D_new` is the number of distinct new words touched (a settle clears no bits,
+so there is no old-word term).
 
 In-repo, 5 items (ticks 11 to 15 rest, replace to 21 to 25): 25 memory reads,
 19 writes, 6,316 write bytes.
@@ -191,8 +196,12 @@ tick): 130 memory reads, 124 writes, 44,256 write bytes.
 One auth, one pause check, one shared `(L, S)` budget equal to the minimum of
 every leg market's caps, fixed before the first leg. Each leg is `place_body`.
 Transfers flush once. A later leg that would take an earlier leg's rest fails
-`SelfTrade`. Ceiling equals one maximal place plus a `Market` read per extra
-leg and extra `FeeAccrual` / SAC tokens if the legs do not share assets.
+`SelfTrade`. The take side of the ceiling is one maximal place (the budget is
+shared); each leg still runs its own preamble and may rest, so up to
+`MAX_ROUTE_LEGS` rest sets (`Order`, own `Level`, `TickWord`, `TickSummary`,
+`BestTick`: about 5 writes and 1.6 KB each) come on top, plus a `Market` read
+per extra leg and extra `FeeAccrual` / SAC tokens if the legs do not share
+assets.
 
 In-repo, two no-rest legs sweeping 4 + 4 same-word levels: 22 memory reads,
 17 writes, 5,288 write bytes (same as the 8-level take).
@@ -228,8 +237,9 @@ Native test host: 2 memory reads, 0 writes, 0 write bytes.
 
 ### quote_place
 
-Reads `Market`, `BestTick(opp)`, the walk's `Level`s and `TickWord`s, both
-summaries, the own-side `Level` at `limit_tick`. Writes nothing.
+Reads `Market`, `BestTick(opp)`, the walk's `Level`s and `TickWord`s, the
+opposite `TickSummary` when the scan crosses a word, the own-side `Level` at
+`limit_tick`. Writes nothing.
 
 ### views (`best`, `level`, `order`)
 
@@ -248,15 +258,18 @@ summaries, the own-side `Level` at `limit_tick`. Writes nothing.
 | replace (one quote) | ~14 | ~8 | ~1.5 KB | 13 / 7 / 1,980 | writes hold (loose); bytes low |
 | replace_batch (40-quote refresh) | ~130 | ~90 | ~24 KB | 130 / 124 / 44,256 | footprint holds; writes and bytes low |
 | place, take only, 8 levels | ~55 | ~21 | ~6 KB | 22 / 17 / 5,288 (same word) | loose on footprint (assumes a padded band, not recorded reads); writes hold; bytes hold for this shape |
-| place, maximal take (32 levels, 32 words) | ~85 + pad | ~70 | ~22 KB | 77 / 72 / 26,640 | writes low (72, not 70); bytes low (26.0 KB, not 22) |
+| place, maximal take (32 levels, 32 words) | ~85 + pad | ~70 | ~22 KB | 77 / 72 / 26,640 | writes low (72, not 70); bytes low (26.6 KB, not 22) |
 
 §17's max-sweep arithmetic used the Level *budget* (384 B) times 32, plus 32
-TickWords, plus a 1.2 KB lump for summary, best, fees, vaults, and a possible
-own-side rest. That is 22 KB of *payload*. The host meters framing on every
-write, and a take-only sweep does not write own-rest entries, so the mix is
-different: 32 × 296 B Levels + 32 × 268 B TickWords + TickSummary + BestTick
-+ FeeAccrual + five SAC-related writes = 72 write entries and 26,640 host
-bytes.
+TickWords, plus separate lumps for the summary and for best, fees, vaults and a
+possible own-side rest. That is 22 KB of *payload*. The host meters each write
+as the full ledger entry (payload + key + about 56 B of framing): Level 404 B,
+TickWord 376, TickSummary 372, BestTick 156, FeeAccrual 184, SAC balance 224,
+and the authorization nonce (a temporary entry every call whose authorizer is
+not the transaction source writes) 72. A take-only sweep writes no own-rest
+entries. So: 32 × 404 + 32 × 376 + 372 + 156 + 184 + 4 × 224 + 72 = 26,640
+bytes over 72 write entries (32 Levels, 32 TickWords, summary, best, fee
+accrual, four SAC balances, nonce).
 
 The 40-quote §17 row assumed about two writes per item (a same-tick refresh:
 one `Level` + one `Order`). Moving each quote to a new tick writes the old
@@ -270,15 +283,17 @@ nothing.
 
 ## Corrections for a follow-up edit of §17
 
-Do not apply these in this milestone. They are the list a later edit of
-`docs/04-architecture.md` should use.
+Applied to `docs/04-architecture.md` §17 in ADR-024's follow-up commit; kept
+here as the derivation. Every authenticated call also writes one temporary
+authorization-nonce entry (+1 write, ~72 B, plus temporary rent), which §17 now
+notes once instead of per row.
 
 1. Rest, existing level: write bytes ~1.2 KB, not 0.9 KB. Footprint ~13, not 12.
-2. Rest, new level: ~8 writes / ~2.1 KB, not 7 / 1.2 KB. The extra write is
-   `TickSummary` on a first touch of a word, which §17 priced only as a rent
-   add-on, not as a write-set member.
-3. Settle: ~5 writes / ~0.9 KB, not 3 to 4 / 0.6 KB. The host counts the
-   `Order` delete and both SAC balances.
+2. Rest, new level: ~8 writes / ~2.1 KB, not 7 / 1.2 KB. The write set is
+   `Level`, `TickWord`, `TickSummary`, `BestTick`, `Order`, two SAC balances, and
+   the auth nonce entry.
+3. Settle: ~5 writes / ~0.9 KB, not 3 to 4 / 0.6 KB: `Level`, `Order` delete,
+   two SAC balances, and the auth nonce entry.
 4. Replace: write bytes ~2.0 KB, not 1.5 KB. Writes ~7, which is inside the
    ~8 target.
 5. `replace_batch` of 40 quotes that each change tick: ~124 writes / ~44 KB,

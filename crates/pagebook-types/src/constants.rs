@@ -4,7 +4,7 @@ pub const MAX_PAGES: u32 = 1;
 pub const MAX_LEVELS_CROSSED: u32 = 32;
 pub const MAX_SLOTS_SCANNED: u32 = 64;
 pub const MAX_ROUTE_LEGS: u32 = 4;
-pub const MAX_REPLACE_BATCH: u32 = 64;
+pub const MAX_REPLACE_BATCH: u32 = 40;
 pub const FEE_BPS_MAX: u32 = 1_000;
 pub const FEE_BPS_DENOM: i128 = 10_000;
 pub const WORD_TICKS: u32 = 2048;
@@ -27,8 +27,11 @@ pub const BUDGET_FEE_ACCRUAL: usize = 50;
 pub const BUDGET_BEST_TICK: usize = 60;
 pub const BUDGET_TICK_BITMAP: usize = 268;
 
-// The §0.3 creation bound reserves 4 × MAX_ROUTE_LEGS of headroom for summed
-// per-token flows; a replace_batch sums up to MAX_REPLACE_BATCH escrows and only
-// fits because each escrow is bounded by i128::MAX / (16 × LEVEL_CAP) with
-// LEVEL_CAP ≥ MAX_REPLACE_BATCH (ADR-021). Keep that relation explicit.
+// MAX_REPLACE_BATCH is 40, not the earlier 64: a measured replace item emits
+// ~340 B of events, so 64 items exceed the 16,384 B event budget, and 64
+// dispersed items exceed the 400-entry footprint and 200-write caps; 40 fits
+// all three (ADR-024). The §0.3 creation bound reserves 4 × MAX_ROUTE_LEGS of
+// headroom for summed per-token flows; a replace_batch sums up to
+// MAX_REPLACE_BATCH escrows and fits because each escrow is bounded by
+// i128::MAX / (16 × LEVEL_CAP) with LEVEL_CAP ≥ MAX_REPLACE_BATCH (ADR-021).
 const _: () = assert!(MAX_REPLACE_BATCH <= INLINE_SLOTS + PAGE_SLOTS * MAX_PAGES);

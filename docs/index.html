@@ -901,18 +901,18 @@
     <table>
       <thead><tr><th>Operation</th><th class="num">Footprint entries</th><th class="num">Write entries</th><th class="num">Write bytes</th><th class="num">Est. resource fee</th><th>Dominated by</th></tr></thead>
       <tbody>
-        <tr><td>place, rest only, existing level</td><td class="num">~12</td><td class="num">~5</td><td class="num">~0.9 KB</td><td class="num">~0.029 XLM</td><td>Order rent (min TTL)</td></tr>
-        <tr><td>place, rest only, first touch of a tick</td><td class="num">~14</td><td class="num">~7</td><td class="num">~1.2 KB</td><td class="num">~0.094 XLM</td><td>+ Level rent</td></tr>
-        <tr><td>settle</td><td class="num">~9</td><td class="num">~3</td><td class="num">~0.6 KB</td><td class="num">~0.002 XLM</td><td>write entries, no rent</td></tr>
-        <tr><td>replace, one quote</td><td class="num">~14</td><td class="num">~8</td><td class="num">~1.5 KB</td><td class="num">~0.003 XLM</td><td>write entries, zero rent</td></tr>
-        <tr><td>replace_batch, 40 quotes</td><td class="num">~130</td><td class="num">~90</td><td class="num">~24 KB</td><td class="num">~0.03 XLM</td><td>write entries</td></tr>
-        <tr><td>place, take 8 levels</td><td class="num">~55</td><td class="num">~21</td><td class="num">~6 KB</td><td class="num">~0.009 XLM</td><td>write entries + tx size</td></tr>
-        <tr><td>place, take 32 levels (max)</td><td class="num">~85 + pad</td><td class="num">~70</td><td class="num">~22 KB</td><td class="num">~0.027 XLM</td><td>write entries</td></tr>
+        <tr><td>place, rest only, existing level</td><td class="num">13</td><td class="num">5</td><td class="num">1.2 KB</td><td class="num">~0.048 XLM</td><td>Order rent (min TTL)</td></tr>
+        <tr><td>place, rest only, first touch of a tick</td><td class="num">15</td><td class="num">8</td><td class="num">2.1 KB</td><td class="num">~0.115 XLM</td><td>+ Level rent (~0.27 on an empty side)</td></tr>
+        <tr><td>settle</td><td class="num">9</td><td class="num">5</td><td class="num">0.9 KB</td><td class="num">~0.0015 XLM</td><td>write entries, no rent</td></tr>
+        <tr><td>replace, one quote (same tick)</td><td class="num">13</td><td class="num">7</td><td class="num">2.0 KB</td><td class="num">~0.0024 XLM</td><td>write entries, zero rent</td></tr>
+        <tr><td>replace_batch, 40 quotes (same ticks)</td><td class="num">90</td><td class="num">83</td><td class="num">27.7 KB</td><td class="num">~0.031 XLM</td><td>write entries, zero rent</td></tr>
+        <tr><td>place, take 8 levels</td><td class="num">22</td><td class="num">17</td><td class="num">5.3 KB</td><td class="num">~0.006 XLM</td><td>write entries + events</td></tr>
+        <tr><td>place, take 32 levels in 32 words (max)</td><td class="num">77</td><td class="num">72</td><td class="num">26.6 KB</td><td class="num">~0.026 XLM</td><td>write entries</td></tr>
       </tbody>
     </table>
   </div>
   <p>
-    Matching is nearly free and placement pays rent: a 32-level sweep costs about the same as resting one order, so the book's carrying cost sits with makers at roughly 0.027 XLM per open order per minimum TTL, which doubles as anti-spam for <em>holding</em> orders (churn is priced by <code>min_order_lots</code>: dust that arms a phantom best or poisons a queue gets filled or swept for its notional). And write bytes, not fees, are the throughput ceiling: the max sweep is 7.6% of the ledger-wide write-bytes limit (286,720), so a ledger fits about 13 of them, or hundreds of rests and settles. Every hot entry is a few hundred bytes for that reason.
+    Matching is nearly free and placement pays rent: a 32-level sweep costs about half of resting one order, so the book's carrying cost sits with makers at roughly 0.046 XLM per open order per minimum TTL, which doubles as anti-spam for <em>holding</em> orders (churn is priced by <code>min_order_lots</code>: dust that arms a phantom best or poisons a queue gets filled or swept for its notional). And write bytes, not fees, are the throughput ceiling: the max sweep is 9.3% of the ledger-wide write-bytes limit (286,720), so a ledger fits about 10 of them, or hundreds of rests and settles. Every hot entry is a few hundred bytes for that reason.
   </p>
   <aside class="note">
     <p><span class="lbl">Concurrency:</span> the vault's SAC balance entries are the serialization points. Every settling transaction has one or both in its read-write footprint, so under P23 parallel execution all markets sharing a token form one dependent-transaction cluster. v1 accepts this because write bytes bind first; per-market vault sub-accounts are the v2 fix. No market operation writes the instance entry (no <code>bump_instance</code> on the hot path; <code>keepalive()</code> cranks the TTL), so instance reads stay read-only and never widen the cluster. <a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#16-concurrency-and-serialization">04 §16</a></p>

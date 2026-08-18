@@ -258,7 +258,7 @@ default that a decision note may change once measured.
 - **M4 — resource hardening.** Build the **worst-case state-transition matrix** first
   (per op: entries touched × bytes, incl. bitmap dispersal, windows, page cleanup, TTL
   bumps, SAC entries), then footprint-count and write-byte assertions per op against
-  architecture §17's corrected table (max sweep: ~70 writes / ~22 KB — construct the
+  architecture §17's corrected table (max sweep: 72 writes / ~26.6 KB — construct the
   32-level / 32-word shape explicitly); **fee gates**: measured resource fee per op
   (SDK budget + testnet simulation) asserted against §17's estimate table within a
   tolerance band, with the rent component isolated (it dominates and moves with the
@@ -336,7 +336,7 @@ default that a decision note may change once measured.
    `PAGE_SLOTS = 32`, `MAX_PAGES = 1`, `MAX_LEVELS_CROSSED = 32` (§17's worst-case
    rows assume it), `MAX_SLOTS_SCANNED = 64` (one full inline run plus one page —
    enough to clear any single-generation tombstone run at `MAX_PAGES = 1` in one
-   take), `MAX_ROUTE_LEGS = 4`, `MAX_REPLACE_BATCH = 64` (§0.3).
+   take), `MAX_ROUTE_LEGS = 4`, `MAX_REPLACE_BATCH = 40` (§0.3; ADR-024 lowered it from 64: the event budget binds).
 2. Whether rest should offer the optional `extend_ttl`-to-180-d flag for `Order`
    in v1 (TTL targets themselves are resolved: protocol minimum ~120 d covers every
    entry class; see architecture §18 / ADR-004).

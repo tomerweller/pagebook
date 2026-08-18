@@ -170,3 +170,65 @@ fn bound_replace_batch_forty_quotes() {
         fp.write_bytes
     );
 }
+
+/// MAX_REPLACE_BATCH must be reachable on-chain in its worst shape (every item
+/// on its own word, every item to a fresh tick): footprint ≤ 400 entries,
+/// writes ≤ 200, contract events ≤ 16,384 B, write bytes ≤ 132,096 (03). At the
+/// earlier 64 the events alone were ~22 KB (ADR-024).
+#[test]
+fn max_replace_batch_dispersed_fits_every_per_tx_limit() {
+    let h = setup();
+    let market = h.client().create_market(
+        &h.base,
+        &h.quote,
+        &1,
+        &1,
+        &1,
+        &(2 * pagebook_types::MAX_REPLACE_BATCH * WORD_TICKS + 10),
+        &10,
+        &1,
+        &1_000_000,
+    );
+    let maker = Address::generate(&h.env);
+    let n = pagebook_types::MAX_REPLACE_BATCH;
+    for i in 0..n {
+        rest_ask_on(&h, market, &maker, ask_tick(2 * i), 2, i as u64 + 1);
+    }
+    let mut items = soroban_sdk::Vec::new(&h.env);
+    for i in 0..n {
+        items.push_back(crate::ReplaceItem {
+            nonce: i as u64 + 1,
+            is_bid: false,
+            tick: ask_tick(2 * i + 1),
+            qty_lots: 3,
+            window: window(&h),
+        });
+    }
+    // read the meter right after the call (any later host call resets it)
+    h.client().replace_batch(&maker, &market, &items);
+    let res = h.env.cost_estimate().resources();
+    let entries = res.memory_read_entries + res.disk_read_entries;
+    std::println!(
+        "footprint[replace_batch {n} dispersed]: entries={} write_entries={} write_bytes={} events_bytes={}",
+        entries,
+        res.write_entries,
+        res.write_bytes,
+        res.contract_events_size_bytes
+    );
+    assert!(entries <= 400, "footprint entries {entries} > 400");
+    assert!(
+        res.write_entries <= 200,
+        "write entries {} > 200",
+        res.write_entries
+    );
+    assert!(
+        res.write_bytes <= 132_096,
+        "write bytes {} > 132,096",
+        res.write_bytes
+    );
+    assert!(
+        res.contract_events_size_bytes <= 16_384,
+        "event bytes {} > 16,384",
+        res.contract_events_size_bytes
+    );
+}

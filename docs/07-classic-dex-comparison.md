@@ -25,9 +25,9 @@ M3 branch.
 |---|---|---|
 | Where matching runs | inside the protocol, at transaction apply | inside a contract invocation, at apply |
 | Order representation | `OfferEntry` ledger entry per offer; price a rational `n/d` of two i32s; amount an i64 | one `Order` entry per resting order plus a positional slot in a packed `Level`; price an integer tick; size in lots (§0.2, §2, §3) |
-| Placing an order | `ManageBuyOffer` / `ManageSellOffer` / `CreatePassiveSellOffer`, ~100 stroops base fee | `place`, resource-priced; ~0.029 XLM to rest (dominated by 120-day `Order` rent), ~0.009 to 0.037 XLM to take (§17) |
-| Cost to hold an order | 0.5 XLM base reserve locked per offer, fully refundable; no rent | ~0.027 XLM per order per 120 days, non-refundable; entry archives after 120 idle days (§3, §18) |
-| Cost to update a quote | modify in place, ~100 stroops | `replace` rewrites the `Order` in place, ~0.003 XLM; a 40-quote `replace_batch` ~0.03 XLM (ADR-005) |
+| Placing an order | `ManageBuyOffer` / `ManageSellOffer` / `CreatePassiveSellOffer`, ~100 stroops base fee | `place`, resource-priced; ~0.048 XLM to rest (dominated by 120-day `Order` rent), ~0.006 to 0.026 XLM to take (§17) |
+| Cost to hold an order | 0.5 XLM base reserve locked per offer, fully refundable; no rent | ~0.046 XLM per order per 120 days, non-refundable; entry archives after 120 idle days (§3, §18) |
+| Cost to update a quote | modify in place, ~100 stroops | `replace` rewrites the `Order` in place, ~0.002 XLM; a 40-quote same-tick `replace_batch` ~0.031 XLM (ADR-005) |
 | Fill delivery | credited to both sides at apply | taker settled at apply; the maker must call `settle` to receive proceeds or a refund (§7) |
 | Custody while resting | funds stay in the account, reserved as liabilities | funds transferred into the contract's vault (§6) |
 | Depth a taker can cross per op | up to the protocol's per-operation work limit (1,000 offers; `opEXCEEDED_WORK_LIMIT`) | at most `MAX_LEVELS_CROSSED` levels (32) and `MAX_SLOTS_SCANNED` slots (64) per transaction, shared across `route` legs (§8) |
@@ -116,10 +116,10 @@ An SDEX offer locks 0.5 XLM of base reserve, refunded when the offer is removed.
 Holding is free apart from opportunity cost, and a maker can leave offers
 indefinitely.
 
-Every resting PageBook order pays ~0.027 XLM of rent for the 120-day minimum TTL when
+Every resting PageBook order pays ~0.046 XLM of rent for the 120-day minimum TTL when
 it rests, non-refundable. An order idle past its TTL archives; the eventual `settle` or
-`replace` restores it and pays another ~0.027 (§3, §18). Levels the maker touches for
-the first time cost ~0.064 XLM (§17); pages and words add more.
+`replace` restores it and pays another ~0.046 (§3, §18). Levels the maker touches for
+the first time cost ~0.067 XLM (§17); pages and words add more.
 
 Soroban charges rent for persistent state; there is no refundable-reserve model.
 `replace` (ADR-005) makes updates rent-free by reusing the entry, which closes most of
@@ -222,8 +222,8 @@ SDEX capacity is the ledger's operation limit (1,000 operations per ledger by va
 setting), shared with all classic traffic; each offer is one operation.
 
 PageBook capacity is Soroban's per-ledger write-byte budget (286,720 B): a maximal
-32-level sweep is ~22 KB, so about 13 of them fit in a ledger; hundreds of rests or
-settles do; ~12 full 40-quote refreshes across all users (§17, ADR-005). And because
+32-level sweep is ~27 KB, so about 10 of them fit in a ledger; hundreds of rests or
+settles do; ~10 full 40-quote refreshes across all users (§17, ADR-005). And because
 every settling operation touches the vault's balance entry per token, all markets
 sharing a token form one serialization cluster under Soroban's parallel execution
 (§16), which v1 accepts. Rent-heavy costs also scale with network state size (§17).
@@ -267,7 +267,7 @@ crate exists; wallets, indexers, and analytics do not.
   unfavourable rounding on small amounts. The only rounding is the taker fee.
 - Deterministic footprints once the pad is right; every race but one degrades
   gracefully with a typed reason.
-- Update economics after ADR-005. `replace_batch` re-quotes 40 orders for ~0.03 XLM
+- Update economics after ADR-005. `replace_batch` re-quotes 40 orders for ~0.031 XLM
   with zero rent; still 60 to 75 times SDEX per refresh, but a fixed, predictable cost.
 - Composability. Contracts can be makers and takers; `route` is atomic across markets;
   a signed pay-in is a pure function of the arguments, so an authorization built at

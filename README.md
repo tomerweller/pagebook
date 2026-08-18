@@ -123,7 +123,7 @@ These are the main limits and behaviors behind the design:
   trust assumptions.
 - Current design estimates use 400 footprint entries, 200 writes, and 132 KB of
   transaction write bytes. A maximal 32-level take is estimated at about 85
-  footprint entries plus padding, 70 writes, and 22 KB of writes.
+  footprint entries plus padding, 72 writes, and about 27 KB of writes.
 
 The repository tests cover matching, settlement, routes, pages, size budgets,
 footprints, TTL behavior in the SDK test host, and conservation properties. The

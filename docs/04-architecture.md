@@ -76,10 +76,10 @@ Any order or taker quantity outside `[min_order_lots, max_order_lots]` is reject
 the floor is the dust-order defense, the ceiling is half the overflow proof.
 `FeeAccrual(token)` accrues in i128; its ceiling is total token supply, which SAC bounds
 below i128 by construction. Config constants that bound loops but are not per-market:
-`MAX_ROUTE_LEGS` (target 4) and `MAX_REPLACE_BATCH` (target 64: `replace` emits two
-events per item, ~100 B each, against the 16,384-byte event budget, §13, for a batch
-whose items sit on *dispersed* levels the 400-entry footprint cap binds first, at
-roughly 5-6 entries per item; clients batch to fit, the constant is the ceiling).
+`MAX_ROUTE_LEGS` (target 4) and `MAX_REPLACE_BATCH` (40: a replace item's two events
+measure ~340 B together, so 40 items are ~13.9 KB of the 16,384-byte event budget
+(§13) and 64 would exceed it; 40 items on dispersed levels are ~170 footprint entries
+and ~164 writes, inside the 400 / 200 caps, ADR-024).
 
 ### 0.4 Actors
 
@@ -336,11 +336,11 @@ step on the walk, and the place that lands on it clears it (§8). Archival is be
 for the same reason: a word comes back on restore exactly as last written, and every
 write that gives a tick liquidity touches its word, so the hard direction of the
 contract holds across the gap. A stale bit over an *archived* level is the one place
-the two combine: the walk that lands on it restores the `Level` (~0.064 XLM, surfaced
+the two combine: the walk that lands on it restores the `Level` (~0.067 XLM, surfaced
 by simulation and paid by that taker) and clears the bit, after which no walk ever
 touches that level again until someone rests there, so each such bit costs at most
 one restore, ever, against a seeding cost of a rest plus a cancel (§14; via `replace`
-the marginal seeding cost is ~0.001 XLM, so the bound that matters is the one restore
+the marginal seeding cost is ~0.002 XLM at a tick that already has a `Level`, so the bound that matters is the one restore
 *per bit*, not the seeder's fee, §17 "rent bounds holding, not churn").
 
 ### 6. The vault
@@ -494,7 +494,7 @@ word (invariant 3), so the other side's post-only orders and replaces are not
 false-rejected by a swept tick; if no word beyond has a set bit the side is marked
 empty, exactly. Scanning past the limit's word would read whichever `TickWord` holds the
 next set bit, possibly far past `pad_end`, and turn a completed take into a footprint
-trap that anyone could arm for ~0.09 XLM by resting one min-size order at a distant
+trap that anyone could arm for ~0.12 XLM by resting one min-size order at a distant
 tick. Consequently the band never needs to extend beyond the deepest level a take can
 *consume* plus the words through `limit_tick`'s (§14). Only a walk that began at the
 recorded best moves `BestTick` (otherwise the recorded best is still live and
@@ -568,7 +568,7 @@ refunds its remainder.
 
 **Budget** (§17): take-only, 8 levels swept ≈ 55 footprint / ~21 writes / ~6 KB /
 **~0.009 XLM**; maximal take (32 levels, 32 distinct `TickWord` entries) ≈ 85 + pad /
-~70 writes / ~22 KB / **~0.027 XLM** (arithmetic in §17).
+72 writes / ~26.6 KB / **~0.026 XLM** (arithmetic in §17).
 
 ### 9. Rest (append)
 
@@ -592,9 +592,9 @@ covers concurrent same-level rests up to a full page (`PAGE_SLOTS` orders) *and*
 concurrent sweep or reset (which sends the tail back toward 0). **`RetryRest` priced:**
 because it is a typed error, the whole place reverts, completed takes and the walk's
 persisted head cleanup included, and the victim loses one failed-transaction fee
-(~0.037 XLM for a take-plus-rest). Forcing it needs more same-level rests than the
+(~0.05 XLM for a take-plus-rest at an existing tick). Forcing it needs more same-level rests than the
 window covers, landed *ahead of the victim in the same ledger*: at least
-`PAGE_SLOTS + 1` (~1 XLM at ~0.029 each) and up to `2 × PAGE_SLOTS` (~1.9 XLM), rent
+`PAGE_SLOTS + 1` (~1.6 XLM at ~0.048 each) and up to `2 × PAGE_SLOTS` (~3 XLM), rent
 the attacker never gets back. A 25-50:1 cost ratio against the attacker per attempt,
 plus an intra-ledger ordering requirement, is why the all-or-nothing choice stands;
 the alternative (keep the take, refund the remainder) would silently drop maker intent.
@@ -614,7 +614,7 @@ inside the spread (which moves `BestTick`) and cancel or `replace` it away (whic
 not move `BestTick` back). Until the next taker walks through, every post-only rest on
 the other side that would cross the phantom fails `Crossed`, and every non-post-only
 taker spends one crossing slot clearing it. Re-arming costs the griefer one `replace`
-item (~0.001 XLM once the nonce's rent is paid) plus the risk that a taker fills the
+item (~0.002 XLM once the nonce's rent is paid, at a tick that already has a `Level`) plus the risk that a taker fills the
 dust while it rests, a `min_order_lots`-sized fill inside the spread, which is why
 `min_order_lots × price` and not rent is the deterrent for this class (§17). The
 damage is bounded to a quiet interval on one side of one market and heals on the
@@ -622,8 +622,9 @@ first take; v1 accepts it rather than read the recorded best's `Level` on every
 post-only rest.
 
 **Budget** (§17): rest at an existing level ≈ 12 footprint / ~5 writes / ~0.9 KB /
-**~0.029 XLM** (dominated by `Order` rent); first touch / restore of a tick ≈ 14 / ~7
-/ ~1.2 KB / **~0.094 XLM** (adds `Level` rent).
+**~0.048 XLM** (dominated by `Order` rent); first touch / restore of a tick ≈ 15 / 8
+/ ~2.1 KB / **~0.115 XLM** (adds `Level` rent; ~0.27 XLM on an empty side, where the
+word, summary and best are created too).
 
 ### 10. Replace: the maker update path
 
@@ -635,7 +636,7 @@ the entry is reused at fixed size (§3), **no rent is charged** while the entry 
 live: the maker's nonce is a durable quote slot whose 120-day rent amortizes across
 every update, for a market maker and, equally, for a griefer (§17 "rent bounds
 holding, not churn"). (An `Order` idle past its TTL is archived; the next `replace`
-restores it and pays the next 120-day chunk, ~0.027 XLM, the same charge a settle
+restores it and pays the next 120-day chunk, ~0.046 XLM, the same charge a settle
 would carry.) Replace never
 takes liquidity: it applies §9's conservative post-only check against recorded
 `BestTick` and fails `Crossed` instead. And it is atomic, the maker is never unquoted
@@ -655,7 +656,7 @@ rest, so it pauses with the entry side of the book (§12).
 
 **Budget** (§17): one quote ≈ 14 footprint / ~8 writes / ~1.5 KB / **~0.003 XLM**,
 zero rent; a 40-quote full refresh ≈ 130 / ~90 / ~24 KB / **~0.03 XLM**. Why this
-matters, settle+place would re-pay ~0.027 XLM of `Order` rent per update, is the
+matters, settle+place would re-pay ~0.046 XLM of `Order` rent per update, is the
 second reading in §17 and ADR-005.
 
 ### 11. Views (read-only)
@@ -816,9 +817,9 @@ touched (a stale bit over an archived level, an archived word on the walk, an ar
 says which are archived) and pad every other archived key unmarked. Nothing can turn an unmarked archived key into a touched one in
 flight: the only way an archived `Level` re-enters the walk is a rest at that tick,
 which restores it first. Restore rent therefore lands only on entries the taker's own
-execution needs, once. A stale bit over an archived level costs one restore (~0.064
+execution needs, once. A stale bit over an archived level costs one restore (~0.067
 XLM) and one `MAX_LEVELS_CROSSED` slot, for exactly one taker, ever; seeding it costs
-its author a rest plus a cancel, ~0.09 XLM fresh, or ~0.001 XLM per `replace` item on
+its author a rest plus a cancel, ~0.12 XLM fresh, or ~0.002 XLM per `replace` item on
 a nonce whose rent is already paid, plus a `Level` that must be created or restored at
 each new tick (§17 "rent bounds holding, not churn"). Even at the churn price the
 attack is one-shot per bit and 120 days per level.
@@ -873,97 +874,124 @@ whole story.
 
 ### 17. Budgets and fees
 
-Budgets (targets, packed encoding, incl. SAC instance/balance entries and the
-persistent `Market`; derived from the worst-case write set, not the typical one,
-resource tests gate against these):
+Budgets are measured (M4, ADR-024: `tests/footprint.rs`, `tests/worst_case.rs`,
+`tests/fee_gates.rs`; derivation in `08-worst-case-matrix.md`). "Touched" is what the
+host meters for the invocation; the client's *declared* footprint for a `place` is
+larger (the padded band, §14). Every call whose authorizer is not the transaction
+source also writes one temporary authorization-nonce entry (+1 write, ~72 B, plus
+temporary rent); it is inside every row below.
 
-| Op | Footprint | Writes | Write bytes |
+| Op | Touched entries | Writes | Write bytes |
 |---|---|---|---|
-| place, rest only (existing level) | ~12 | ~5 | ~0.9 KB |
-| place, rest only (new level) | ~14 | ~7 | ~1.2 KB |
-| settle | ~9 | ~3-4 | ~0.6 KB |
-| replace (one quote) | ~14 | ~8 | ~1.5 KB |
-| replace_batch (40-quote full refresh) | ~130 | ~90 | ~24 KB |
-| place, take only, 8 levels swept (band ~24 + windows) | ~55 | ~21 | ~6 KB |
-| place, maximal take (32 levels, 32 distinct `TickWord` entries) | ~85 + pad | ~70 | ~22 KB |
+| place, rest only (existing level) | 13 | 5 | 1.2 KB |
+| place, rest only (new level, empty side) | 15 | 8 | 2.1 KB |
+| settle | 9 | 5 | 0.9 KB |
+| replace (one quote, new tick) | 13 | 7 | 2.0 KB |
+| replace_batch (40 quotes, same ticks: the refresh) | 90 | 83 | 27.7 KB |
+| replace_batch (40 quotes, each to a fresh tick) | 130 | 124 | 44.3 KB |
+| place, take only, 8 levels swept (one word) | 22 | 17 | 5.3 KB |
+| place, take 8 levels + rest | 27 | 22 | 6.9 KB |
+| place, maximal take (32 levels in 32 words) | 77 | 72 | 26.6 KB |
+| route (2 legs, 8 levels, no rest) | 22 | 17 | 5.3 KB |
+| create_market | 9 | 3 | 1.0 KB |
+| set_market_caps | 5 | 2 | 0.7 KB |
+| collect_fees | 6 | 3 | 0.6 KB |
+| keepalive | 2 | 0 | 0 |
+| quote_place, views | 7 | 0 | 0 |
 
 Worst-case write-byte arithmetic for the max sweep, so nobody trusts the table
-blindly: 32 Level (×384 B) + 32 TickWord (×268 B) + TickSummary + BestTick +
-FeeAccrual + 2 vault balances + own-rest entries ≈ 12.3 + 8.2 + 0.3 + ~1.2 KB ≈
-**22 KB** and ~70 writes, within per-tx limits (400 entries / 200 writes / 132 KB)
-but **7.6% of a whole ledger's 286,720 write bytes**. Typical ops are the rest/settle
-rows (≤ 1 KB); the ledger sustains hundreds of those, or ~13 max sweeps, per close,
-the reason every hot entry is a few hundred bytes. (SLP history suggests the ceiling
+blindly. The host meters each write as the full ledger entry (payload + key + ~56 B of
+framing): Level 404 B, TickWord 376, TickSummary 372, BestTick 156, FeeAccrual 184,
+SAC balance 224, auth nonce 72. 32 × 404 + 32 × 376 + 372 + 156 + 184 + 4 × 224 + 72 =
+**26,640 B over 72 writes** (32 Levels, 32 TickWords, summary, best, fee accrual, four
+SAC balances, nonce), within per-tx limits (400 entries / 200 writes / 132 KB) but
+**9.3% of a whole ledger's 286,720 write bytes**. Typical ops are the rest/settle rows
+(~1 KB); the ledger sustains hundreds of those, or ~10 max sweeps, per close, the
+reason every hot entry is a few hundred bytes. (SLP history suggests the ceiling
 rises; per-op bytes here are ~50-100× under a whole-book-blob design.)
 
-**Estimated resource fees per operation.** Computed from live mainnet rates (Aug 2026;
-see 03 §Fees and ADR-004): instructions 7/10k stroops, 2,500 per write entry,
-write/rent floor 1,000 per KB, events 5,000/KB (refundable), tx bytes ≈ 4.4 stroops
-each, live reads free, and rent ≈ **1,667 stroops per byte per 120-day minimum TTL**.
-Instruction counts are rough (±3×) but immaterial, **rent on newly created entries
-dominates everything else**:
+**Rent per created entry.** Rent is charged on the full ledger entry, at ~1,667
+stroops per byte per 120-day minimum TTL at the 1,000/KB floor (03 §Fees, ADR-004):
 
-All rows assume the entries an operation rewrites are **live**; the worst case adds
-rent for whatever the operation creates or restores, and the last three rows below
-price those increments so any row can be composed into its own worst case:
-
-| Op | Est. resource fee | Dominated by |
+| Entry | Full size | Rent per 120 d |
 |---|---|---|
-| place, rest only (existing level) | **~0.029 XLM** | `Order` rent (160 B × 120 d ≈ 0.027) |
-| place, rest only (first touch / restore of a tick) | **~0.094 XLM** | + `Level` rent (384 B ≈ 0.064) |
-| settle | **~0.002 XLM** | write entries; no rent (only deletes/rewrites) |
-| replace (one quote; entry reused) | **~0.003 XLM** | write entries; zero rent |
-| + first rest into a new `LevelPage` (tail crosses a page boundary) | **+ ~0.053 XLM** | `LevelPage` rent (320 B) |
-| + first rest in a `TickWord` (word created or restored) | **+ ~0.043 XLM** | `TickWord` rent (256 B); `TickSummary`/`BestTick` similar, once per side |
-| + settle or replace of an *archived* `Order` (idle > 120 d) | **+ ~0.027 XLM** | `Order` restore rent, paid by the maker |
-| replace_batch (40-quote full refresh, one tx) | **~0.03 XLM** | write entries (~90 × 2,500) |
-| place, take only, 8 levels swept | **~0.009 XLM** | write entries + tx size |
-| place, take 8 levels + rest remainder | **~0.037 XLM** | the remainder's `Order` rent |
-| place, maximal take (32 levels) | **~0.027 XLM** | write entries (70 × 2,500) |
-| `create_market` | **~0.085 XLM** | `Market` rent (~490 B named struct, once per market) |
-| `collect_fees` | **~0.001 XLM** | none |
+| `Order` | 276 B | ~0.046 XLM |
+| `Level` | 404 B | ~0.067 XLM |
+| `LevelPage` | ~376 B | ~0.063 XLM |
+| `TickWord` / `TickSummary` | 376 / 372 B | ~0.063 / ~0.062 XLM |
+| `BestTick` | 156 B | ~0.026 XLM |
+| `FeeAccrual` | 184 B | ~0.031 XLM |
+| `Market` | 580 B | ~0.097 XLM |
+| a caller's first SAC balance in a token | 224 B | ~0.037 XLM |
+
+**Estimated resource fees per operation.** Execution (instructions, write entries at
+2,500 stroops, write bytes at 875/KB, events at 5,000/KB) is measured in-repo against
+the SDK's 2026-07-10 mainnet snapshot; instructions are a lower bound (the native test
+contract does not model wasm instantiation) and tx-size fees (~406/KB) are not in
+these figures. Rent uses the table above. Rows assume the entries an operation
+rewrites are live and name what it creates:
+
+| Op | Est. resource fee | Of which |
+|---|---|---|
+| place, rest only (existing level) | **~0.048 XLM** | exec 0.0016 + `Order` rent 0.046 |
+| place, rest only (new tick, word already live) | **~0.115 XLM** | + `Level` rent 0.067 |
+| place, rest only (empty side: new word, summary, best) | **~0.27 XLM** | Order + Level + TickWord + TickSummary + BestTick |
+| settle | **~0.0015 XLM** | exec only; no rent |
+| replace (same tick, size change) | **~0.0024 XLM** | exec only; zero rent |
+| replace (to a fresh tick) | **~0.07 XLM** | + `Level` rent 0.067 |
+| replace_batch (40 quotes, same ticks) | **~0.031 XLM** | exec 312k stroops; zero rent |
+| replace_batch (40 quotes, each to a fresh tick) | **~2.7 XLM** | exec 0.043 + 40 × `Level` rent |
+| + settle or replace of an *archived* `Order` (idle > 120 d) | **+ ~0.046 XLM** | `Order` restore rent, paid by the maker |
+| place, take only, 8 levels swept | **~0.006 XLM** | exec 62k stroops (+ `FeeAccrual` 0.031 and the taker's first balance 0.037, once) |
+| place, take 8 levels + rest (empty side) | **~0.28 XLM** | exec 0.008 + the rest's five entries |
+| place, maximal take (32 levels) | **~0.026 XLM** | exec 256k stroops (72 writes) |
+| `create_market` | **~0.098 XLM** | `Market` rent 0.097 |
+| `collect_fees` | **~0.001 XLM** | exec (+ recipient's first balance 0.037, once) |
 | `keepalive` (whole venue, per ~120 d) | **~2.3 XLM** | wasm code-entry rent (~40 KB at ⅓ discount) |
 
 Readings, in design terms:
 
-- **Matching is nearly free; placement pays rent.** A 32-level sweep costs about the
-  same as one `Order`. The book's carrying cost sits with makers at ~0.027 XLM per
-  open order per 120 days, an anti-spam economics that arrives for free and stacks
-  with `min_order_lots` (a dust-storm of K *simultaneously open* orders has a hard
-  cost of ~0.027 K XLM, non-refundable, plus K escrows).
+- **Matching is nearly free; placement pays rent.** A 32-level sweep costs about half
+  of one `Order`. The book's carrying cost sits with makers at ~0.046 XLM per open
+  order per 120 days, an anti-spam economics that arrives for free and stacks with
+  `min_order_lots` (a dust-storm of K *simultaneously open* orders has a hard cost of
+  ~0.046 K XLM, non-refundable, plus K escrows).
 - **Rent bounds holding, not churn.** Because `replace` moves an existing `Order` for
-  ~0.001 XLM, an attacker who has paid rent on K nonces can re-arm anything a rest
+  ~0.002 XLM, an attacker who has paid rent on K nonces can re-arm anything a rest
   plus a cancel can arm, a tombstone, a stale bit, a phantom `BestTick` inside the
   spread (§9), a re-filled dust level, K times per transaction for ~0.03 XLM,
-  indefinitely. None of it reaches funds, and every instance is bounded by a cap and
-  healed by the next taker (`MAX_SLOTS_SCANNED`, `MAX_LEVELS_CROSSED`, sweep-resets,
-  the one-restore-per-stale-bit bound of §5); but the per-instance cost figures in
-  §5/§9/§14 are *rent* figures and overstate the churn case by ~30×. The churn
-  deterrent is **`min_order_lots × price`**: dust rested inside the spread to arm a
-  phantom or fragment the book is filled at that price by the first taker, and dust
-  rested at the best price to poison a queue is swept for its notional. Set
+  indefinitely, provided the target ticks already have a `Level` (a fresh tick costs
+  the `Level` rent). None of it reaches funds, and every instance is bounded by a cap
+  and healed by the next taker (`MAX_SLOTS_SCANNED`, `MAX_LEVELS_CROSSED`,
+  sweep-resets, the one-restore-per-stale-bit bound of §5); but the per-instance cost
+  figures in §5/§9/§14 are *rent* figures and overstate the churn case by ~30×. The
+  churn deterrent is **`min_order_lots × price`**: dust rested inside the spread to
+  arm a phantom or fragment the book is filled at that price by the first taker, and
+  dust rested at the best price to poison a queue is swept for its notional. Set
   `min_order_lots` so that notional is worth more than the nuisance; that knob is
   retunable via `set_market_caps` (§12) without touching the design.
 - **Churn is priced separately from holding, use `replace`.** Updating a quote via
-  settle+place re-creates the `Order` and re-pays its rent every time (~0.031
-  XLM/quote, a 40-order book refreshed every minute would burn ~1,800 XLM/day, so
+  settle+place re-creates the `Order` and re-pays its rent every time (~0.048
+  XLM/quote, a 40-order book refreshed every minute would burn ~2,800 XLM/day, so
   SDEX-style churn is impossible on that path). `replace` reuses the entry: a full
-  40-quote refresh in one tx is ~0.03 XLM, and the per-quote carrying cost stays
-  0.000225 XLM/day regardless of update frequency. Capacity, not fees, then binds:
-  at ~24 KB per full refresh the *network* fits ~12 per ledger. Full analysis and
-  SDEX comparison in ADR-005.
+  40-quote same-tick refresh in one tx is ~0.031 XLM, and the per-quote carrying cost
+  stays ~0.0004 XLM/day regardless of update frequency. Moving quotes to ticks that
+  have never held a level pays `Level` rent per new tick, once. Capacity, not fees,
+  then binds: at ~28 KB per same-tick refresh the *network* fits ~10 per ledger, and
+  ~6 when every quote changes tick (44 KB). Full analysis and SDEX comparison in
+  ADR-005.
 - **Padding is negligible:** ~300 stroops (0.00003 XLM) per declared-but-untouched
   key, live or archived-and-unmarked, a 100-key band costs ~0.003 XLM. Pad
   generously; the budget constraint is the 400-entry cap, not the fee. The exception
   is an archived entry the walk *touches* (a stale bit over an archived level): that
-  one is restored at ~0.064 XLM, once, and simulation shows it (§14).
+  one is restored at ~0.067 XLM, once, and simulation shows it (§14).
 - **Level rent is paid once per tick per ~120 days of activity**, by whoever
   creates/restores it (`Level`s are never deleted, so re-activating a swept tick is a
   rewrite, not a create).
 - **Volatility caveat:** the 1,000/KB rate is the protocol *floor*; it climbs toward
   10,000/KB as live Soroban state approaches the 3 GB target, rent-dominated rows
   scale with it (worst case ~10×). M4 regression-gates measured fees against this
-  table.
+  table (`tests/fee_gates.rs`).
 
 ### 18. TTL and archival: policy summary
 
