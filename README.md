@@ -11,6 +11,11 @@ The repository contains a Rust contract, shared data types, a small Rust client
 helper crate, and tests. Use it to study the design or run local experiments. It
 is not a finished exchange, SDK, indexer, or wallet integration.
 
+The quickest way in is the rendered explainer at
+[blob.tomerweller.com/pagebook](https://blob.tomerweller.com/pagebook/): the design
+in pictures and worked numbers, with each section linking to the matching part of
+the architecture document.
+
 ## The problem
 
 An order book needs to find the next price level while orders arrive and fill at
@@ -133,7 +138,7 @@ real-network validation.
 | `crates/pagebook-types/` | Shared contract types, packed encodings, constants, and key helpers |
 | `crates/pagebook-client/` | Client-side key and footprint helpers |
 | `docs/04-architecture.md` | Full technical specification |
-| `docs/index.html` | Visual companion to the technical specification |
+| `docs/index.html` | Visual companion to the technical specification, rendered at [blob.tomerweller.com/pagebook](https://blob.tomerweller.com/pagebook/) |
 | `docs/03-soroban-constraints.md` | Soroban storage, footprint, and resource background |
 | `docs/07-classic-dex-comparison.md` | Comparison with the classic Stellar DEX |
 
@@ -154,7 +159,7 @@ make lint
 
 - [Architecture](docs/04-architecture.md): storage, matching, settlement,
   events, footprints, fees, and archival behavior
-- [Architecture explainer](docs/index.html): diagrams and worked examples
+- [Architecture explainer](https://blob.tomerweller.com/pagebook/): diagrams and worked examples (source: `docs/index.html`)
 - [Soroban constraints](docs/03-soroban-constraints.md): the runtime limits
   behind the design
 - [Classic Stellar DEX comparison](docs/07-classic-dex-comparison.md): what
