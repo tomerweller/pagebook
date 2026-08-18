@@ -1,62 +1,75 @@
 # PageBook
 
-A central limit order book (CLOB) designed natively for Stellar's Soroban runtime.
+A central limit order book (CLOB) designed for Stellar's Soroban runtime.
 
-**Status: M0–M3 implemented and reviewed** (`contracts/pagebook`, `crates/`); M4 resource
-hardening is partial (ADR-019). The docs below are the design the code follows.
+**Status: implementation in progress.** M0 through M3 are implemented and
+reviewed. M4 resource hardening is partial (ADR-019), and the M5 client SDK
+sketch is present. This is not a production deployment.
 
 ## Why this exists
 
-On-chain CLOBs keep being redesigned around each runtime's storage and concurrency
-model: Serum/Phoenix/Manifest around Solana's account list, DeepBook around Sui's shared
-objects, Econia around Aptos tables. Soroban has its own model — declared footprints,
-per-byte write fees, TTL/state-archival, footprint-clustered parallel execution — and a
-design that works *with* those properties looks different from a port of any existing
-book. PageBook is that design: price-level entries at predictable keys,
-cumulative-fill accounting, crankless atomic settlement, deferred O(1) maker claims, and
-state archival used as the garbage collector.
+On-chain CLOBs are shaped by their runtime's storage and concurrency model:
+Serum, Phoenix, and Manifest use Solana account lists; DeepBook uses Sui shared
+objects; Econia uses Aptos tables. Soroban has declared footprints, per-byte
+write fees, TTL and state archival, and footprint-clustered parallel execution.
+PageBook is built around those constraints rather than around a storage model
+from another chain.
 
-The proximate trigger was evaluating `deepstate-contracts` (an elegant EVM radix-tree
-matching engine) and finding that its content-addressed storage keys — its best feature
-on EVM — are fundamentally incompatible with Soroban's simulation-time footprints. See
-`docs/02-deepstate-evaluation.md`.
+The design grew out of an evaluation of `deepstate-contracts`, an EVM radix-tree
+matching engine. Its content-addressed keys work well for EVM gas accounting but
+do not fit Soroban's simulation-time footprints. See
+[`docs/02-deepstate-evaluation.md`](docs/02-deepstate-evaluation.md).
 
-## Repo map
+## Repository map
 
 | Path | What it is |
 |---|---|
 | `CLAUDE.md` | Working instructions for the implementing agent |
-| `docs/01-prior-art.md` | Survey: Solana CLOBs (Serum, Phoenix, OpenBook v2, Manifest), Sui DeepBook v3, Aptos Econia, appchains, SPEEDEX — and the convergent lessons |
-| `docs/02-deepstate-evaluation.md` | Deep review of deepstate-contracts: what's brilliant on EVM, measured gas profile, and exactly why it doesn't translate to Soroban |
-| `docs/03-soroban-constraints.md` | The resource limits, storage/archival semantics, and P23 execution model the design targets (with sources, as of Aug 2026) |
-| `docs/04-architecture.md` | **The PageBook design.** Storage schema, matching algorithm, claims, footprint padding, TTL policy, fees, events |
-| `docs/05-implementation-plan.md` | Proposed crate/module layout, storage keys, public interface, invariants, test strategy, milestones |
-| `docs/06-slp-sensitivity.md` | Which design variables track network limits, and how they are retuned |
-| `docs/07-classic-dex-comparison.md` | What a user of the classic Stellar DEX gives up in PageBook: limitations, grouped, with the design reasons and roadmap pointers |
+| `contracts/pagebook/` | Soroban contract modules and tests for matching, settlement, pages, routes, footprints, sizes, TTL, and conservation |
+| `crates/pagebook-types/` | Shared storage types, packed encodings, constants, and key-coordinate helpers |
+| `crates/pagebook-client/` | Rust helpers for settle and replace keys, `quote_place` padding, restore marks, and nonce allocation |
+| `Makefile` | Build, test, format, lint, and contract-build wrappers |
+| `docs/01-prior-art.md` | CLOB design survey across Solana, Sui, Aptos, appchains, and SPEEDEX |
+| `docs/02-deepstate-evaluation.md` | Review of the EVM matching engine and why its storage keys do not fit Soroban footprints |
+| `docs/03-soroban-constraints.md` | Soroban resource limits, storage and archival semantics, and P23 execution behavior |
+| `docs/04-architecture.md` | Normative PageBook design: storage schema, matching, settlement, footprints, fees, events, and TTL policy |
+| `docs/index.html` | Visual explainer for the architecture document |
+| `docs/05-implementation-plan.md` | Milestones, module layout, interfaces, and the remaining test and deployment work |
+| `docs/06-slp-sensitivity.md` | Design variables that track network limits and how to retune them |
+| `docs/07-classic-dex-comparison.md` | PageBook's limitations compared with the classic Stellar DEX |
+| `docs/decisions/` | Decision records for measured changes and implementation deviations |
 
 ## Design in one paragraph
 
-One contract hosts many markets. Each price level is one small persistent entry keyed
-`(market, side, tick)` holding a packed FIFO plus three counters (`generation`,
-`head_seq`, `head_consumed_lots`); a per-side bitmap and a `Best` pointer index the levels.
-Takers sweep k levels with k small writes and settle atomically via SAC transfers —
-makers are never touched during matching. Makers claim later in O(1) by comparing their
-packed order id against the level counters (generation advanced ⇒ fully filled). All
-keys are computable client-side, so transaction footprints can be *padded* with adjacent
-levels at simulation time — concurrent book movement degrades gracefully instead of
-hard-failing. Cold state (empty levels, dormant claims) is never deleted; it archives
-via TTL and auto-restores on touch, with restore costs landing on the beneficiary.
+One contract hosts many markets. Each price level is a persistent entry keyed by
+`(market, side, tick)` and stores a packed FIFO queue plus generation and head
+counters. `BestTick`, `TickSummary`, and `TickWord` provide the derived tick
+index. A taker calls `place` to sweep bounded liquidity and settle atomically via
+SAC transfers. A maker's `Order` entry records its queue coordinates and later
+settles in O(1) by comparing them with the level counters. `replace` reuses that
+entry, `replace_batch` and `route` net transfers in memory, and `quote_place`
+supports the client's simulate, pad, and submit flow. Empty levels and dormant
+claims are left for TTL archival rather than deleted from the order store.
 
-## Headline numbers (against Aug 2026 mainnet limits)
+## Current resource targets
 
-A padded 8-level taker fill: ~28 footprint entries (limit 400), ~14 write entries
-(limit 200), ~2.5 KB write bytes (tx limit 132,096), negligible instructions (limit
-400M). The binding network-wide constraint is ledger write bytes (286,720 per ~5s
-ledger) — the reason every entry in this design is a few hundred bytes.
+The architecture's current estimates are based on Aug 2026 mainnet limits:
 
-## Handoff notes
+- An 8-level take: about 55 footprint entries, 21 writes, and 6 KB of writes.
+- A maximal 32-level take: about 85 footprint entries plus client padding, 70
+  writes, and 22 KB of writes.
+- The transaction limits used by the design are 400 footprint entries, 200
+  writes, and 132 KB of write bytes. The ledger-wide write-byte limit is
+  286,720 bytes per roughly five-second ledger.
 
-Read order for the implementing agent: `CLAUDE.md` → `docs/04-architecture.md` →
-`docs/05-implementation-plan.md`, with 01–03 as reference material. The architecture
-doc is normative where it states MUST/never; the implementation plan is a starting
-proposal — deviate with a written rationale in `docs/decisions/`.
+The in-repository size, footprint, and behavior tests cover the structural
+budgets. The full write-byte and resource-fee matrix, live-host restore checks,
+and the long-running soak remain part of M4.
+
+## Start here
+
+Read `CLAUDE.md`, then `docs/04-architecture.md` and
+`docs/05-implementation-plan.md`. Use docs 01 through 03 and 06 for the
+rationale and network constraints. The architecture document is normative where
+it uses MUST or never. The implementation plan is a proposal; record any
+deviation in `docs/decisions/`.

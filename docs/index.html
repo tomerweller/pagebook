@@ -383,6 +383,7 @@
 <header class="masthead">
   <h1>PageBook</h1>
   <p class="sub">A central limit order book for Soroban with deterministic footprints: every ledger key an operation touches is computable at simulation time. This page is the short version of the <a href="04-architecture.md">architecture doc</a>: the same data structures and processes, with pictures and worked numbers.</p>
+  <p class="sub">Implementation status: the Rust contract, shared types, client padding helpers, and tests are in the repository. M0 through M3 are implemented, M4 resource hardening is partial, and the M5 client SDK sketch is present.</p>
 </header>
 
 <nav class="contents" id="contents" aria-label="Contents">
@@ -429,7 +430,7 @@
     <strong>Write bytes are the scarce shared resource.</strong> Each ledger, about five seconds, allows 286,720 bytes of writes across all Soroban traffic, and Soroban charges for every byte of every entry a transaction rewrites, whether or not that byte changed. If the book is one blob, every place and every settle rewrites the whole book, and a few of them can fill a ledger. Rent points the same way: a persistent entry prepays about 120 days at roughly 1,667 stroops per byte, so a bloated entry costs money as well as throughput. Going too small does not help either, because every entry carries 100 to 200 bytes of key and framing on top of its payload. A hot entry wants to be a few hundred bytes.
   </p>
   <p>
-    The design answers each in turn. Against the footprint: every key is a pure function of identifiers the client already knows (market, side, tick, owner, nonce), and every loop bounds on a config constant, so a client can compute the full key set from a simulation and pad it against whatever the book does before the transaction lands. Against the write budget: every hot entry is packed bytes with a size budget, and each operation's worst-case reads and writes are a number in a table that tests enforce. Everything below is those two answers worked out.
+    The design answers each in turn. Against the footprint: every key is a pure function of identifiers the client already knows (market, side, tick, owner, nonce), and every loop bounds on a config constant, so a client can compute the full key set from a simulation and pad it against whatever the book does before the transaction lands. Against the write budget: the bulk-rewritten queues and bitmaps use packed bytes with size budgets, while the smaller named entries use readable <code>#[contracttype]</code> structs. The test suite covers the entry sizes and the operation footprints. Everything below is those two answers worked out.
   </p>
 </section>
 
@@ -441,12 +442,12 @@
 </section>
 
 <h2 class="part" id="part1">Part I: data structures</h2>
-<p class="lead">There are ten ledger entries in three groups, and two principles govern all of them: every key is a pure function of client-known identifiers, and the order store is authoritative while the tick index is derived.</p>
+<p class="lead">There are nine PageBook entry types in three groups, plus the token contracts' vault balances. Two principles govern all of them: every key is a pure function of client-known identifiers, and the order store is authoritative while the tick index is derived.</p>
 
 <section id="storage">
   <h3>Storage map <span class="ref"><a href="04-architecture.md#part-i--data-structures">04 Part I</a></span></h3>
   <p>
-    Keys are one <code>#[contracttype]</code> <code>DataKey</code> enum: the variant name is the type, the fields are coordinates. Nothing that execution assigns (a generation, a queue position, a page index) may appear in a key the client has to put in the footprint. All entries are persistent except <code>Config</code>. Sizes are XDR-serialized budgets at max occupancy, enforced by tests; the hot entries are packed <code>Bytes</code> because a <code>contracttype</code> map would be about 2.5× larger.
+    Keys are one <code>#[contracttype]</code> <code>DataKey</code> enum: the variant name is the type, the fields are coordinates. Nothing that execution assigns (a generation, a queue position, a page index) may appear in a key the client has to put in the footprint. All entries are persistent except <code>Config</code>. Sizes are XDR-serialized budgets at max occupancy, enforced by tests. <code>Level</code> and <code>LevelPage</code> use packed <code>Bytes</code>, as do the 2,048-bit <code>TickWord</code> and <code>TickSummary</code> bitmaps. <code>Config</code>, <code>Market</code>, <code>BestTick</code>, <code>Order</code>, and <code>FeeAccrual</code> use named <code>#[contracttype]</code> structs.
   </p>
   <div class="tablewrap">
     <table>
@@ -454,7 +455,7 @@
       <tbody>
         <tr class="band"><td colspan="4">Configuration: money-free, admin-governed</td></tr>
         <tr><td class="k">Config</td><td class="k">Config</td><td>admin, fee recipient, paused flag, market counter (instance storage)</td><td class="num">~190 B</td></tr>
-        <tr><td class="k">Market</td><td class="k">Market(market_id)</td><td>token pair, lot_size, tick_size, tick band, fee bps, order-size bounds, loop caps, queue geometry</td><td class="num">~490 B</td></tr>
+        <tr><td class="k">Market</td><td class="k">Market(market_id)</td><td>token pair, lot_size, tick_size, tick band, fee bps, order-size bounds, loop caps, queue geometry</td><td class="num">≤ 500 B</td></tr>
         <tr class="band"><td colspan="4">Order store: authoritative, funds-bearing, never stale</td></tr>
         <tr><td class="k">Level</td><td class="k">Level(market, side, tick)</td><td>packed bytes: five counters + <code>INLINE_SLOTS</code> quantity slots</td><td class="num">≤ 384 B</td></tr>
         <tr><td class="k">LevelPage</td><td class="k">LevelPage(market, side, tick, page)</td><td>packed bytes: <code>PAGE_SLOTS</code> more quantity slots (overflow)</td><td class="num">≤ 320 B</td></tr>
@@ -832,7 +833,7 @@
         </g>
       </svg>
     </div>
-    <figcaption>The maker's nonce becomes a durable quote slot whose rent (the minimum persistent TTL, about 120 days) is paid once and amortizes across every update. A 40-quote refresh in one transaction costs about 0.03 XLM.</figcaption>
+    <figcaption>The maker's nonce becomes a durable quote slot whose rent (the minimum persistent TTL, about 120 days) is paid once and amortizes across every update. The architecture estimates that a 40-quote refresh in one transaction costs about 0.03 XLM.</figcaption>
   </figure>
 </section>
 
@@ -920,7 +921,7 @@
 
 <section id="invariants">
   <h3>Invariants <span class="ref"><a href="04-architecture.md#19-invariants-must-hold-property-test-all">04 §19</a></span></h3>
-  <p>Nine properties, all covered by property tests; the numbers match the architecture doc.</p>
+  <p>Nine properties, covered by the in-repository tests; the numbers match the architecture doc.</p>
   <ol class="inv">
     <li>Conservation: vault balance per token equals open escrows plus unclaimed proceeds plus accrued fees. <span class="ref">vault</span></li>
     <li><code>open_lots</code> equals the sum of live slot quantities minus the head's consumed lots (tombstones and stale slots excluded); takes and settles both decrement it. <span class="ref">level queue</span></li>
