@@ -145,7 +145,7 @@ pub fn place_body(
         let spent = out.quote;
         let rest_escrow = quote_atoms(env, rested_lots, limit_tick, m.tick_size);
         let back = crate::math::chk_sub(env, crate::math::chk_sub(env, escrow, spent), rest_escrow);
-        net.pay_out(env, &m.quote, back);
+        net.refund_unspent(env, &m.quote, back);
         if out.filled > 0 {
             let base_out = crate::math::base_atoms(env, out.filled, m.lot_size);
             let fee = taker_fee(env, base_out, m.taker_fee_bps);
@@ -157,7 +157,7 @@ pub fn place_body(
         let escrow = crate::math::base_atoms(env, qty_lots, m.lot_size);
         net.pay_in(env, &m.base, escrow);
         let back = crate::math::base_atoms(env, unspent_lots, m.lot_size);
-        net.pay_out(env, &m.base, back);
+        net.refund_unspent(env, &m.base, back);
         if out.filled > 0 {
             let fee = taker_fee(env, out.quote, m.taker_fee_bps);
             net.pay_out(env, &m.quote, crate::math::chk_sub(env, out.quote, fee));

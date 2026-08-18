@@ -19,8 +19,7 @@ pub fn create_market(
     min_order_lots: u64,
     max_order_lots: u64,
 ) -> u32 {
-    let mut config = store::load_config(env);
-    config.admin.require_auth();
+    let mut config = crate::admin::require_admin(env);
     if base == quote {
         env.panic_with_error(Error::SameToken);
     }
@@ -86,8 +85,7 @@ pub fn set_market_caps(
     max_order_lots: u64,
     max_pages: u32,
 ) {
-    let config = store::load_config(env);
-    config.admin.require_auth();
+    let _config = crate::admin::require_admin(env);
     let mut m = store::load_market(env, market);
     if taker_fee_bps > FEE_BPS_MAX {
         env.panic_with_error(Error::FeeTooHigh);

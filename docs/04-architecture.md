@@ -511,10 +511,15 @@ graceful degradation. So the taker's pay-in is the full escrow at the limit pric
 (bid: `qty × limit_tick × tick_size` quote; ask: `qty × lot_size` base), knowable from
 the arguments alone; what the walk did not spend and did not rest flows back out of
 the vault, together with the taker's output net of fee, and the rested part stays as
-the order's escrow. Pay-in and pay-out are never netted against each other: at most
-one transfer in and one out per token per transaction (`replace`: the full new escrow
-in; the old order's proceeds and refund out; `route` / `replace_batch`: sums of the
-same). Vault → user transfers need no user authorization, so they may vary freely.
+the order's escrow. Pay-ins are never netted against pay-outs. Per token the flush order
+is fixed: first what the vault already holds for certain (fills, and a settled order's
+proceeds and refund), then the pay-in, then the unspent part of this call's own pay-in
+— so a chained `route` pays a later leg with what an earlier leg bought, a `replace`
+needs no liquid duplicate of escrow it already holds, and the vault is never asked to
+front a user's own refund; the order depends on nothing but the call (`replace`: the
+full new escrow in; the old order's proceeds and refund out; `route` / `replace_batch`:
+sums of the same). Vault → user transfers need no user authorization, so they may vary
+freely.
 
 **`start_tick` validity, and "still crosses".** `start_tick` MUST lie in
 `[tick_min, tick_max)` — otherwise `BadStartTick`. Every in-band value is legal: one

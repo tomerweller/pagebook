@@ -4,7 +4,7 @@ use crate::level;
 use crate::math::{base_atoms, chk_add, quote_atoms};
 use crate::store;
 use pagebook_types::{Market, Order};
-use soroban_sdk::{token::TokenClient, Address, Env, Map, Vec};
+use soroban_sdk::{token::TokenClient, Address, Env, Map};
 
 pub struct SettleResult {
     pub paid: i128,
@@ -145,68 +145,67 @@ pub fn collect_fees(env: &Env, market: u32, token: Address) -> i128 {
     accrued
 }
 
-/// Per-transaction token movement (architecture §8/§10, ADR-021). Two ledgers per
-/// token, flushed once by the entry point: `pay_in` (user pays the vault) MUST be
-/// a pure function of the call's arguments — the SAC `transfer(user, vault, amt)`
-/// carries `user.require_auth()` on exact arguments, and the user's signed auth
-/// tree is built at simulation, so a book-dependent pay-in would fail auth on
-/// any race; `pay_out` (vault pays the user) is variable and needs no auth. Never
-/// net the two against each other.
+/// Per-transaction token movement (architecture §8/§10, ADR-021). Three ledgers
+/// per token, flushed once by the entry point in a fixed order:
+///
+/// 1. `backed_out` — vault pays the user amounts the vault already holds for
+///    certain: fills (makers' escrow) and a settled order's proceeds and refund;
+/// 2. `pay_in` — user pays the vault, an amount that MUST be a pure function of
+///    the call's arguments: the SAC `transfer(user, vault, amt)` carries
+///    `user.require_auth()` on exact arguments and the user's signed auth tree is
+///    built at simulation, so a book-dependent pay-in would fail auth on any race;
+/// 3. `unspent_out` — the part of this call's own pay-in that neither filled nor
+///    rested, returned after the pay-in landed.
+///
+/// The order is deterministic (no balance read), lets a chained route pay a
+/// later leg with what an earlier leg bought, and never asks the vault to front
+/// a user's own refund. Ledgers are never netted against each other.
 pub struct Netting {
+    backed_out: Map<Address, i128>,
     pay_in: Map<Address, i128>,
-    pay_out: Map<Address, i128>,
+    unspent_out: Map<Address, i128>,
+}
+
+fn bump(env: &Env, m: &mut Map<Address, i128>, token: &Address, amount: i128) {
+    let cur = m.get(token.clone()).unwrap_or(0);
+    m.set(token.clone(), chk_add(env, cur, amount));
 }
 
 impl Netting {
     pub fn new(env: &Env) -> Self {
         Self {
+            backed_out: Map::new(env),
             pay_in: Map::new(env),
-            pay_out: Map::new(env),
+            unspent_out: Map::new(env),
         }
     }
 
-    /// User pays the vault `amount` of `token`. Callers pass amounts derived only
-    /// from call arguments (escrow at the limit price, full order escrow).
+    /// User pays the vault `amount` of `token` (escrow at the limit price, full
+    /// order escrow) — derived only from call arguments.
     pub fn pay_in(&mut self, env: &Env, token: &Address, amount: i128) {
-        let cur = self.pay_in.get(token.clone()).unwrap_or(0);
-        self.pay_in.set(token.clone(), chk_add(env, cur, amount));
+        bump(env, &mut self.pay_in, token, amount);
     }
 
-    /// Vault pays the user `amount` of `token` (proceeds, refunds, unspent escrow).
+    /// Vault pays the user from funds it already holds: fills, proceeds, refunds.
     pub fn pay_out(&mut self, env: &Env, token: &Address, amount: i128) {
-        let cur = self.pay_out.get(token.clone()).unwrap_or(0);
-        self.pay_out.set(token.clone(), chk_add(env, cur, amount));
+        bump(env, &mut self.backed_out, token, amount);
     }
 
-    /// At most one transfer in and one out per token. Order per token: when the
-    /// vault already holds the pay-out, pay out first so a chained route can
-    /// pay the next leg with what the previous leg bought and a replace does
-    /// not need liquid balance for escrow it already holds; otherwise pay in
-    /// first (a thin vault must never be asked to front the user's own refund).
+    /// Vault returns the unspent part of this call's own pay-in.
+    pub fn refund_unspent(&mut self, env: &Env, token: &Address, amount: i128) {
+        bump(env, &mut self.unspent_out, token, amount);
+    }
+
     pub fn flush(&self, env: &Env, user: &Address) {
         let vault = env.current_contract_address();
-        let mut tokens: Vec<Address> = Vec::new(env);
-        for (token, _) in self.pay_in.iter() {
-            tokens.push_back(token);
+        for (token, amt) in self.backed_out.iter() {
+            transfer(env, &token, &vault, user, amt);
         }
-        for (token, _) in self.pay_out.iter() {
-            if !tokens.contains(&token) {
-                tokens.push_back(token);
-            }
+        for (token, amt) in self.pay_in.iter() {
+            transfer(env, &token, user, &vault, amt);
         }
-        for token in tokens.iter() {
-            let amt_in = self.pay_in.get(token.clone()).unwrap_or(0);
-            let amt_out = self.pay_out.get(token.clone()).unwrap_or(0);
-            let out_first = amt_in > 0
-                && amt_out > 0
-                && TokenClient::new(env, &token).balance(&vault) >= amt_out;
-            if out_first {
-                transfer(env, &token, &vault, user, amt_out);
-                transfer(env, &token, user, &vault, amt_in);
-            } else {
-                transfer(env, &token, user, &vault, amt_in);
-                transfer(env, &token, &vault, user, amt_out);
-            }
+        for (token, amt) in self.unspent_out.iter() {
+            transfer(env, &token, &vault, user, amt);
         }
     }
 }

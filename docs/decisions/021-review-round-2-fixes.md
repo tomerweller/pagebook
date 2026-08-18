@@ -57,10 +57,14 @@ findings below are fixed on the branch.
 11. **Flush order blocked chained routes.** Pay-ins were flushed before pay-outs,
     so a route selling what its previous leg bought needed the user to pre-hold
     the intermediate token, and a replace needed liquid balance for escrow it
-    already held. Fix: per token, pay out first when the vault already holds the
-    amount, otherwise pay in first. Chained-route test added.
+    already held. Fix (final form, round 4): three ledgers per token flushed in a
+    fixed order — vault-backed pay-outs (fills, a settled order's proceeds and
+    refund), then the pay-in, then the unspent part of the call's own pay-in — so
+    the order depends only on the call, never on the vault's balance. Chained-route
+    test added.
 12. **Footprint gates were §17 × 1.5 (3–4× measured).** Now measured + small slack.
-13. **`replace` did not validate its window; `collect_fees` accepted any market;
+13. **`replace` did not validate its window; `create_market` / `set_market_caps`
+    bypassed `require_admin`; `collect_fees` accepted any market;
     admin ops did not bump the instance TTL (§12 says they do); a geometry
     mismatch in a stored `Market` was silently misread.** All fixed; several
     no-op tests strengthened; `Cargo.lock` tracked; CI builds the wasm target.

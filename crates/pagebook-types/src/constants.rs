@@ -29,3 +29,9 @@ pub const BUDGET_FEE_ACCRUAL: usize = 50;
 pub const BUDGET_BEST_TICK: usize = 40;
 pub const BUDGET_TICK_BITMAP: usize = 268;
 pub const MARKET_BODY_BYTES: usize = 1 + 8 + 8 + 4 + 4 + 4 + 8 + 8 + 4 + 4 + 4 + 4 + 4;
+
+// The §0.3 creation bound reserves 4 × MAX_ROUTE_LEGS of headroom for summed
+// per-token flows; a replace_batch sums up to MAX_REPLACE_BATCH escrows and only
+// fits because each escrow is bounded by i128::MAX / (16 × LEVEL_CAP) with
+// LEVEL_CAP ≥ MAX_REPLACE_BATCH (ADR-021). Keep that relation explicit.
+const _: () = assert!(MAX_REPLACE_BATCH <= INLINE_SLOTS + PAGE_SLOTS * MAX_PAGES);
