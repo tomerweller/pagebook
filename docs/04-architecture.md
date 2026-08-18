@@ -304,8 +304,8 @@ the next place that walks through.
 | Entry | Durability | Key | Contents | Target size |
 |---|---|---|---|---|
 | `BestTick` | persistent | `BestTick(market, side)` | best tick (u32), empty flag | ~40 B |
-| `TickSummary` | persistent | `TickSummary(market, side)` | summary bitmap: bit `word` = "`TickWord(word)` has any set bit" (2,048 words) | 256 B |
-| `TickWord` | persistent | `TickWord(market, side, word)` | presence bitmap for ticks `[word·2048, (word+1)·2048)` | 256 B |
+| `TickSummary` | persistent | `TickSummary(market, side)` | summary bitmap: bit `word` = "`TickWord(word)` has any set bit" (2,048 words) | 257 B payload, 268 B XDR (ADR-017) |
+| `TickWord` | persistent | `TickWord(market, side, word)` | presence bitmap for ticks `[word·2048, (word+1)·2048)` | 257 B payload, 268 B XDR (ADR-017) |
 
 **Coverage.** The bitmap hierarchy covers ticks `[0, 2048 × 2048 = 2^22)` per side per
 market — the market's tick band MUST fit inside one TickSummary entry, enforced at
@@ -638,9 +638,11 @@ declared as read-only and never conflict.
   `start_tick`, the crossed ticks, and the band and slot windows the client should
   declare. It MUST run the same walk code as `place` (same caps, same lazy-clear
   decisions, computed but not written) so that simulation and application diverge only
-  by what the book does in flight, never by logic; it also reports which declared
-  entries are archived, so the client knows which restores the transaction will pay
-  for (§14). Its exact return shape is an implementer decision (05 open questions).
+  by what the book does in flight, never by logic; and it returns the keys the
+  simulated execution touched, so the client can tell touched keys from padded-only
+  keys when it marks restores (§14). Archival itself is not observable from inside a
+  contract (an archived entry cannot be read); the client learns which of those keys
+  are archived from RPC. Return shape: 05 "Encoding decisions" and ADR-020.
 
 ### 12. Entry points, authentication, administration, cranks
 
@@ -767,8 +769,8 @@ transaction lists which archived entries to restore and pays their rent; an arch
 key that is declared but *not* listed costs only its footprint slot, and traps only if
 execution touches it. So: mark for restore exactly the archived entries simulation
 touched (a stale bit over an archived level, an archived word on the walk, an archived
-`Level` at the rest tick — `quote_place` reports them, §11) and pad every other
-archived key unmarked. Nothing can turn an unmarked archived key into a touched one in
+`Level` at the rest tick — `quote_place` returns the touched key set, §11, and RPC
+says which are archived) and pad every other archived key unmarked. Nothing can turn an unmarked archived key into a touched one in
 flight: the only way an archived `Level` re-enters the walk is a rest at that tick,
 which restores it first. Restore rent therefore lands only on entries the taker's own
 execution needs, once. A stale bit over an archived level costs one restore (~0.064
@@ -843,7 +845,7 @@ resource tests gate against these):
 | place — maximal take (32 levels, 32 distinct `TickWord` entries) | ~85 + pad | ~70 | ~22 KB |
 
 Worst-case write-byte arithmetic for the max sweep, so nobody trusts the table
-blindly: 32 Level (×384 B) + 32 TickWord (×256 B) + TickSummary + BestTick +
+blindly: 32 Level (×384 B) + 32 TickWord (×268 B) + TickSummary + BestTick +
 FeeAccrual + 2 vault balances + own-rest entries ≈ 12.3 + 8.2 + 0.3 + ~1.2 KB ≈
 **22 KB** and ~70 writes — within per-tx limits (400 entries / 200 writes / 132 KB)
 but **7.6% of a whole ledger's 286,720 write bytes**. Typical ops are the rest/settle
