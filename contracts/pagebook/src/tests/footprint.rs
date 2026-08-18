@@ -148,3 +148,32 @@ fn set_paused_write_set_is_instance_config() {
     });
     assert!(stored.paused);
 }
+
+#[test]
+fn place_rest_does_not_write_instance() {
+    let h = super::harness::setup();
+    let maker = Address::generate(&h.env);
+    let before = h
+        .env
+        .as_contract(&h.id, || h.env.storage().instance().all());
+    super::harness::rest_ask(&h, &maker, 10, 2, 1);
+    let after = h
+        .env
+        .as_contract(&h.id, || h.env.storage().instance().all());
+    assert_eq!(before.len(), after.len());
+}
+
+#[test]
+fn settle_does_not_write_instance() {
+    let h = super::harness::setup();
+    let maker = Address::generate(&h.env);
+    super::harness::rest_ask(&h, &maker, 10, 2, 1);
+    let before = h
+        .env
+        .as_contract(&h.id, || h.env.storage().instance().all());
+    h.client().settle(&maker, &h.market, &1);
+    let after = h
+        .env
+        .as_contract(&h.id, || h.env.storage().instance().all());
+    assert_eq!(before.len(), after.len());
+}
