@@ -97,10 +97,10 @@ fn lazy_clear_then_re_rest_same_tick() {
 
 #[test]
 fn empty_side_rest_worse_than_stale_best_is_found_by_the_next_walk() {
-    // ask 2@20 fully swept: BestTick(asks) stays on 20 (stale-better, no scan
-    // past the last sweep), the bit is cleared. A rest at 30 (worse than the
-    // stale best) sets its bit and leaves BestTick at 20; a taker walking from
-    // 20 heals the best and takes the 30.
+    // ask 2@20 fully swept in a one-word band: the bounded scan after the last
+    // sweep reaches the band's last word and finds nothing, so the side is
+    // marked empty (ADR-020). A rest at 30 then takes BestTick, and a taker
+    // walking from 20 (a stale start_tick) still finds and takes it.
     let h = setup();
     let maker = Address::generate(&h.env);
     rest_ask(&h, &maker, 20, 2, 1);
@@ -118,7 +118,11 @@ fn empty_side_rest_worse_than_stale_best_is_found_by_the_next_walk() {
         &no_rest(),
     );
     assert_eq!(filled, 2);
-    assert_eq!(h.client().best(&h.market, &false), Some(20), "stale-better");
+    assert_eq!(
+        h.client().best(&h.market, &false),
+        None,
+        "exhaustive scan: empty"
+    );
     assert!(!bit_set(&h, false, 20));
     assert_eq!(h.client().level(&h.market, &false, &20).open_lots, 0);
 
@@ -126,8 +130,8 @@ fn empty_side_rest_worse_than_stale_best_is_found_by_the_next_walk() {
     assert!(bit_set(&h, false, 30));
     assert_eq!(
         h.client().best(&h.market, &false),
-        Some(20),
-        "a worse rest never moves the recorded best"
+        Some(30),
+        "empty side takes the rest"
     );
 
     let (rested, filled, quote) = h.client().place(
@@ -144,7 +148,11 @@ fn empty_side_rest_worse_than_stale_best_is_found_by_the_next_walk() {
     assert!(!rested);
     assert_eq!(filled, 2);
     assert_eq!(quote, 60);
-    assert_eq!(h.client().best(&h.market, &false), Some(30), "healed");
+    assert_eq!(
+        h.client().best(&h.market, &false),
+        None,
+        "swept, band exhausted"
+    );
     assert!(!bit_set(&h, false, 30), "swept: bit cleared");
 }
 

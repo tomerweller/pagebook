@@ -463,7 +463,49 @@ fn walk_never_reads_word_past_limit() {
     });
     assert!(!touched.contains(&crate::DataKey::TickWord(h.market, false, 2)));
     assert!(touched.contains(&crate::DataKey::TickWord(h.market, false, 0)));
-    // BestTick(asks) stays on the swept tick (stale-better), the remainder rests at 100
-    assert_eq!(h.client().best(&h.market, &false), Some(50));
+    // BestTick(asks) moves to word 0's frontier (2047: no bit, stale-better —
+    // the true best 5000 lies beyond); the remainder rests at 100; a post-only
+    // bid at 60 is therefore NOT false-rejected by the swept tick.
+    assert_eq!(h.client().best(&h.market, &false), Some(2047));
     assert_eq!(h.client().best(&h.market, &true), Some(100));
+    let mm = Address::generate(&h.env);
+    mint(&h, &h.quote, &mm, 1_000_000);
+    let r = h.client().try_place(
+        &mm,
+        &h.market,
+        &true,
+        &60,
+        &1,
+        &60,
+        &9,
+        &window(&h),
+        &PlaceFlags {
+            post_only: true,
+            fill_or_kill: false,
+            no_rest: false,
+        },
+    );
+    assert!(r.is_ok(), "post-only bid inside the scanned gap rests");
+    // and a taker with a limit reaching word 2 finds the 5000 from the frontier
+    let (_, filled, _) = h.client().place(
+        &taker,
+        &h.market,
+        &true,
+        &6000,
+        &1,
+        &2047,
+        &3,
+        &window(&h),
+        &PlaceFlags {
+            post_only: false,
+            fill_or_kill: false,
+            no_rest: true,
+        },
+    );
+    assert_eq!(filled, 1);
+    assert_eq!(
+        h.client().best(&h.market, &false),
+        Some(6143),
+        "limit 6000 is in word 2 of a 5-word band: frontier of word 2, not empty"
+    );
 }

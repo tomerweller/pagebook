@@ -261,7 +261,14 @@ fn walk(
                     continue;
                 }
                 None => {
-                    side_empty = exhaustive;
+                    // Nothing set up to the end of limit's word: stand at that
+                    // word's frontier (stale-better, no bit) or mark empty.
+                    moved = true;
+                    if exhaustive {
+                        side_empty = true;
+                    } else {
+                        cur = frontier(m, limit_tick, ascend);
+                    }
                     break;
                 }
             }
@@ -281,21 +288,27 @@ fn walk(
                 events::filled(env, market, opp, cur, took, q);
                 events::swept(env, market, opp, cur, gen);
             }
-            if left == 0 {
-                // No scan past the last sweep: BestTick stays on the swept tick
-                // (stale-better, invariant 3).
-                moved = true;
-                break;
-            }
+            // Find where the book continues, bounded by limit's word (declared
+            // by the client, so this cannot trap — ADR-020): the next set tick,
+            // that word's frontier, or "empty" when the band's last word was
+            // scanned. This runs after the last sweep too, so BestTick does not
+            // sit on a swept tick and false-reject the other side's post-only
+            // orders.
+            moved = true;
             match crate::bitmap::next_set_tick(env, market, opp, cur, limit_tick, ascend) {
                 Some(n) => {
                     cur = n;
-                    moved = true;
+                    if left == 0 {
+                        break;
+                    }
                     continue;
                 }
                 None => {
-                    moved = true;
-                    side_empty = exhaustive;
+                    if exhaustive {
+                        side_empty = true;
+                    } else {
+                        cur = frontier(m, limit_tick, ascend);
+                    }
                     break;
                 }
             }
@@ -332,9 +345,13 @@ fn walk(
 
     // BestTick(opposite) maintenance: only a walk that began at the recorded
     // best may move it; move it to where the walk stands (a set-bit tick, a
-    // partially consumed level, or the last swept tick — never worse than the
-    // true best), or mark the side empty when the scan was exhaustive.
-    if apply && began_at_best && (moved || side_empty) {
+    // partially consumed level, or a scanned word's frontier — never worse than
+    // the true best), or mark the side empty when the scan was exhaustive.
+    // An empty recorded side stays empty unless the scan proved otherwise: a
+    // frontier written over "empty" would be a phantom best that no rest could
+    // improve past and every post-only order would be checked against.
+    let phantom_over_empty = recorded.empty && !side_empty;
+    if apply && began_at_best && (moved || side_empty) && !phantom_over_empty {
         let new = BestTick {
             empty: side_empty,
             tick: cur,
@@ -351,6 +368,20 @@ fn walk(
         quote,
         left,
         crossing_remains,
+    }
+}
+
+/// The last tick of `limit_tick`'s word in the walk direction: after a bounded
+/// scan finds no set bit up to there, BestTick may stand on it — no bit, no
+/// level, and never worse than the true best, which lies beyond. In band because
+/// the caller only asks when the scan was not exhaustive (§5, ADR-020).
+fn frontier(m: &Market, limit_tick: u32, ascend: bool) -> u32 {
+    if ascend {
+        let end = (word_of(limit_tick) + 1) * pagebook_types::WORD_TICKS - 1;
+        core::cmp::min(end, m.tick_max.saturating_sub(1))
+    } else {
+        let start = word_of(limit_tick) * pagebook_types::WORD_TICKS;
+        core::cmp::max(start, m.tick_min)
     }
 }
 
