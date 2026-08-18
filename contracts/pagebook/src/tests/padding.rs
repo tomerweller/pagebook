@@ -7,7 +7,7 @@
 extern crate std;
 
 use super::footprint::keys_touched;
-use super::harness::{flags, mint, rest_ask, rest_bid, setup, Harness};
+use super::harness::{flags, mint, rest_ask, rest_bid, setup, window, Harness};
 use crate::{ConsumeWindow, DataKey, Error, PageRange, PlaceFlags, QuoteResult, SlotWindow};
 use pagebook_types::{page, word_of};
 use soroban_sdk::{testutils::Address as _, Address};
@@ -176,12 +176,12 @@ fn simulated_footprint_declares_own_side_rest_keys() {
         assert!(q.keys.contains(&k), "quote_place keys lack {k:?}");
         assert!(keys.contains(&k), "declared keys lack {k:?}");
     }
-    // Empty opposite side: start_tick = limit_tick and a one-key band (the
-    // walk visits Level(asks, 40) once, finds it empty).
+    // Empty opposite side: start_tick = limit_tick; the walk checks the bit at
+    // 40, reads no Level (nothing to read on an empty side), and quote_place
+    // still names Level(asks, 40) as the one-key band.
     assert_eq!(q.start_tick, 40);
-    assert_eq!(q.crossed.len(), 1);
-    assert_eq!(q.crossed.get(0).unwrap().tick, 40);
-    assert_eq!(q.crossed.get(0).unwrap().open_lots, 0);
+    assert_eq!(q.crossed.len(), 0);
+    assert!(q.keys.contains(&DataKey::Level(m, false, 40)));
 }
 
 #[test]
@@ -531,4 +531,68 @@ fn negative_walk_past_pad_end_touches_undeclared_level() {
     assert_eq!(extra, std::vec![DataKey::Level(h.market, false, 40)]);
     // Padded to 40 the same place is fully declared.
     assert!(undeclared(&touched, &declared_40).is_empty());
+}
+
+#[test]
+fn race_frontier_written_in_flight_stays_inside_declared_keys() {
+    // Multi-word band. Asks 1@2040 (word 0) and 1@3000 (word 1). Taker B sims a
+    // bid limit 3500 qty 3 (start 2040, crossed 2040 and 3000). In flight taker A
+    // sweeps 2040 with limit 2040: the bounded scan finds nothing else in word 0
+    // and BestTick(asks) moves to the frontier of the next summary-set word
+    // (2048), a bit-less tick. B applies with its stale start_tick 2040: the
+    // walk must not read Level(asks, 2048) — it checks the bit in word 1
+    // (declared) and scans on to 3000. touched ⊆ declared, fill 1 @ 3000.
+    let mut h = setup();
+    h.market = h
+        .client()
+        .create_market(&h.base, &h.quote, &1, &1, &1, &10_000, &10, &1, &1_000_000);
+    let maker = Address::generate(&h.env);
+    rest_ask(&h, &maker, 2040, 1, 1);
+    rest_ask(&h, &maker, 3000, 1, 2);
+    let b = Address::generate(&h.env);
+    mint(&h, &h.quote, &b, 10_000_000);
+    let (q, declared, win) = sim_bid(&h, &b, 7, 3500, 3, 3000);
+    assert_eq!(q.start_tick, 2040);
+    assert_eq!(q.crossed.len(), 2);
+
+    let a = Address::generate(&h.env);
+    mint(&h, &h.quote, &a, 10_000_000);
+    h.client().place(
+        &a,
+        &h.market,
+        &true,
+        &2040,
+        &1,
+        &2040,
+        &1,
+        &window(&h),
+        &no_rest(),
+    );
+    assert_eq!(
+        h.client().best(&h.market, &false),
+        Some(2048),
+        "frontier of word 1"
+    );
+
+    let touched = keys_touched(&h, || {
+        let (rested, filled, _) = h.client().place(
+            &b,
+            &h.market,
+            &true,
+            &3500,
+            &3,
+            &q.start_tick,
+            &7,
+            &win,
+            &flags(),
+        );
+        assert_eq!(filled, 1);
+        assert!(rested, "2 lots rest at 3500");
+    });
+    assert!(
+        !touched.contains(&DataKey::Level(h.market, false, 2048)),
+        "no Level read at the frontier"
+    );
+    let extra = undeclared(&touched, &declared);
+    assert!(extra.is_empty(), "undeclared keys touched: {extra:?}");
 }

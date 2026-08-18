@@ -219,14 +219,6 @@ fn walk(
     // otherwise the levels between the recorded best and start_tick were never
     // visited and the recorded best is still at-or-better than the truth.
     let began_at_best = recorded.empty || recorded.tick == cur;
-    // A bounded scan that reaches the band's last word and finds nothing has
-    // proven the side empty; any narrower "none" only proves "nothing up to the
-    // limit's word".
-    let exhaustive = if ascend {
-        word_of(limit_tick) >= word_of(m.tick_max.saturating_sub(1))
-    } else {
-        word_of(limit_tick) <= word_of(m.tick_min)
-    };
 
     let mut left = qty;
     let mut filled = 0u64;
@@ -235,7 +227,41 @@ fn walk(
     let mut side_empty = false;
     let mut crossing_remains = false;
 
+    let mut first = true;
     while left > 0 && rest::crosses(taker_is_bid, cur, limit_tick) {
+        // A recorded best the walk did not get from the client (worse than
+        // start_tick, or a frontier written in flight) may be a bit-less tick
+        // outside the client's band: never read its Level — check the bit in
+        // its word (always declared: word(start)..word(limit)) and scan on.
+        // Also the empty-side case (nothing to read). Costs no budget.
+        if first
+            && (cur != start_tick || recorded.empty)
+            && !crate::bitmap::is_set(env, market, opp, cur)
+        {
+            first = false;
+            match crate::bitmap::next_set_tick(env, market, opp, cur, limit_tick, ascend) {
+                Some(n) => {
+                    cur = n;
+                    moved = true;
+                    continue;
+                }
+                None => {
+                    moved = true;
+                    match crate::bitmap::next_set_word(
+                        env,
+                        market,
+                        opp,
+                        word_of(limit_tick),
+                        ascend,
+                    ) {
+                        Some(w) => cur = word_frontier(w, ascend),
+                        None => side_empty = true,
+                    }
+                    break;
+                }
+            }
+        }
+        first = false;
         if budget.levels == 0 {
             crossing_remains = true;
             break;
@@ -262,13 +288,19 @@ fn walk(
                     continue;
                 }
                 None => {
-                    // Nothing set up to the end of limit's word: stand at that
-                    // word's frontier (stale-better, no bit) or mark empty.
+                    // Nothing set up to the end of limit's word: stand at the
+                    // start of the next summary-set word (stale-better, no bit
+                    // read) or, if none, the side is empty.
                     moved = true;
-                    if exhaustive {
-                        side_empty = true;
-                    } else {
-                        cur = frontier(m, limit_tick, ascend);
+                    match crate::bitmap::next_set_word(
+                        env,
+                        market,
+                        opp,
+                        word_of(limit_tick),
+                        ascend,
+                    ) {
+                        Some(w) => cur = word_frontier(w, ascend),
+                        None => side_empty = true,
                     }
                     break;
                 }
@@ -305,10 +337,15 @@ fn walk(
                     continue;
                 }
                 None => {
-                    if exhaustive {
-                        side_empty = true;
-                    } else {
-                        cur = frontier(m, limit_tick, ascend);
+                    match crate::bitmap::next_set_word(
+                        env,
+                        market,
+                        opp,
+                        word_of(limit_tick),
+                        ascend,
+                    ) {
+                        Some(w) => cur = word_frontier(w, ascend),
+                        None => side_empty = true,
                     }
                     break;
                 }
@@ -352,8 +389,9 @@ fn walk(
 
     // BestTick(opposite) maintenance: only a walk that began at the recorded
     // best may move it; move it to where the walk stands (a set-bit tick, a
-    // partially consumed level, or a scanned word's frontier — never worse than
-    // the true best), or mark the side empty when the scan was exhaustive.
+    // partially consumed level, or the frontier of the next summary-set word —
+    // never worse than the true best), or mark the side empty when the summary
+    // has nothing beyond.
     // An empty recorded side stays empty unless the scan proved otherwise: a
     // frontier written over "empty" would be a phantom best that no rest could
     // improve past and every post-only order would be checked against.
@@ -379,19 +417,17 @@ fn walk(
     }
 }
 
-/// The first tick past `limit_tick`'s word in the walk direction: after a bounded
-/// scan finds no set bit up to the end of that word, BestTick may stand there —
-/// strictly beyond every swept tick and beyond `limit_tick`, no bit read, and
-/// never worse than the true best, which lies at-or-beyond it. In band because
-/// the caller only asks when the scan was not exhaustive, i.e. the band has at
-/// least one more word in the walk direction (§5, §8, ADR-020).
-fn frontier(m: &Market, limit_tick: u32, ascend: bool) -> u32 {
+/// Where BestTick stands when the bounded scan found nothing up to the end of
+/// `limit_tick`'s word but the summary says word `w` (beyond it) has a set bit:
+/// the first tick of `w` in the walk direction. No `TickWord` beyond the bound is
+/// read; the tick is at-or-better than every live level in `w` and beyond, so
+/// invariant 3 holds, and it is in band because `w` contains a live in-band
+/// level (§5, §8, ADR-021).
+fn word_frontier(w: u32, ascend: bool) -> u32 {
     if ascend {
-        let next = (word_of(limit_tick) + 1) * pagebook_types::WORD_TICKS;
-        core::cmp::min(next, m.tick_max.saturating_sub(1))
+        w * pagebook_types::WORD_TICKS
     } else {
-        let prev = word_of(limit_tick) * pagebook_types::WORD_TICKS - 1;
-        core::cmp::max(prev, m.tick_min)
+        (w + 1) * pagebook_types::WORD_TICKS - 1
     }
 }
 

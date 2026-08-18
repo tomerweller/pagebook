@@ -463,10 +463,11 @@ fn walk_never_reads_word_past_limit() {
     });
     assert!(!touched.contains(&crate::DataKey::TickWord(h.market, false, 2)));
     assert!(touched.contains(&crate::DataKey::TickWord(h.market, false, 0)));
-    // BestTick(asks) moves to the frontier past word 0 (2048: no bit read,
-    // stale-better — the true best 5000 lies beyond); the remainder rests at
-    // 100; a post-only bid at 60 is therefore NOT false-rejected by the swept tick.
-    assert_eq!(h.client().best(&h.market, &false), Some(2048));
+    // BestTick(asks) moves to the first tick of the next summary-set word
+    // (word 2 → 4096: no TickWord beyond the limit's word is read; stale-better,
+    // the true best 5000 lies in that word); the remainder rests at 100; a
+    // post-only bid at 60 is therefore NOT false-rejected by the swept tick.
+    assert_eq!(h.client().best(&h.market, &false), Some(4096));
     assert_eq!(h.client().best(&h.market, &true), Some(100));
     let mm = Address::generate(&h.env);
     mint(&h, &h.quote, &mm, 1_000_000);
@@ -493,7 +494,7 @@ fn walk_never_reads_word_past_limit() {
         &true,
         &6000,
         &1,
-        &2048,
+        &4096,
         &3,
         &window(&h),
         &PlaceFlags {
@@ -505,13 +506,13 @@ fn walk_never_reads_word_past_limit() {
     assert_eq!(filled, 1);
     assert_eq!(
         h.client().best(&h.market, &false),
-        Some(6144),
-        "limit 6000 is in word 2 of a 5-word band: frontier past word 2, not empty"
+        None,
+        "nothing set in any word beyond: the summary proves the side empty"
     );
 }
 
 #[test]
-fn frontier_is_never_the_swept_tick_at_a_word_edge() {
+fn sweep_at_a_word_edge_marks_empty_or_next_word_never_the_swept_tick() {
     // ask only at 2047 (last tick of word 0), band spans 5 words; bid limit 2047
     // sweeps it with quantity left: BestTick(asks) must stand past the word
     // (2048), not on the swept 2047, so a post-only bid at 2047 rests.
@@ -540,7 +541,11 @@ fn frontier_is_never_the_swept_tick_at_a_word_edge() {
     );
     assert_eq!(filled, 1);
     assert!(!rested);
-    assert_eq!(h.client().best(&h.market, &false), Some(2048));
+    assert_eq!(
+        h.client().best(&h.market, &false),
+        None,
+        "only ask swept: empty"
+    );
     let mm = Address::generate(&h.env);
     mint(&h, &h.quote, &mm, 10_000_000);
     let r = h.client().try_place(
@@ -585,7 +590,11 @@ fn frontier_is_never_the_swept_tick_at_a_word_edge() {
         },
     );
     assert_eq!(filled, 1);
-    assert_eq!(h2.client().best(&h2.market, &true), Some(2047));
+    assert_eq!(
+        h2.client().best(&h2.market, &true),
+        None,
+        "only bid swept: empty"
+    );
 }
 
 #[test]

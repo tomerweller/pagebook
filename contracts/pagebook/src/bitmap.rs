@@ -36,6 +36,10 @@ fn save(env: &Env, key: DataKey, bm: &TickBitmap) {
         .set(&key, &Bytes::from_array(env, &bm.encode()));
 }
 
+pub fn is_set(env: &Env, market: u32, is_bid: bool, tick: u32) -> bool {
+    load_word(env, market, is_bid, word_of(tick)).get(bit_in_word(tick))
+}
+
 /// Idempotent: writes nothing when the bit (and the summary bit) are already set.
 pub fn set_tick(env: &Env, market: u32, is_bid: bool, tick: u32) {
     let w = word_of(tick);
@@ -135,6 +139,38 @@ pub fn next_set_tick(
                 if let Some(t) = scan_word(env, market, is_bid, w, 0, WORD_TICKS, false) {
                     return Some(t);
                 }
+            }
+        }
+        None
+    }
+}
+
+/// The next word past `from_word` (in the walk direction) whose summary bit is
+/// set — reads only `TickSummary`, which every pad declares. `None` means no
+/// set bit exists anywhere beyond `from_word` on this side.
+pub fn next_set_word(
+    env: &Env,
+    market: u32,
+    is_bid: bool,
+    from_word: u32,
+    ascend: bool,
+) -> Option<u32> {
+    let sum = load_summary(env, market, is_bid);
+    if ascend {
+        let mut w = from_word + 1;
+        while w < pagebook_types::SUMMARY_WORDS {
+            if sum.get(w) {
+                return Some(w);
+            }
+            w += 1;
+        }
+        None
+    } else {
+        let mut w = from_word;
+        while w > 0 {
+            w -= 1;
+            if sum.get(w) {
+                return Some(w);
             }
         }
         None
