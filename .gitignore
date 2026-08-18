@@ -2,7 +2,5 @@ target/
 .stellar/
 .soroban/
 *.wasm
-Cargo.lock
 .DS_Store
 test_snapshots/
-contracts/pagebook/proptest-regressions/

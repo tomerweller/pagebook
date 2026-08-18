@@ -222,36 +222,31 @@ fn settle_does_not_write_instance() {
 }
 
 // ---------------------------------------------------------------------------
-// Per-entry-point resource bounds (architecture §17). The table's rows are
-// treated as UPPER BOUNDS with ×1.5 slack on both the footprint (in-memory
-// read entries, which include every written entry) and the write-entry count;
-// every assertion prints the measured numbers so a regression is visible.
+// Per-entry-point resource gates (architecture §17, ADR-021). Each gate is the
+// measured value at calibration plus a small slack (+2 in-memory read entries,
+// +1 write entry) so any regression that adds a storage access shows up; the
+// §17 rows are the design ceilings and every gate sits under them. Every
+// assertion prints the measured numbers.
 // ---------------------------------------------------------------------------
 
 use super::harness::{flags, mint, rest_ask, rest_bid, setup, window, Harness};
 use crate::{PlaceFlags, PlaceLeg, ReplaceItem};
 
-fn slack(n: u32) -> u32 {
-    n * 3 / 2 + (n * 3 % 2)
-}
-
-fn assert_within(name: &str, fp: &Footprint, footprint_row: u32, writes_row: u32) {
-    let max_reads = slack(footprint_row);
-    let max_writes = slack(writes_row);
+fn assert_within(name: &str, fp: &Footprint, max_reads: u32, max_writes: u32) {
     std::println!(
-        "footprint[{name}]: memory_read_entries={} write_entries={} write_bytes={} (bounds {max_reads} / {max_writes})",
+        "footprint[{name}]: memory_read_entries={} write_entries={} write_bytes={} (gates {max_reads} / {max_writes})",
         fp.memory_read_entries,
         fp.write_entries,
         fp.write_bytes
     );
     assert!(
         fp.memory_read_entries <= max_reads,
-        "{name}: memory_read_entries {} > {max_reads} (row {footprint_row})",
+        "{name}: memory_read_entries {} > gate {max_reads}",
         fp.memory_read_entries
     );
     assert!(
         fp.write_entries <= max_writes,
-        "{name}: write_entries {} > {max_writes} (row {writes_row})",
+        "{name}: write_entries {} > gate {max_writes}",
         fp.write_entries
     );
 }
@@ -298,7 +293,7 @@ fn bound_place_rest_existing_level() {
     rest_ask(&h, &a, 10, 2, 1);
     mint(&h, &h.base, &b, 1_000);
     let fp = place_fp(&h, &b, false, 10, 2, 10, 1, flags());
-    assert_within("place rest existing level", &fp, 12, 5);
+    assert_within("place rest existing level", &fp, 15, 6);
 }
 
 #[test]
@@ -307,7 +302,7 @@ fn bound_place_rest_new_level() {
     let a = Address::generate(&h.env);
     mint(&h, &h.base, &a, 1_000);
     let fp = place_fp(&h, &a, false, 10, 2, 10, 1, flags());
-    assert_within("place rest new level", &fp, 14, 7);
+    assert_within("place rest new level", &fp, 17, 9);
 }
 
 #[test]
@@ -320,7 +315,7 @@ fn bound_place_take_eight_levels() {
     let taker = Address::generate(&h.env);
     mint(&h, &h.quote, &taker, 1_000_000);
     let fp = place_fp(&h, &taker, true, 17, 8, 10, 1, no_rest());
-    assert_within("place take 8 levels", &fp, 55, 21);
+    assert_within("place take 8 levels", &fp, 24, 18);
 }
 
 #[test]
@@ -348,7 +343,7 @@ fn bound_place_take_eight_levels_then_rest() {
     assert!(rested);
     assert_eq!(filled, 8);
     // 8-level take plus a rest at a new level (the two rows composed).
-    assert_within("place take 8 levels + rest", &fp, 55 + 14, 21 + 7);
+    assert_within("place take 8 levels + rest", &fp, 29, 23);
 }
 
 #[test]
@@ -357,7 +352,7 @@ fn bound_settle() {
     let maker = Address::generate(&h.env);
     rest_ask(&h, &maker, 10, 2, 1);
     let (_, fp) = footprint_of(&h.env, &h.id, || h.client().settle(&maker, &h.market, &1));
-    assert_within("settle", &fp, 9, 4);
+    assert_within("settle", &fp, 11, 6);
 }
 
 #[test]
@@ -369,7 +364,7 @@ fn bound_replace() {
         h.client()
             .replace(&maker, &h.market, &1, &false, &12, &3, &window(&h))
     });
-    assert_within("replace", &fp, 14, 8);
+    assert_within("replace", &fp, 15, 8);
 }
 
 #[test]
@@ -394,7 +389,7 @@ fn bound_replace_batch_five_items() {
     });
     // §17: one quote ≈ 14 / 8, a 40-quote refresh ≈ 130 / 90 — so about
     // 3 footprint / 2.1 writes per extra item on top of the first.
-    assert_within("replace_batch 5", &fp, 14 + 4 * 3, 8 + 4 * 3);
+    assert_within("replace_batch 5", &fp, 27, 20);
 }
 
 #[test]
@@ -423,7 +418,7 @@ fn bound_route_two_legs() {
     assert_eq!(out.get(0).unwrap().1, 4);
     assert_eq!(out.get(1).unwrap().1, 4);
     // Two legs sweeping 4 levels each: bounded by the 8-level take row.
-    assert_within("route 2 legs (8 levels)", &fp, 55, 21);
+    assert_within("route 2 legs (8 levels)", &fp, 24, 18);
 }
 
 #[test]
@@ -434,7 +429,7 @@ fn bound_create_market() {
             .create_market(&h.base, &h.quote, &1, &1, &1, &1000, &10, &1, &1_000_000)
     });
     // Config (instance), two SAC instances for `authorized`, the new Market.
-    assert_within("create_market", &fp, 6, 2);
+    assert_within("create_market", &fp, 10, 4);
 }
 
 #[test]
@@ -444,7 +439,7 @@ fn bound_set_market_caps() {
         h.client()
             .set_market_caps(&h.market, &16, &32, &10, &1, &1_000_000, &1)
     });
-    assert_within("set_market_caps", &fp, 3, 1);
+    assert_within("set_market_caps", &fp, 6, 3);
 }
 
 #[test]
@@ -470,14 +465,14 @@ fn bound_collect_fees() {
     });
     assert!(got > 0);
     // Config, FeeAccrual, SAC instance, vault + recipient balances.
-    assert_within("collect_fees", &fp, 6, 3);
+    assert_within("collect_fees", &fp, 7, 4);
 }
 
 #[test]
 fn bound_keepalive() {
     let h = setup();
     let (_, fp) = footprint_of(&h.env, &h.id, || h.client().keepalive());
-    assert_within("keepalive", &fp, 2, 1);
+    assert_within("keepalive", &fp, 4, 1);
 }
 
 #[test]

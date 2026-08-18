@@ -44,6 +44,7 @@ pub fn replace_body(
     window: &SlotWindow,
     net: &mut Netting,
 ) -> (i128, i128) {
+    crate::iface::validate_window(env, m, window);
     let opp = store::load_best(env, market, !is_bid);
     if !opp.empty && rest::crosses(is_bid, opp.tick, tick) {
         env.panic_with_error(Error::Crossed);

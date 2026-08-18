@@ -218,3 +218,31 @@ fn replace_batch_third_item_crossed_reverts_all() {
     assert_eq!(transfer_events(&h, &h.quote), 0);
     assert_eq!(ob0 - bal(&h, &h.base, &owner), 3);
 }
+
+/// ADR-021 flush order: a chained route (buy base in market A, sell that base
+/// in market B) works for a taker holding no base at all — the vault pays out
+/// leg 1's base before collecting leg 2's base pay-in.
+#[test]
+fn chained_route_needs_no_intermediate_balance() {
+    let h = setup();
+    let m2 = second_market(&h);
+    let maker = Address::generate(&h.env);
+    rest_ask(&h, &maker, 10, 4, 1); // market A: sells 4 base @ 10
+    mint(&h, &h.quote, &maker, 1_000_000);
+    h.client()
+        .place(&maker, &m2, &true, &12, &3, &12, &2, &window(&h), &flags()); // market B: bid 3 base @ 12
+    let taker = Address::generate(&h.env);
+    mint(&h, &h.quote, &taker, 1_000_000);
+    assert_eq!(bal(&h, &h.base, &taker), 0);
+    let mut legs = soroban_sdk::Vec::new(&h.env);
+    legs.push_back(leg(&h, h.market, 10, 4, 1, no_rest())); // buy 4 @ 10 (fee 10 bps on 4 base → 1 lot)
+    let mut sell = leg(&h, m2, 12, 3, 2, no_rest());
+    sell.is_bid = false; // sell 3 base @ 12 in market B
+    legs.push_back(sell);
+    let out = h.client().route(&taker, &legs);
+    assert_eq!(out.get(0).unwrap().1, 4);
+    assert_eq!(out.get(1).unwrap().1, 3);
+    // bought 4, paid 1 lot fee (ceil), sold 3 → 0 base left; quote: −40 +36 −fee(1)
+    assert_eq!(bal(&h, &h.base, &taker), 0);
+    assert_eq!(bal(&h, &h.quote, &taker), 1_000_000 - 40 + 36 - 1);
+}

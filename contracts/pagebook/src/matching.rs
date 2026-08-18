@@ -92,17 +92,7 @@ pub fn place_body(
     crate::market::require_qty(env, m, qty_lots);
     crate::market::require_tick(env, m, limit_tick);
     crate::market::require_start(env, m, start_tick);
-    if window.consume.len() > m.max_levels_crossed {
-        env.panic_with_error(Error::BadWindow);
-    }
-    if window.append.first > window.append.last {
-        env.panic_with_error(Error::BadWindow);
-    }
-    for w in window.consume.iter() {
-        if w.pages.first > w.pages.last {
-            env.panic_with_error(Error::BadWindow);
-        }
-    }
+    crate::iface::validate_window(env, m, window);
 
     let recorded = store::load_best(env, market, !is_bid);
     if flags.post_only && !recorded.empty && rest::crosses(is_bid, recorded.tick, limit_tick) {

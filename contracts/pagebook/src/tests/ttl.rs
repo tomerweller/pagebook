@@ -36,3 +36,30 @@ fn ttl_constants_match_architecture() {
     assert_eq!(MIN_PERSISTENT_TTL, 2_073_600);
     assert_eq!(MAX_ENTRY_TTL, 3_110_400);
 }
+
+#[test]
+fn keepalive_and_admin_ops_extend_instance_ttl() {
+    let env = super::env();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let id = env.register(PageBook, (&admin, &recipient));
+    let client = crate::PageBookClient::new(&env, &id);
+    let before = env.as_contract(&id, || env.storage().instance().get_ttl());
+    // move time on so an extension is observable, then crank
+    let seq = env.ledger().sequence();
+    env.ledger().set_sequence_number(seq + 1_000);
+    client.keepalive();
+    let after = env.as_contract(&id, || env.storage().instance().get_ttl());
+    assert!(
+        after >= before,
+        "keepalive extends to the max TTL: {after} >= {before}"
+    );
+    env.ledger().set_sequence_number(seq + 2_000);
+    client.set_paused(&false);
+    let after_admin = env.as_contract(&id, || env.storage().instance().get_ttl());
+    assert!(
+        after_admin >= after,
+        "admin ops also bump: {after_admin} >= {after}"
+    );
+}

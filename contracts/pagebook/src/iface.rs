@@ -122,6 +122,22 @@ pub struct QuoteResult {
     pub keys: Vec<DataKey>,
 }
 
+/// Structural validation shared by every entry point that takes a window
+/// (BadWindow): at most one consume entry per crossable level, ranges ordered.
+pub fn validate_window(env: &soroban_sdk::Env, m: &pagebook_types::Market, w: &SlotWindow) {
+    if w.consume.len() > m.max_levels_crossed {
+        env.panic_with_error(crate::errors::Error::BadWindow);
+    }
+    if w.append.first > w.append.last {
+        env.panic_with_error(crate::errors::Error::BadWindow);
+    }
+    for c in w.consume.iter() {
+        if c.pages.first > c.pages.last {
+            env.panic_with_error(crate::errors::Error::BadWindow);
+        }
+    }
+}
+
 pub fn empty_window(env: &soroban_sdk::Env) -> SlotWindow {
     SlotWindow {
         consume: Vec::new(env),

@@ -12,9 +12,12 @@ pub fn construct(env: &Env, admin: Address, fee_recipient: Address) {
     save_config(env, &config);
 }
 
+/// Admin ops authenticate and, per architecture §12/§18 ("admin ops also
+/// bump"), extend the instance and code TTLs like `keepalive`.
 pub fn require_admin(env: &Env) -> Config {
     let config = load_config(env);
     config.admin.require_auth();
+    keepalive(env);
     config
 }
 

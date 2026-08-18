@@ -10,10 +10,16 @@ use soroban_sdk::{
     Address, Bytes, Env, IntoVal, TryFromVal, Val,
 };
 
-fn xdr_len(env: &Env, val: impl IntoVal<Env, Val>) -> usize {
+extern crate std;
+
+fn xdr_bytes(env: &Env, val: impl IntoVal<Env, Val>) -> std::vec::Vec<u8> {
     let val: Val = val.into_val(env);
     let scval = ScVal::try_from_val(env, &val).unwrap();
-    scval.to_xdr(Limits::none()).unwrap().len()
+    scval.to_xdr(Limits::none()).unwrap()
+}
+
+fn xdr_len(env: &Env, val: impl IntoVal<Env, Val>) -> usize {
+    xdr_bytes(env, val).len()
 }
 
 #[test]
@@ -153,9 +159,17 @@ fn data_key_variants_encode() {
         DataKey::TickSummary(7, false),
         DataKey::TickWord(7, true, 3),
     ];
+    // every key is small (it counts toward footprint bytes on every tx) and no
+    // two distinct keys collide when XDR-encoded
+    let mut seen: std::vec::Vec<std::vec::Vec<u8>> = std::vec::Vec::new();
     for key in keys {
-        let n = xdr_len(&env, key);
-        assert!(n > 0);
+        let bytes = xdr_bytes(&env, key);
+        assert!(bytes.len() <= 120, "DataKey XDR {} B", bytes.len());
+        assert!(
+            !seen.contains(&bytes),
+            "distinct DataKeys must encode distinctly"
+        );
+        seen.push(bytes);
     }
 }
 

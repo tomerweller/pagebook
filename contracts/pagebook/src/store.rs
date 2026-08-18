@@ -30,7 +30,14 @@ pub fn load_market(env: &Env, market: u32) -> Market {
         .persistent()
         .get(&DataKey::Market(market))
         .unwrap_or_else(|| env.panic_with_error(Error::UnknownMarket));
-    Market::from_store(store).unwrap_or_else(|| env.panic_with_error(Error::CorruptEntry))
+    let m = Market::from_store(store).unwrap_or_else(|| env.panic_with_error(Error::CorruptEntry));
+    // Geometry is a contract-wide constant copied into the entry (§1, ADR-015);
+    // a mismatch means this wasm cannot decode the market's levels.
+    if m.inline_slots != pagebook_types::INLINE_SLOTS || m.page_slots != pagebook_types::PAGE_SLOTS
+    {
+        env.panic_with_error(Error::CorruptEntry);
+    }
+    m
 }
 
 pub fn save_market(env: &Env, market: u32, m: &Market) {

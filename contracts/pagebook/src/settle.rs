@@ -4,7 +4,7 @@ use crate::level;
 use crate::math::{base_atoms, chk_add, quote_atoms};
 use crate::store;
 use pagebook_types::{Market, Order};
-use soroban_sdk::{token::TokenClient, Address, Env, Map};
+use soroban_sdk::{token::TokenClient, Address, Env, Map, Vec};
 
 pub struct SettleResult {
     pub paid: i128,
@@ -131,6 +131,10 @@ pub fn accrue_fee(env: &Env, market: u32, token: &Address, fee: i128) {
 
 pub fn collect_fees(env: &Env, market: u32, token: Address) -> i128 {
     let config = store::load_config(env);
+    let m = store::load_market(env, market);
+    if token != m.base && token != m.quote {
+        env.panic_with_error(Error::UnknownMarket);
+    }
     let accrued = store::load_fees(env, market, &token);
     if accrued == 0 {
         return 0;
@@ -174,14 +178,35 @@ impl Netting {
         self.pay_out.set(token.clone(), chk_add(env, cur, amount));
     }
 
-    /// One transfer in and one transfer out per token, at most.
+    /// At most one transfer in and one out per token. Order per token: when the
+    /// vault already holds the pay-out, pay out first so a chained route can
+    /// pay the next leg with what the previous leg bought and a replace does
+    /// not need liquid balance for escrow it already holds; otherwise pay in
+    /// first (a thin vault must never be asked to front the user's own refund).
     pub fn flush(&self, env: &Env, user: &Address) {
         let vault = env.current_contract_address();
-        for (token, amt) in self.pay_in.iter() {
-            transfer(env, &token, user, &vault, amt);
+        let mut tokens: Vec<Address> = Vec::new(env);
+        for (token, _) in self.pay_in.iter() {
+            tokens.push_back(token);
         }
-        for (token, amt) in self.pay_out.iter() {
-            transfer(env, &token, &vault, user, amt);
+        for (token, _) in self.pay_out.iter() {
+            if !tokens.contains(&token) {
+                tokens.push_back(token);
+            }
+        }
+        for token in tokens.iter() {
+            let amt_in = self.pay_in.get(token.clone()).unwrap_or(0);
+            let amt_out = self.pay_out.get(token.clone()).unwrap_or(0);
+            let out_first = amt_in > 0
+                && amt_out > 0
+                && TokenClient::new(env, &token).balance(&vault) >= amt_out;
+            if out_first {
+                transfer(env, &token, &vault, user, amt_out);
+                transfer(env, &token, user, &vault, amt_in);
+            } else {
+                transfer(env, &token, user, &vault, amt_in);
+                transfer(env, &token, &vault, user, amt_out);
+            }
         }
     }
 }
