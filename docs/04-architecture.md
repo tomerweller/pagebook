@@ -332,7 +332,9 @@ contract holds across the gap. A stale bit over an *archived* level is the one p
 the two combine: the walk that lands on it restores the `Level` (~0.064 XLM, surfaced
 by simulation and paid by that taker) and clears the bit, after which no walk ever
 touches that level again until someone rests there — so each such bit costs at most
-one restore, ever, and seeding one costs its author more (a rest plus a cancel, §14).
+one restore, ever, against a seeding cost of a rest plus a cancel (§14; via `replace`
+the marginal seeding cost is ~0.001 XLM, so the bound that matters is the one restore
+*per bit*, not the seeder's fee — §17 "rent bounds holding, not churn").
 
 ### 6. The vault
 
@@ -554,6 +556,18 @@ Trying to be smarter — walking past stale levels to find the "true" best — w
 either widen the footprint unboundedly or create a crossed book; both are forbidden
 (invariant 8's fail-closed half).
 
+*The phantom-best griefing this admits, priced.* Anyone can rest one min-size order
+inside the spread (which moves `BestTick`) and cancel or `replace` it away (which does
+not move `BestTick` back). Until the next taker walks through, every post-only rest on
+the other side that would cross the phantom fails `Crossed`, and every non-post-only
+taker spends one crossing slot clearing it. Re-arming costs the griefer one `replace`
+item (~0.001 XLM once the nonce's rent is paid) plus the risk that a taker fills the
+dust while it rests — a `min_order_lots`-sized fill inside the spread, which is why
+`min_order_lots × price` and not rent is the deterrent for this class (§17). The
+damage is bounded to a quiet interval on one side of one market and heals on the
+first take; v1 accepts it rather than read the recorded best's `Level` on every
+post-only rest.
+
 **Budget** (§17): rest at an existing level ≈ 12 footprint / ~5 writes / ~0.9 KB /
 **~0.029 XLM** (dominated by `Order` rent); first touch / restore of a tick ≈ 14 / ~7
 / ~1.2 KB / **~0.094 XLM** (adds `Level` rent).
@@ -566,9 +580,10 @@ table (pay what filled, refund what didn't, tombstone the slot), then rewrites t
 the normal rest rules (§9: bounds, append window, `LevelFull`, empty-reset). Because
 the entry is reused at fixed size (§3), **no rent is charged** while the entry is
 live: the maker's nonce is a durable quote slot whose 120-day rent amortizes across
-every update. (An `Order` idle past its TTL is archived; the next `replace` restores it
-and pays the next 120-day chunk, ~0.027 XLM — the same charge a settle would carry.)
-Replace never
+every update — for a market maker and, equally, for a griefer (§17 "rent bounds
+holding, not churn"). (An `Order` idle past its TTL is archived; the next `replace`
+restores it and pays the next 120-day chunk, ~0.027 XLM — the same charge a settle
+would carry.) Replace never
 takes liquidity: it applies §9's conservative post-only check against recorded
 `BestTick` and fails `Crossed` instead. And it is atomic — the maker is never unquoted
 between the settlement and the re-rest, which a settle-then-place pair cannot
@@ -737,9 +752,12 @@ touched (a stale bit over an archived level, an archived word on the walk, an ar
 archived key unmarked. Nothing can turn an unmarked archived key into a touched one in
 flight: the only way an archived `Level` re-enters the walk is a rest at that tick,
 which restores it first. Restore rent therefore lands only on entries the taker's own
-execution needs, once — the seeding cost of a stale-bit-over-archived-level (a rest
-plus a cancel, ~0.09 XLM) exceeds the one restore it can ever cause (~0.064), and
-each such bit also burns one `MAX_LEVELS_CROSSED` slot for exactly one taker (§5).
+execution needs, once. A stale bit over an archived level costs one restore (~0.064
+XLM) and one `MAX_LEVELS_CROSSED` slot, for exactly one taker, ever; seeding it costs
+its author a rest plus a cancel — ~0.09 XLM fresh, or ~0.001 XLM per `replace` item on
+a nonce whose rent is already paid, plus a `Level` that must be created or restored at
+each new tick (§17 "rent bounds holding, not churn"). Even at the churn price the
+attack is one-shot per bit and 120 days per level.
 
 **Submit, and what can happen** — the contract's side of this contract is §15: only
 walking past `pad_end` traps; every other race degrades gracefully or returns a typed
@@ -847,8 +865,21 @@ Readings, in design terms:
 - **Matching is nearly free; placement pays rent.** A 32-level sweep costs about the
   same as one `Order`. The book's carrying cost sits with makers at ~0.027 XLM per
   open order per 120 days — an anti-spam economics that arrives for free and stacks
-  with `min_order_lots` (a dust-storm of K orders now has a hard cost of ~0.027 K XLM,
-  non-refundable).
+  with `min_order_lots` (a dust-storm of K *simultaneously open* orders has a hard
+  cost of ~0.027 K XLM, non-refundable, plus K escrows).
+- **Rent bounds holding, not churn.** Because `replace` moves an existing `Order` for
+  ~0.001 XLM, an attacker who has paid rent on K nonces can re-arm anything a rest
+  plus a cancel can arm — a tombstone, a stale bit, a phantom `BestTick` inside the
+  spread (§9), a re-filled dust level — K times per transaction for ~0.03 XLM,
+  indefinitely. None of it reaches funds, and every instance is bounded by a cap and
+  healed by the next taker (`MAX_SLOTS_SCANNED`, `MAX_LEVELS_CROSSED`, sweep-resets,
+  the one-restore-per-stale-bit bound of §5); but the per-instance cost figures in
+  §5/§9/§14 are *rent* figures and overstate the churn case by ~30×. The churn
+  deterrent is **`min_order_lots × price`**: dust rested inside the spread to arm a
+  phantom or fragment the book is filled at that price by the first taker, and dust
+  rested at the best price to poison a queue is swept for its notional. Set
+  `min_order_lots` so that notional is worth more than the nuisance; that knob is
+  retunable via `set_market_caps` (§12) without touching the design.
 - **Churn is priced separately from holding — use `replace`.** Updating a quote via
   settle+place re-creates the `Order` and re-pays its rent every time (~0.031
   XLM/quote — a 40-order book refreshed every minute would burn ~1,800 XLM/day, so
