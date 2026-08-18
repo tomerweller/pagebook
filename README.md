@@ -2,8 +2,8 @@
 
 A central limit order book (CLOB) designed natively for Stellar's Soroban runtime.
 
-**Status: design phase.** No contract code yet — this repo currently holds the research
-and architecture that an implementing agent/engineer should work from.
+**Status: M0–M3 implemented and reviewed** (`contracts/pagebook`, `crates/`); M4 resource
+hardening is partial (ADR-019). The docs below are the design the code follows.
 
 ## Why this exists
 
@@ -31,6 +31,8 @@ on EVM — are fundamentally incompatible with Soroban's simulation-time footpri
 | `docs/03-soroban-constraints.md` | The resource limits, storage/archival semantics, and P23 execution model the design targets (with sources, as of Aug 2026) |
 | `docs/04-architecture.md` | **The PageBook design.** Storage schema, matching algorithm, claims, footprint padding, TTL policy, fees, events |
 | `docs/05-implementation-plan.md` | Proposed crate/module layout, storage keys, public interface, invariants, test strategy, milestones |
+| `docs/06-slp-sensitivity.md` | Which design variables track network limits, and how they are retuned |
+| `docs/07-classic-dex-comparison.md` | What a user of the classic Stellar DEX gives up in PageBook: limitations, grouped, with the design reasons and roadmap pointers |
 
 ## Design in one paragraph
 
