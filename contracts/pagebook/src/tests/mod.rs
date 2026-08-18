@@ -1,6 +1,7 @@
 mod auth;
 mod book;
 mod constructor;
+mod fee_gates;
 mod fees;
 mod footprint;
 mod harness;

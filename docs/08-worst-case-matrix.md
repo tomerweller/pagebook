@@ -318,8 +318,37 @@ rent figure.
 
 A native test contract does not model wasm instantiation or wasm reads. The
 instruction component is therefore a lower bound. Tx-size fees are also
-missing from `InvocationResources` (the SDK says so). Rent on newly created
-entries is the term that dominates every rest row and is fully metered.
+missing from `InvocationResources` (the SDK says so).
 
-Measured fee components per §17 fee-table row are printed by
-`tests/fee_gates.rs` and transcribed there after the first green run.
+`total − persistent_entry_rent` is not the §17 non-rent figure. The snapshot
+still charges disk-read fees on live writes (P23 live-state reads are free)
+and the test host bills a flat 2,194,209 stroops of `temporary_entry_rent` on
+every authenticated call. The gates compare the execution slice §17 actually
+prices: instructions + write-entry fees + write-byte fees + events. The test
+host's persistent TTL is not the 120-day minimum, so rescaled
+`persistent_entry_rent` is far below a mainnet create; the rent assertion
+still runs.
+
+Measured components, stroops (SDK snapshot 2026-07-10). `exec` is the
+execution slice. `rent*` is persistent rent rescaled by 1,000/12,000.
+
+| Op | instr | write entries | write bytes | events | exec | rent* | §17 row | exec vs §17 |
+|---|---|---|---|---|---|---|---|---|
+| place, rest existing | 281 | 12,500 | 1,026 | 1,993 | 15,800 | 1,120 | 290,000 | holds (row is rent) |
+| place, rest new | 329 | 20,000 | 1,798 | 2,559 | 24,686 | 6,272 | 940,000 | holds (row is rent) |
+| settle | 215 | 12,500 | 790 | 1,954 | 15,459 | 0 | 20,000 | holds |
+| replace | 445 | 17,500 | 1,692 | 3,946 | 23,583 | 1,541 | 30,000 | holds |
+| replace_batch 40 | 18,428 | 310,000 | 37,817 | 67,930 | 434,175 | 61,658 | 300,000 | over (inside 1.5×) |
+| place, take 8 | 1,320 | 42,500 | 4,519 | 13,711 | 62,050 | 94,362 | 90,000 | holds |
+| place, take 8 + rest | 1,513 | 55,000 | 5,873 | 15,118 | 77,504 | 100,634 | 370,000 | holds (row is rent) |
+| place, max take 32 | 10,465 | 180,000 | 22,764 | 42,774 | 256,003 | 94,362 | 270,000 | holds |
+| create_market | 161 | 7,500 | 834 | 0 | 8,495 | 2,120 | 850,000 | holds (row is rent) |
+| collect_fees | 192 | 7,500 | 541 | 1,153 | 9,386 | 93,545 | 10,000 | holds |
+
+Authenticated calls also meter `temporary_entry_rent = 2,194,209` and a
+disk-read fee of `1,563 × (disk_read_entries + write_entries)`. Those are
+printed by the test and are not in the `exec` column.
+
+Fee-table correction for the follow-up: `replace_batch` of 40 tick-changing
+quotes is about 0.043 XLM of execution, not 0.03, because the write set is
+124 entries rather than 90. The 1.5× gate still passes (450,000 stroops).
