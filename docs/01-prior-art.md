@@ -114,7 +114,7 @@ storage model, and three of its ideas transfer. Mechanism:
    with per-generation shares: makers mint shares of `(level, generation)`, a sweep
    pays the whole generation at tick price, claims settle pro-rata from counters. That
    deletes pages, tombstones, slot windows, and the per-order `Order` — and the
-   ADR-004 fee numbers make this attractive: rent on `Order` (~0.027 XLM/order) is
+   ADR-004 fee numbers make this attractive: rent on `Order` (~0.046 XLM/order) is
    the dominant protocol cost, and a reusable share entry amortizes it across a
    maker's re-quotes. Price: loses time priority within a level (pro-rata weakens the
    incentive to quote first), which is precisely the incentive FIFO CLOBs exist to

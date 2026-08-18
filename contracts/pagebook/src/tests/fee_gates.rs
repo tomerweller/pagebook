@@ -286,7 +286,6 @@ fn fee_place_take_eight_then_rest() {
         &window(&h),
         &flags(),
     );
-    // Remainder Order rent 0.027 of the 0.037 row.
     // + rest at a new tick on the empty bid side, and the taker's first base balance
     gate(
         "place take 8 levels + rest",
@@ -361,7 +360,6 @@ fn fee_create_market() {
     mainnet_ttls(&h.env);
     h.client()
         .create_market(&h.base, &h.quote, &1, &1, &1, &1000, &10, &1, &1_000_000);
-    // Market rent dominates the post-ADR-022 0.085 row.
     gate("create_market", &h.env, 8_500, RENT_MARKET);
 }
 

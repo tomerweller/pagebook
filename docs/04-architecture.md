@@ -430,7 +430,7 @@ take whose window covers the run skips it (bounded by `MAX_SLOTS_SCANNED`) and m
 interleaving of takes and settles ending in the same counters pays the same amounts
 (single-price levels make this provable).
 
-**Budget** (§17): `settle` ≈ 9 footprint entries, ~3-4 writes, ~0.6 KB, **~0.002
+**Budget** (§17): `settle` ≈ 9 touched entries, 5 writes, ~0.9 KB, **~0.0015
 XLM**, no rent; it only deletes and rewrites.
 
 ### 8. The matching walk (the taker path)
@@ -566,9 +566,10 @@ across legs, not multiplied by them. **8** (shared with §9), the book is never
 crossed after any operation completes: a matching loop terminated by a cap or window
 refunds its remainder.
 
-**Budget** (§17): take-only, 8 levels swept ≈ 55 footprint / ~21 writes / ~6 KB /
-**~0.009 XLM**; maximal take (32 levels, 32 distinct `TickWord` entries) ≈ 85 + pad /
-72 writes / ~26.6 KB / **~0.026 XLM** (arithmetic in §17).
+**Budget** (§17): take-only, 8 levels swept ≈ 22 touched (band padding on top) /
+17 writes / ~5.3 KB / **~0.006 XLM**; maximal take (32 levels, 32 distinct `TickWord`
+entries) ≈ 77 touched + pad / 72 writes / ~26.6 KB / **~0.026 XLM** (arithmetic in
+§17).
 
 ### 9. Rest (append)
 
@@ -654,8 +655,9 @@ transaction. Failure of any item fails the batch (all-or-nothing).
 `QtyOutOfBounds`, `LevelFull`, `RetryRest`, `Crossed`); `Paused`, replace contains a
 rest, so it pauses with the entry side of the book (§12).
 
-**Budget** (§17): one quote ≈ 14 footprint / ~8 writes / ~1.5 KB / **~0.003 XLM**,
-zero rent; a 40-quote full refresh ≈ 130 / ~90 / ~24 KB / **~0.03 XLM**. Why this
+**Budget** (§17): one quote to a new tick ≈ 13 touched / 7 writes / ~2.0 KB /
+**~0.0024 XLM** of execution (plus `Level` rent if the tick had none); a 40-quote
+same-tick refresh ≈ 90 / 83 / ~27.7 KB / **~0.031 XLM**, zero rent. Why this
 matters, settle+place would re-pay ~0.046 XLM of `Order` rent per update, is the
 second reading in §17 and ADR-005.
 
@@ -705,7 +707,7 @@ Views (§11) authenticate nothing and write nothing.
   `lot_size, tick_size ≥ 1` and `1 ≤ min_order_lots ≤ max_order_lots`
   (`BadQuantization` / `QtyOutOfBounds`); the two §0.3 overflow bounds (`Overflow`);
   and `taker_fee_bps ≤ FEE_BPS_MAX` (`FeeTooHigh`). It does not check for a duplicate
-  pair (§0.1). Assigns the next `market_id` from `Config`'s counter. ~0.085 XLM,
+  pair (§0.1). Assigns the next `market_id` from `Config`'s counter. ~0.098 XLM,
   dominated by `Market` rent (§17).
 - **Asset eligibility (admin's call, contract cannot verify).** The vault is a SAC
   contract balance (§6): no trustline or reserve, the entry is created by the first
@@ -937,13 +939,13 @@ rewrites are live and name what it creates:
 | place, rest only (new tick, word already live) | **~0.115 XLM** | + `Level` rent 0.067 |
 | place, rest only (empty side: new word, summary, best) | **~0.27 XLM** | Order + Level + TickWord + TickSummary + BestTick |
 | settle | **~0.0015 XLM** | exec only; no rent |
-| replace (same tick, size change) | **~0.0024 XLM** | exec only; zero rent |
-| replace (to a fresh tick) | **~0.07 XLM** | + `Level` rent 0.067 |
+| replace (one quote, to a new tick that has a `Level`) | **~0.0024 XLM** | exec only (measured shape); a same-tick size change is at most this |
+| replace (to a tick that never had a `Level`) | **~0.07 XLM** | + `Level` rent 0.067 |
 | replace_batch (40 quotes, same ticks) | **~0.031 XLM** | exec 312k stroops; zero rent |
 | replace_batch (40 quotes, each to a fresh tick) | **~2.7 XLM** | exec 0.043 + 40 × `Level` rent |
 | + settle or replace of an *archived* `Order` (idle > 120 d) | **+ ~0.046 XLM** | `Order` restore rent, paid by the maker |
 | place, take only, 8 levels swept | **~0.006 XLM** | exec 62k stroops (+ `FeeAccrual` 0.031 and the taker's first balance 0.037, once) |
-| place, take 8 levels + rest (empty side) | **~0.28 XLM** | exec 0.008 + the rest's five entries |
+| place, take 8 levels + rest (empty side, first take) | **~0.34 XLM** | exec 0.008 + the rest's five entries 0.264 + `FeeAccrual` and first balance 0.068 |
 | place, maximal take (32 levels) | **~0.026 XLM** | exec 256k stroops (72 writes) |
 | `create_market` | **~0.098 XLM** | `Market` rent 0.097 |
 | `collect_fees` | **~0.001 XLM** | exec (+ recipient's first balance 0.037, once) |

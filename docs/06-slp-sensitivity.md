@@ -36,12 +36,12 @@ limits; that judgment is the admin's.
 
 | Limit | Value | Does it bind? |
 |---|---|---|
-| Ledger write bytes | 286,720 | **Yes — the throughput ceiling.** ~13 max sweeps or ~12 full maker refreshes per ledger, venue-wide. |
+| Ledger write bytes | 286,720 | **Yes — the throughput ceiling.** ~10 max sweeps or ~10 full maker refreshes per ledger, venue-wide. |
 | Tx footprint entries | 400 | **Yes — the only remaining trap.** Bounds band depth on sparse books, plus `replace_batch`/route composition. |
 | Dependent-tx clusters | 2 | Not yet — the venue is one cluster until per-market vault sub-accounts (v2). |
 | State target size | 3 GB | Indirectly — the 1,000/KB rent floor holds only while live state stays under ~1.9 GB; past it, maker slot rent scales toward 10×. |
 | Tx writes / ledger write entries | 200 / 1,000 | No (write bytes bind first). |
-| Instructions / events / tx size | 400M / 16 KB / 132 KB | No (worst cases ~25M / ~6.4 KB / ~28 KB). |
+| Instructions / events / tx size | 400M / 16 KB / 132 KB | Events bind one constant: a 40-item `replace_batch` emits ~13.9 KB of the 16 KB budget, which is why `MAX_REPLACE_BATCH` is 40 (ADR-024); instructions (~25M worst) and tx size (~28 KB) do not. |
 
 ## The advocacy agenda, ranked
 
@@ -68,7 +68,7 @@ therefore easier to grant.
    More threads do nothing for the venue while it is one cluster. Ship the
    sub-accounts, then bring a live venue as the demand evidence the process asks for.
 4. **Keep the state target ahead of live state.** A rent-curve defense rather than a
-   limits raise: maker slot economics (~0.027 XLM per 120 d) silently scale toward 10×
+   limits raise: maker slot economics (~0.046 XLM per 120 d) silently scale toward 10×
    if live state approaches the 3 GB target without a target raise.
 5. **CAP-class wishlist (protocol changes, not SLPs):** a read-only host function
    exposing selected config values, and/or budget introspection. Precedent exists —

@@ -174,7 +174,7 @@ bytes.
 
 One auth, one pause check, one `Market` load, then `replace_body` per item
 with netted transfers. Duplicate nonces fail `OrderExists`. Ceiling is
-`MAX_REPLACE_BATCH` (64).
+`MAX_REPLACE_BATCH` (40, ADR-024: 64 items exceed the event budget).
 
 Per item at a distinct new tick: old `Level` + new `Level` + `Order`, plus
 any index entries that actually change. Shared across the batch: `TickSummary`
@@ -337,33 +337,40 @@ missing from `InvocationResources` (the SDK says so).
 
 `total − persistent_entry_rent` is not the §17 non-rent figure. The snapshot
 still charges disk-read fees on live writes (P23 live-state reads are free)
-and the test host bills a flat 2,194,209 stroops of `temporary_entry_rent` on
-every authenticated call. The gates compare the execution slice §17 actually
-prices: instructions + write-entry fees + write-byte fees + events. The test
-host's persistent TTL is not the 120-day minimum, so rescaled
-`persistent_entry_rent` is far below a mainnet create; the rent assertion
-still runs.
+and the test host bills `temporary_entry_rent` for the authorization nonce on
+every authenticated call (1,082,542 stroops once the ledger's maximum TTL is
+set to mainnet's). The gates compare the execution slice §17 prices:
+instructions + write-entry fees + write-byte fees + events. Every fee gate
+sets the ledger to mainnet TTLs (minimum persistent 2,073,600, maximum
+3,110,400) before the measured call, so persistent rent is charged for the
+120-day minimum; at the test host's default 4,096-ledger minimum the rent
+term is about 500 times too small to gate anything.
 
-Measured components, stroops (SDK snapshot 2026-07-10). `exec` is the
-execution slice. `rent*` is persistent rent rescaled by 1,000/12,000.
+Measured components, stroops (SDK snapshot 2026-07-10, ledger at mainnet
+TTLs). `exec` is the execution slice. `rent*` is persistent rent for the
+120-day minimum rescaled by 1,000/12,000, which equals 1,667 stroops per byte
+of full ledger entry (payload + key + framing).
 
-| Op | instr | write entries | write bytes | events | exec | rent* | §17 row | exec vs §17 |
-|---|---|---|---|---|---|---|---|---|
-| place, rest existing | 281 | 12,500 | 1,026 | 1,993 | 15,800 | 1,120 | 290,000 | holds (row is rent) |
-| place, rest new | 329 | 20,000 | 1,798 | 2,559 | 24,686 | 6,272 | 940,000 | holds (row is rent) |
-| settle | 215 | 12,500 | 790 | 1,954 | 15,459 | 0 | 20,000 | holds |
-| replace | 445 | 17,500 | 1,692 | 3,946 | 23,583 | 1,541 | 30,000 | holds |
-| replace_batch 40 | 18,428 | 310,000 | 37,817 | 67,930 | 434,175 | 61,658 | 300,000 | over (inside 1.5×) |
-| place, take 8 | 1,320 | 42,500 | 4,519 | 13,711 | 62,050 | 94,362 | 90,000 | holds |
-| place, take 8 + rest | 1,513 | 55,000 | 5,873 | 15,118 | 77,504 | 100,634 | 370,000 | holds (row is rent) |
-| place, max take 32 | 10,465 | 180,000 | 22,764 | 42,774 | 256,003 | 94,362 | 270,000 | holds |
-| create_market | 161 | 7,500 | 834 | 0 | 8,495 | 2,120 | 850,000 | holds (row is rent) |
-| collect_fees | 192 | 7,500 | 541 | 1,153 | 9,386 | 93,545 | 10,000 | holds |
+| Op | instr | write entries | write bytes | events | exec | rent* | rent* is |
+|---|---|---|---|---|---|---|---|
+| place, rest existing | 281 | 12,500 | 1,026 | 1,993 | 15,800 | 460,211 | Order (276 B) |
+| place, rest new (empty side) | 329 | 20,000 | 1,798 | 2,559 | 24,686 | 2,641,057 | Order + Level + TickWord + TickSummary + BestTick |
+| settle | 215 | 12,500 | 790 | 1,954 | 15,459 | 0 | nothing created |
+| replace (new tick) | 445 | 17,500 | 1,692 | 3,946 | 23,583 | 673,544 | Level (404 B) |
+| replace_batch 40, same ticks | 12,983 | 207,500 | 23,687 | 67,930 | 312,100 | 0 | nothing created |
+| replace_batch 40, new ticks | 18,428 | 310,000 | 37,817 | 67,930 | 434,175 | 26,941,790 | 40 Levels |
+| place, take 8 | 1,312 | 42,500 | 4,519 | 13,711 | 62,042 | 680,423 | FeeAccrual + taker's first balance |
+| place, take 8 + rest (empty side) | 1,505 | 55,000 | 5,873 | 15,118 | 77,496 | 3,321,480 | the five rest entries + FeeAccrual + first balance |
+| place, max take 32 | 10,427 | 180,000 | 22,764 | 42,774 | 255,965 | 680,423 | FeeAccrual + first balance |
+| create_market | 161 | 7,500 | 834 | 0 | 8,495 | 966,878 | Market (580 B) |
+| collect_fees | 188 | 7,500 | 541 | 1,153 | 9,382 | 373,545 | recipient's first balance |
 
-Authenticated calls also meter `temporary_entry_rent = 2,194,209` and a
+Authenticated calls also meter `temporary_entry_rent` (auth nonce) and a
 disk-read fee of `1,563 × (disk_read_entries + write_entries)`. Those are
-printed by the test and are not in the `exec` column.
+printed by the test and are not in the `exec` column. The gates are the
+corrected §17 rows at 1.25× for both `exec` and `rent*`.
 
-Fee-table correction for the follow-up: `replace_batch` of 40 tick-changing
-quotes is about 0.043 XLM of execution, not 0.03, because the write set is
-124 entries rather than 90. The 1.5× gate still passes (450,000 stroops).
+The `replace_batch` row §17 used to show (~0.03 XLM, ~90 writes) is the
+same-tick refresh; a batch that moves every quote to a fresh tick is 124
+writes, ~0.043 XLM of execution, plus 40 `Level` rents. §17 now shows both.
+

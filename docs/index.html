@@ -710,7 +710,7 @@
           <path d="M222 145 C 260 145, 260 184, 296 184" fill="none" stroke="currentColor" marker-end="url(#ar3)"/>
           <path d="M222 145 C 260 145, 260 246, 296 246" fill="none" stroke="currentColor" marker-end="url(#ar3)"/>
 
-          <text x="30" y="286" fill="var(--muted)" font-size="11.5">Every row ends the same way: delete the Order entry, emit settled. About 3 writes; nothing per maker was written during matching.</text>
+          <text x="30" y="286" fill="var(--muted)" font-size="11.5">Every row ends the same way: delete the Order entry, emit settled. Five writes including the two balances; nothing per maker was written during matching.</text>
         </g>
       </svg>
     </div>
@@ -904,7 +904,7 @@
         <tr><td>place, rest only, existing level</td><td class="num">13</td><td class="num">5</td><td class="num">1.2 KB</td><td class="num">~0.048 XLM</td><td>Order rent (min TTL)</td></tr>
         <tr><td>place, rest only, first touch of a tick</td><td class="num">15</td><td class="num">8</td><td class="num">2.1 KB</td><td class="num">~0.115 XLM</td><td>+ Level rent (~0.27 on an empty side)</td></tr>
         <tr><td>settle</td><td class="num">9</td><td class="num">5</td><td class="num">0.9 KB</td><td class="num">~0.0015 XLM</td><td>write entries, no rent</td></tr>
-        <tr><td>replace, one quote (same tick)</td><td class="num">13</td><td class="num">7</td><td class="num">2.0 KB</td><td class="num">~0.0024 XLM</td><td>write entries, zero rent</td></tr>
+        <tr><td>replace, one quote (new tick with a level)</td><td class="num">13</td><td class="num">7</td><td class="num">2.0 KB</td><td class="num">~0.0024 XLM</td><td>write entries, zero rent</td></tr>
         <tr><td>replace_batch, 40 quotes (same ticks)</td><td class="num">90</td><td class="num">83</td><td class="num">27.7 KB</td><td class="num">~0.031 XLM</td><td>write entries, zero rent</td></tr>
         <tr><td>place, take 8 levels</td><td class="num">22</td><td class="num">17</td><td class="num">5.3 KB</td><td class="num">~0.006 XLM</td><td>write entries + events</td></tr>
         <tr><td>place, take 32 levels in 32 words (max)</td><td class="num">77</td><td class="num">72</td><td class="num">26.6 KB</td><td class="num">~0.026 XLM</td><td>write entries</td></tr>
