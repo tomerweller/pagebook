@@ -154,11 +154,11 @@ default that a decision note may change once measured.
 - **Packed layouts** (little-endian, leading `version: u8 = 1`), field order exactly as
   the architecture's contents columns: `Level` = version, generation u32, head_seq u32,
   tail_seq u32, head_consumed_lots u64, open_lots u64, then `INLINE_SLOTS` × qty u64;
-  `LevelPage` = version, then `PAGE_SLOTS` × qty u64; `BestTick` = version, flags u8
-  (bit 0 = empty), tick u32; `TickSummary` / `TickWord` = version, then 256 bytes of
-  bitmap, bit `i` = byte `i / 8`, mask `1 << (i % 8)`. `Order`, `Market`, `Config`,
-  `FeeAccrual` are `#[contracttype]` structs (small; the size tests decide if any must
-  be packed).
+  `LevelPage` = version, then `PAGE_SLOTS` × qty u64; `TickSummary` / `TickWord` =
+  version, then 256 bytes of bitmap, bit `i` = byte `i / 8`, mask `1 << (i % 8)`.
+  `BestTick`, `Order`, `Market`, `Config`, `FeeAccrual` are plain named
+  `#[contracttype]` structs (ADR-022: packing buys nothing off the hot rewrite path;
+  budgets are the measured named sizes).
 - **`page(seq)`** for an inline seq is 0; the append window for an inline tail is
   `{0, 1}` — a `PageRange` is never empty.
 - **Events**: topics = `(symbol name, market_id)`; data = the remaining fields from

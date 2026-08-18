@@ -1,36 +1,30 @@
 use crate::errors::Error;
 use crate::keys::DataKey;
 use pagebook_types::{
-    BestTick, Config, ConfigStore, FeeAccrual, Level, LevelPage, Market, MarketStore, Order,
-    BEST_TICK_BYTES, LEVEL_BYTES, LEVEL_PAGE_BYTES,
+    BestTick, Config, FeeAccrual, Level, LevelPage, Market, Order, LEVEL_BYTES, LEVEL_PAGE_BYTES,
 };
 use soroban_sdk::{Address, Bytes, Env};
 
 pub fn load_config(env: &Env) -> Config {
     note(&DataKey::Config);
-    let store: ConfigStore = env
-        .storage()
+    env.storage()
         .instance()
         .get(&DataKey::Config)
-        .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
-    Config::from_store(store)
+        .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized))
 }
 
 pub fn save_config(env: &Env, config: &Config) {
     note(&DataKey::Config);
-    env.storage()
-        .instance()
-        .set(&DataKey::Config, &config.to_store());
+    env.storage().instance().set(&DataKey::Config, config);
 }
 
 pub fn load_market(env: &Env, market: u32) -> Market {
     note(&DataKey::Market(market));
-    let store: MarketStore = env
+    let m: Market = env
         .storage()
         .persistent()
         .get(&DataKey::Market(market))
         .unwrap_or_else(|| env.panic_with_error(Error::UnknownMarket));
-    let m = Market::from_store(store).unwrap_or_else(|| env.panic_with_error(Error::CorruptEntry));
     // Geometry is a contract-wide constant copied into the entry (§1, ADR-015);
     // a mismatch means this wasm cannot decode the market's levels.
     if m.inline_slots != pagebook_types::INLINE_SLOTS || m.page_slots != pagebook_types::PAGE_SLOTS
@@ -42,9 +36,7 @@ pub fn load_market(env: &Env, market: u32) -> Market {
 
 pub fn save_market(env: &Env, market: u32, m: &Market) {
     note(&DataKey::Market(market));
-    env.storage()
-        .persistent()
-        .set(&DataKey::Market(market), &m.to_store(env));
+    env.storage().persistent().set(&DataKey::Market(market), m);
 }
 
 pub fn load_level(env: &Env, market: u32, is_bid: bool, tick: u32) -> Level {
@@ -98,28 +90,17 @@ pub fn save_page(env: &Env, market: u32, is_bid: bool, tick: u32, page: u32, p: 
 pub fn load_best(env: &Env, market: u32, is_bid: bool) -> BestTick {
     let key = DataKey::BestTick(market, is_bid);
     note(&key);
-    match env.storage().persistent().get::<_, Bytes>(&key) {
-        Some(bytes) => {
-            if bytes.len() != BEST_TICK_BYTES as u32 {
-                env.panic_with_error(Error::CorruptEntry);
-            }
-            let mut raw = [0u8; BEST_TICK_BYTES];
-            bytes.copy_into_slice(&mut raw);
-            BestTick::decode(&raw).unwrap_or_else(|| env.panic_with_error(Error::CorruptEntry))
-        }
-        None => BestTick {
-            empty: true,
-            tick: 0,
-        },
-    }
+    env.storage().persistent().get(&key).unwrap_or(BestTick {
+        empty: true,
+        tick: 0,
+    })
 }
 
 pub fn save_best(env: &Env, market: u32, is_bid: bool, best: &BestTick) {
     note(&DataKey::BestTick(market, is_bid));
-    let bytes = Bytes::from_array(env, &best.encode());
     env.storage()
         .persistent()
-        .set(&DataKey::BestTick(market, is_bid), &bytes);
+        .set(&DataKey::BestTick(market, is_bid), best);
 }
 
 pub fn load_order(env: &Env, market: u32, owner: &Address, nonce: u64) -> Option<Order> {

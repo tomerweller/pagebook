@@ -101,32 +101,6 @@ impl LevelPage {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BestTick {
-    pub empty: bool,
-    pub tick: u32,
-}
-
-impl BestTick {
-    pub fn encode(&self) -> [u8; BEST_TICK_BYTES] {
-        let mut out = [0u8; BEST_TICK_BYTES];
-        out[0] = PACKED_VERSION;
-        out[1] = if self.empty { BEST_TICK_EMPTY_BIT } else { 0 };
-        out[2..6].copy_from_slice(&self.tick.to_le_bytes());
-        out
-    }
-
-    pub fn decode(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != BEST_TICK_BYTES || bytes[0] != PACKED_VERSION {
-            return None;
-        }
-        Some(Self {
-            empty: bytes[1] & BEST_TICK_EMPTY_BIT != 0,
-            tick: u32::from_le_bytes(bytes[2..6].try_into().ok()?),
-        })
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TickBitmap {
     pub bits: [u8; BITMAP_BYTES],
 }
@@ -210,20 +184,6 @@ mod tests {
         page.slots[0] = 9;
         page.slots[31] = 8;
         assert_eq!(LevelPage::decode(&page.encode()), Some(page));
-    }
-
-    #[test]
-    fn best_tick_flags() {
-        let empty = BestTick {
-            empty: true,
-            tick: 42,
-        };
-        let live = BestTick {
-            empty: false,
-            tick: 7,
-        };
-        assert_eq!(BestTick::decode(&empty.encode()), Some(empty));
-        assert_eq!(BestTick::decode(&live.encode()), Some(live));
     }
 
     #[test]

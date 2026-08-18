@@ -54,14 +54,13 @@ fn packed_level_page_under_budget() {
 }
 
 #[test]
-fn packed_best_tick_under_budget() {
+fn best_tick_under_budget() {
     let env = super::env();
     let best = BestTick {
         empty: true,
         tick: u32::MAX,
     };
-    let bytes = Bytes::from_array(&env, &best.encode());
-    let n = xdr_len(&env, bytes);
+    let n = xdr_len(&env, best);
     assert!(
         n <= BUDGET_BEST_TICK,
         "BestTick XDR {n} > {BUDGET_BEST_TICK}"
@@ -92,7 +91,7 @@ fn config_under_budget() {
         paused: true,
         market_counter: u32::MAX,
     };
-    let n = xdr_len(&env, config.to_store());
+    let n = xdr_len(&env, config);
     assert!(n <= BUDGET_CONFIG, "Config XDR {n} > {BUDGET_CONFIG}");
 }
 
@@ -115,7 +114,7 @@ fn market_under_budget() {
         page_slots: 32,
         max_pages: u32::MAX,
     };
-    let n = xdr_len(&env, market.to_store(&env));
+    let n = xdr_len(&env, market);
     assert!(n <= BUDGET_MARKET, "Market XDR {n} > {BUDGET_MARKET}");
 }
 

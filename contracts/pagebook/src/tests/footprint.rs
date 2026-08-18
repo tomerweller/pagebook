@@ -147,8 +147,7 @@ fn constructor_writes_config_only() {
     let recipient = Address::generate(&env);
     let id = env.register(PageBook, (&admin, &recipient));
     let stored: Config = env.as_contract(&id, || {
-        let store = env.storage().instance().get(&DataKey::Config).unwrap();
-        Config::from_store(store)
+        env.storage().instance().get(&DataKey::Config).unwrap()
     });
     assert_eq!(stored.admin, admin);
     assert_eq!(stored.fee_recipient, recipient);
@@ -186,8 +185,7 @@ fn set_paused_write_set_is_instance_config() {
     let (_, fp) = footprint_of(&env, &id, || client.set_paused(&true));
     assert!(fp.written_keys.iter().any(|k| k == DataKey::Config));
     let stored: Config = env.as_contract(&id, || {
-        let store = env.storage().instance().get(&DataKey::Config).unwrap();
-        Config::from_store(store)
+        env.storage().instance().get(&DataKey::Config).unwrap()
     });
     assert!(stored.paused);
 }

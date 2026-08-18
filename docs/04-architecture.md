@@ -138,8 +138,8 @@ admin-governed, exact at all times.
 
 | Entry | Durability | Key | Contents | Target size |
 |---|---|---|---|---|
-| `Config` | instance | `Config` | admin `Address`, fee recipient `Address`, paused flag, market counter | ~150 B |
-| `Market` | persistent | `Market(market_id)` | base/quote SAC addrs, lot_size, tick_size, tick band, fee bps, min/max order lots, `MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED`, `INLINE_SLOTS`, `PAGE_SLOTS`, `MAX_PAGES` | ~250 B |
+| `Config` | instance | `Config` | admin `Address`, fee recipient `Address`, paused flag, market counter | ~190 B (named struct; ADR-022) |
+| `Market` | persistent | `Market(market_id)` | base/quote SAC addrs, lot_size, tick_size, tick band, fee bps, min/max order lots, `MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED`, `INLINE_SLOTS`, `PAGE_SLOTS`, `MAX_PAGES` | ~490 B (named struct; written at creation and retune only; ADR-022) |
 
 **Mutability classes.** Market variables split by what may ever change (full analysis
 in `06-slp-sensitivity.md`). Frozen forever: quantization (`lot_size`, `tick_size`,
@@ -173,11 +173,16 @@ counters plus positional quantity slots. The queue records what happened at a pr
 | `Level` | persistent | `Level(market, side, tick)` | packed `Bytes`: version u8, `generation:u32, head_seq:u32, tail_seq:u32, head_consumed_lots:u64, open_lots:u64`, then `INLINE_SLOTS` × qty:u64 inline slots (target 32) | ≤ 384 B |
 | `LevelPage` | persistent | `LevelPage(market, side, tick, page)` | packed `Bytes`: version u8, then `PAGE_SLOTS` × qty:u64 slots (target 32). Page `page` holds seqs `INLINE_SLOTS + page·PAGE_SLOTS …` — the first seqs past the inline slots land in page 0 | ≤ 320 B |
 
-**Packed encoding is mandatory.** `Level` and `LevelPage` are fixed-layout `Bytes`
-blobs with a leading schema-version byte, not `#[contracttype]` structs — symbol-keyed
-`ScVal::Map` encoding roughly 2–2.5×'s the payload (a map-encoded Level at
-`INLINE_SLOTS = 32` is ~1.2 KB) and would cascade into every write-byte and ops/ledger
-figure in §17. Slots store **qty only**; seq is implicit in slot position.
+**Packed encoding is mandatory here, and only here.** `Level` and `LevelPage` are
+fixed-layout `Bytes` blobs with a leading schema-version byte, not `#[contracttype]`
+structs — symbol-keyed `ScVal::Map` encoding roughly 1.5–2× the payload (a map-encoded
+Level at `INLINE_SLOTS = 32` measures 440–570 B against 296 B packed) and, because
+these two entries are rewritten in bulk on every take, would cascade into every
+write-byte and ops/ledger figure in §17. The bitmaps (§5) are packed too, at no cost
+(their payload is 256 raw bytes). Everything else — `Config`, `Market`, `BestTick`,
+`Order`, `FeeAccrual` — is a plain named `#[contracttype]` struct: their extra bytes
+buy nothing on the hot path (ADR-022). Slots store **qty only**; seq is implicit in
+slot position.
 
 **Positional layout (append-only).** Within a generation, seq `s` occupies inline slot
 `s` if `s < INLINE_SLOTS`, else slot `(s − INLINE_SLOTS) mod PAGE_SLOTS` of
@@ -303,7 +308,7 @@ the next place that walks through.
 
 | Entry | Durability | Key | Contents | Target size |
 |---|---|---|---|---|
-| `BestTick` | persistent | `BestTick(market, side)` | best tick (u32), empty flag | ~40 B |
+| `BestTick` | persistent | `BestTick(market, side)` | best tick (u32), empty flag | ~60 B (named struct; ADR-022) |
 | `TickSummary` | persistent | `TickSummary(market, side)` | summary bitmap: bit `word` = "`TickWord(word)` has any set bit" (2,048 words) | 257 B payload, 268 B XDR (ADR-017) |
 | `TickWord` | persistent | `TickWord(market, side, word)` | presence bitmap for ticks `[word·2048, (word+1)·2048)` | 257 B payload, 268 B XDR (ADR-017) |
 
@@ -704,7 +709,7 @@ Views (§11) authenticate nothing and write nothing.
   `lot_size, tick_size ≥ 1` and `1 ≤ min_order_lots ≤ max_order_lots`
   (`BadQuantization` / `QtyOutOfBounds`); the two §0.3 overflow bounds (`Overflow`);
   and `taker_fee_bps ≤ FEE_BPS_MAX` (`FeeTooHigh`). It does not check for a duplicate
-  pair (§0.1). Assigns the next `market_id` from `Config`'s counter. ~0.043 XLM,
+  pair (§0.1). Assigns the next `market_id` from `Config`'s counter. ~0.085 XLM,
   dominated by `Market` rent (§17).
 - **Asset eligibility (admin's call, contract cannot verify).** The vault is a SAC
   contract balance (§6): no trustline or reserve — the entry is created by the first
@@ -914,7 +919,7 @@ price those increments so any row can be composed into its own worst case:
 | place — take only, 8 levels swept | **~0.009 XLM** | write entries + tx size |
 | place — take 8 levels + rest remainder | **~0.037 XLM** | the remainder's `Order` rent |
 | place — maximal take (32 levels) | **~0.027 XLM** | write entries (70 × 2,500) |
-| `create_market` | **~0.043 XLM** | `Market` rent |
+| `create_market` | **~0.085 XLM** | `Market` rent (~490 B named struct, once per market) |
 | `collect_fees` | **~0.001 XLM** | — |
 | `keepalive` (whole venue, per ~120 d) | **~2.3 XLM** | wasm code-entry rent (~40 KB at ⅓ discount) |
 

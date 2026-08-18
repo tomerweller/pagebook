@@ -453,17 +453,17 @@
       <thead><tr><th>Entry</th><th>Key</th><th>What is inside</th><th class="num">Budget</th></tr></thead>
       <tbody>
         <tr class="band"><td colspan="4">Configuration: money-free, admin-governed</td></tr>
-        <tr><td class="k">Config</td><td class="k">Config</td><td>admin, fee recipient, paused flag, market counter (instance storage)</td><td class="num">~150 B</td></tr>
-        <tr><td class="k">Market</td><td class="k">Market(market_id)</td><td>token pair, lot_size, tick_size, tick band, fee bps, order-size bounds, loop caps, queue geometry</td><td class="num">~250 B</td></tr>
+        <tr><td class="k">Config</td><td class="k">Config</td><td>admin, fee recipient, paused flag, market counter (instance storage)</td><td class="num">~190 B</td></tr>
+        <tr><td class="k">Market</td><td class="k">Market(market_id)</td><td>token pair, lot_size, tick_size, tick band, fee bps, order-size bounds, loop caps, queue geometry</td><td class="num">~490 B</td></tr>
         <tr class="band"><td colspan="4">Order store: authoritative, funds-bearing, never stale</td></tr>
         <tr><td class="k">Level</td><td class="k">Level(market, side, tick)</td><td>packed bytes: five counters + <code>INLINE_SLOTS</code> quantity slots</td><td class="num">≤ 384 B</td></tr>
         <tr><td class="k">LevelPage</td><td class="k">LevelPage(market, side, tick, page)</td><td>packed bytes: <code>PAGE_SLOTS</code> more quantity slots (overflow)</td><td class="num">≤ 320 B</td></tr>
         <tr><td class="k">Order</td><td class="k">Order(market, owner, nonce)</td><td>side, tick, generation, seq, qty</td><td class="num">≤ 160 B</td></tr>
         <tr><td class="k">FeeAccrual</td><td class="k">FeeAccrual(market, token)</td><td>fees collected, not yet paid out</td><td class="num">~50 B</td></tr>
         <tr class="band"><td colspan="4">Tick index: derived, money-free, may run stale</td></tr>
-        <tr><td class="k">BestTick</td><td class="k">BestTick(market, side)</td><td>best tick, empty flag</td><td class="num">~40 B</td></tr>
-        <tr><td class="k">TickSummary</td><td class="k">TickSummary(market, side)</td><td>2,048 bits: which <code>TickWord</code>s have any bit set</td><td class="num">256 B</td></tr>
-        <tr><td class="k">TickWord</td><td class="k">TickWord(market, side, word)</td><td>2,048 bits: which ticks in this word have liquidity</td><td class="num">256 B</td></tr>
+        <tr><td class="k">BestTick</td><td class="k">BestTick(market, side)</td><td>best tick, empty flag</td><td class="num">~60 B</td></tr>
+        <tr><td class="k">TickSummary</td><td class="k">TickSummary(market, side)</td><td>2,048 bits: which <code>TickWord</code>s have any bit set</td><td class="num">268 B</td></tr>
+        <tr><td class="k">TickWord</td><td class="k">TickWord(market, side, word)</td><td>2,048 bits: which ticks in this word have liquidity</td><td class="num">268 B</td></tr>
       </tbody>
     </table>
   </div>
