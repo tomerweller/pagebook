@@ -93,7 +93,7 @@ class Cli:
             ]
         )
         if rc != 0:
-            raise SimError(err[-600:])
+            raise SimError(err)
         return out.strip().splitlines()[-1]
 
     def decode(self, xdr):
@@ -150,7 +150,7 @@ class Cli:
         for e in evs:
             rc, out, err = self._run(["xdr", "decode", "--type", "DiagnosticEvent", "--output", "json"], stdin=e)
             text += out
-        m = re.search(r'"contract_error"[^0-9]*(\d+)|Error\(Contract, #(\d+)\)|"error": \{"contract": (\d+)\}', text)
+        m = re.search(r'"contract_error"[^0-9]*(\d+)|Error\(Contract, #(\d+)\)|"error":\s*\{"contract":\s*(\d+)\}', text)
         if m:
             code = int(m.group(1) or m.group(2) or m.group(3))
             return "typed:" + ERR_NAMES.get(code, str(code))
@@ -317,6 +317,8 @@ def classify(rc, out, err):
         return "bad_seq"
     if "ResourceLimitExceeded" in text:
         return "resource_limit"
+    if "submission timeout" in text or "timed out" in text.lower():
+        return "rpc_timeout"
     return "other"
 
 
@@ -334,7 +336,7 @@ class Soak:
     def record(self, role, action, outcome, detail=""):
         with self.lock:
             self.counts[outcome] = self.counts.get(outcome, 0) + 1
-            self.log.write(json.dumps({"t": time.time(), "role": role, "action": action, "outcome": outcome, "detail": detail[-300:]}) + "\n")
+            self.log.write(json.dumps({"t": time.time(), "role": role, "action": action, "outcome": outcome, "detail": detail if len(detail) <= 600 else detail[:400] + " ... " + detail[-200:]}) + "\n")
             self.log.flush()
 
     def next_nonce(self, role):
@@ -347,7 +349,8 @@ class Soak:
             xdr = self.cli.build(source, fn, args)
             sim = self.cli.simulate(source, xdr)
         except SimError as e:
-            self.record(role, fn, "sim:" + classify(1, "", str(e)), str(e))
+            e = str(e)
+            self.record(role, fn, "sim:" + classify(1, "", e), e[:400] + " ... " + e[-200:] if len(e) > 600 else e)
             return None
         except Exception as e:
             self.record(role, fn, "build_error", str(e))
