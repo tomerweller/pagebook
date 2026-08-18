@@ -1,7 +1,7 @@
 use crate::{DataKey, PageBook, MAX_ENTRY_TTL, MIN_PERSISTENT_TTL};
 use soroban_sdk::{
     testutils::{storage::Instance as _, Address as _, Ledger as _},
-    Address, Env,
+    Address,
 };
 
 #[test]
