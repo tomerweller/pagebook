@@ -315,17 +315,23 @@ fn walk(
         }
         // Partial: consume from the head inside the declared window and the
         // shared slot budget; progress persists even if a cap ends it.
-        let range = consume_range(window, cur);
+        // Apply: the client's declared window. DryRun: what the client will
+        // declare for this level from the returned head position (§14: pages
+        // [page(head_sim), page(head_sim)+1]), so quoted fills match.
+        let range = if apply {
+            consume_range(window, cur)
+        } else {
+            let p = pagebook_types::page(lvl.head_seq);
+            Some((p, p.saturating_add(1)))
+        };
         let took = consume_partial(env, market, opp, cur, &mut lvl, left, range, budget);
         let q = quote_atoms(env, took, cur, m.tick_size);
         filled += took;
         quote = crate::math::chk_add(env, quote, q);
         left -= took;
-        if apply {
+        if apply && took > 0 {
             store::save_level(env, market, opp, cur, &lvl);
-            if took > 0 {
-                events::filled(env, market, opp, cur, took, q);
-            }
+            events::filled(env, market, opp, cur, took, q);
         }
         moved = true;
         if left > 0 {
@@ -356,7 +362,8 @@ fn walk(
             empty: side_empty,
             tick: cur,
         };
-        if new.empty != recorded.empty || new.tick != recorded.tick {
+        let changed = new.empty != recorded.empty || (!new.empty && new.tick != recorded.tick);
+        if changed {
             store::save_best(env, market, opp, &new);
             let old = if recorded.empty { 0 } else { recorded.tick };
             events::top_changed(env, market, opp, old, if new.empty { 0 } else { new.tick });
@@ -371,17 +378,19 @@ fn walk(
     }
 }
 
-/// The last tick of `limit_tick`'s word in the walk direction: after a bounded
-/// scan finds no set bit up to there, BestTick may stand on it — no bit, no
-/// level, and never worse than the true best, which lies beyond. In band because
-/// the caller only asks when the scan was not exhaustive (§5, ADR-020).
+/// The first tick past `limit_tick`'s word in the walk direction: after a bounded
+/// scan finds no set bit up to the end of that word, BestTick may stand there —
+/// strictly beyond every swept tick and beyond `limit_tick`, no bit read, and
+/// never worse than the true best, which lies at-or-beyond it. In band because
+/// the caller only asks when the scan was not exhaustive, i.e. the band has at
+/// least one more word in the walk direction (§5, §8, ADR-020).
 fn frontier(m: &Market, limit_tick: u32, ascend: bool) -> u32 {
     if ascend {
-        let end = (word_of(limit_tick) + 1) * pagebook_types::WORD_TICKS - 1;
-        core::cmp::min(end, m.tick_max.saturating_sub(1))
+        let next = (word_of(limit_tick) + 1) * pagebook_types::WORD_TICKS;
+        core::cmp::min(next, m.tick_max.saturating_sub(1))
     } else {
-        let start = word_of(limit_tick) * pagebook_types::WORD_TICKS;
-        core::cmp::max(start, m.tick_min)
+        let prev = word_of(limit_tick) * pagebook_types::WORD_TICKS - 1;
+        core::cmp::max(prev, m.tick_min)
     }
 }
 

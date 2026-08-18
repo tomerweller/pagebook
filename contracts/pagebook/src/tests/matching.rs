@@ -1,4 +1,4 @@
-use super::harness::{flags, mint, rest_ask, setup, window};
+use super::harness::{flags, mint, rest_ask, rest_bid, setup, window};
 use crate::{Error, PlaceFlags};
 use soroban_sdk::{testutils::Address as _, Address};
 
@@ -463,10 +463,10 @@ fn walk_never_reads_word_past_limit() {
     });
     assert!(!touched.contains(&crate::DataKey::TickWord(h.market, false, 2)));
     assert!(touched.contains(&crate::DataKey::TickWord(h.market, false, 0)));
-    // BestTick(asks) moves to word 0's frontier (2047: no bit, stale-better —
-    // the true best 5000 lies beyond); the remainder rests at 100; a post-only
-    // bid at 60 is therefore NOT false-rejected by the swept tick.
-    assert_eq!(h.client().best(&h.market, &false), Some(2047));
+    // BestTick(asks) moves to the frontier past word 0 (2048: no bit read,
+    // stale-better — the true best 5000 lies beyond); the remainder rests at
+    // 100; a post-only bid at 60 is therefore NOT false-rejected by the swept tick.
+    assert_eq!(h.client().best(&h.market, &false), Some(2048));
     assert_eq!(h.client().best(&h.market, &true), Some(100));
     let mm = Address::generate(&h.env);
     mint(&h, &h.quote, &mm, 1_000_000);
@@ -493,7 +493,7 @@ fn walk_never_reads_word_past_limit() {
         &true,
         &6000,
         &1,
-        &2047,
+        &2048,
         &3,
         &window(&h),
         &PlaceFlags {
@@ -505,7 +505,114 @@ fn walk_never_reads_word_past_limit() {
     assert_eq!(filled, 1);
     assert_eq!(
         h.client().best(&h.market, &false),
-        Some(6143),
-        "limit 6000 is in word 2 of a 5-word band: frontier of word 2, not empty"
+        Some(6144),
+        "limit 6000 is in word 2 of a 5-word band: frontier past word 2, not empty"
     );
+}
+
+#[test]
+fn frontier_is_never_the_swept_tick_at_a_word_edge() {
+    // ask only at 2047 (last tick of word 0), band spans 5 words; bid limit 2047
+    // sweeps it with quantity left: BestTick(asks) must stand past the word
+    // (2048), not on the swept 2047, so a post-only bid at 2047 rests.
+    let mut h = setup();
+    h.market = h
+        .client()
+        .create_market(&h.base, &h.quote, &1, &1, &1, &10_000, &10, &1, &1_000_000);
+    let maker = Address::generate(&h.env);
+    rest_ask(&h, &maker, 2047, 1, 1);
+    let taker = Address::generate(&h.env);
+    mint(&h, &h.quote, &taker, 10_000_000);
+    let (rested, filled, _) = h.client().place(
+        &taker,
+        &h.market,
+        &true,
+        &2047,
+        &3,
+        &2047,
+        &1,
+        &window(&h),
+        &PlaceFlags {
+            post_only: false,
+            fill_or_kill: false,
+            no_rest: true,
+        },
+    );
+    assert_eq!(filled, 1);
+    assert!(!rested);
+    assert_eq!(h.client().best(&h.market, &false), Some(2048));
+    let mm = Address::generate(&h.env);
+    mint(&h, &h.quote, &mm, 10_000_000);
+    let r = h.client().try_place(
+        &mm,
+        &h.market,
+        &true,
+        &2047,
+        &1,
+        &2047,
+        &9,
+        &window(&h),
+        &PlaceFlags {
+            post_only: true,
+            fill_or_kill: false,
+            no_rest: false,
+        },
+    );
+    assert!(r.is_ok());
+    // descending mirror: bid only at 2048 (first tick of word 1); ask limit 2048
+    let h2 = setup();
+    let mut h2 = h2;
+    h2.market = h2.client().create_market(
+        &h2.base, &h2.quote, &1, &1, &1, &10_000, &10, &1, &1_000_000,
+    );
+    let maker2 = Address::generate(&h2.env);
+    rest_bid(&h2, &maker2, 2048, 1, 1);
+    let taker2 = Address::generate(&h2.env);
+    mint(&h2, &h2.base, &taker2, 10_000_000);
+    let (_, filled, _) = h2.client().place(
+        &taker2,
+        &h2.market,
+        &false,
+        &2048,
+        &3,
+        &2048,
+        &1,
+        &window(&h2),
+        &PlaceFlags {
+            post_only: false,
+            fill_or_kill: false,
+            no_rest: true,
+        },
+    );
+    assert_eq!(filled, 1);
+    assert_eq!(h2.client().best(&h2.market, &true), Some(2047));
+}
+
+#[test]
+fn quote_place_reports_fills_when_head_is_paged() {
+    // 40 asks @50, another taker takes 35 (head now in page 0). quote_place for
+    // 3 lots must report filled_lots 3, mirroring the window a client declares.
+    let h = setup();
+    let maker = Address::generate(&h.env);
+    for n in 1..=40u64 {
+        rest_ask(&h, &maker, 50, 1, n);
+    }
+    let t1 = Address::generate(&h.env);
+    mint(&h, &h.quote, &t1, 1_000_000);
+    let mut consume = soroban_sdk::Vec::new(&h.env);
+    consume.push_back(crate::ConsumeWindow {
+        tick: 50,
+        pages: crate::PageRange { first: 0, last: 1 },
+    });
+    let w = crate::SlotWindow {
+        consume,
+        append: crate::PageRange { first: 0, last: 1 },
+    };
+    let (_, filled, _) = h
+        .client()
+        .place(&t1, &h.market, &true, &50, &35, &50, &1, &w, &flags());
+    assert_eq!(filled, 35);
+    let q = h.client().quote_place(&h.market, &true, &50, &3);
+    assert_eq!(q.filled_lots, 3);
+    assert_eq!(q.crossed.get(0).unwrap().head_seq, 35);
 }
