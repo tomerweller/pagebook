@@ -46,6 +46,25 @@ findings below are fixed on the branch.
    behaviour (ADR-016).
 9. **A no-op `save_level`** on a partial branch that consumed nothing is skipped.
 
+## Round 3 (same day, third independent pass)
+
+10. **A frontier written in flight could make the next taker read a bit-less
+    `Level` outside its band.** Fix: a walk whose first tick is a recorded best it
+    did not get from the client checks the bit (word always declared) before
+    reading any Level; and the frontier is now the first tick of the next
+    *summary-set* word (the summary is always declared), which also makes "empty"
+    exact and retires the band-edge special case. Multi-word race test added.
+11. **Flush order blocked chained routes.** Pay-ins were flushed before pay-outs,
+    so a route selling what its previous leg bought needed the user to pre-hold
+    the intermediate token, and a replace needed liquid balance for escrow it
+    already held. Fix: per token, pay out first when the vault already holds the
+    amount, otherwise pay in first. Chained-route test added.
+12. **Footprint gates were §17 × 1.5 (3–4× measured).** Now measured + small slack.
+13. **`replace` did not validate its window; `collect_fees` accepted any market;
+    admin ops did not bump the instance TTL (§12 says they do); a geometry
+    mismatch in a stored `Market` was silently misread.** All fixed; several
+    no-op tests strengthened; `Cargo.lock` tracked; CI builds the wasm target.
+
 ## Checked and found sound (by the reviewers)
 
 §7 settlement rows and `open_lots` accounting; escrow versus payout per token; the

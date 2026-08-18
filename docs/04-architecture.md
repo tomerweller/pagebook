@@ -328,9 +328,9 @@ toward the book on rest and away from it on take; its **empty flag** is set only
 walk's `next_set_tick` finds no set bit on that side, and is cleared by any rest on
 that side (a rest onto an empty-flagged side takes `BestTick` regardless of how the
 stale recorded tick compares). After a sweep the walk moves `BestTick` to the next set
-tick within `limit_tick`'s word, or to that word's frontier (a bit-less tick that is
-still never worse than the true best), or marks the side empty when that word is the
-band's last (§8). 120-day TTL at creation/restore; auto-restore on touch.
+tick within `limit_tick`'s word, or to the first tick of the next word whose summary bit
+is set (a bit-less tick that is still never worse than the true best), or marks the
+side empty when the summary shows nothing beyond (§8). 120-day TTL at creation/restore; auto-restore on touch.
 Staleness is benign because the index carries no funds: a stale bit costs one extra
 step on the walk, and the place that lands on it clears it (§8). Archival is benign
 for the same reason: a word comes back on restore exactly as last written, and every
@@ -485,19 +485,23 @@ place(taker, market, side, limit_tick, qty_lots, start_tick, nonce, window, flag
 reads a `TickWord` beyond `limit_tick`'s word — the words from `start_tick`'s to
 `limit_tick`'s are part of every declared pad (§14) — so the scan cannot trap, and it
 runs after every sweep, the last one included. Its outcomes: the next set tick (the
-walk continues, or, if the quantity is done, `BestTick(opposite)` moves there); nothing
-set up to the end of `limit_tick`'s word, in which case `BestTick(opposite)` stands on
-that word's *frontier* (its last tick in the walk direction — no bit, no level, and
-never worse than the true best, which lies beyond) so that the other side's post-only
-orders and replaces are not false-rejected by a swept tick; or, when `limit_tick`'s word
-is the band's last word, the side is marked empty. Scanning past the limit's word would
-read whichever `TickWord` holds the next set bit — possibly far past `pad_end` — and
-turn a completed take into a footprint trap that anyone could arm for ~0.09 XLM by
-resting one min-size order at a distant tick. Consequently the band never needs to
-extend beyond the deepest level a take can *consume* plus the words through
-`limit_tick`'s (§14). Only a walk that began at the recorded best moves `BestTick`
-(otherwise the recorded best is still live and unvisited); an empty recorded side is
-never overwritten with a frontier.
+walk continues, or, if the quantity is done, `BestTick(opposite)` moves there); or
+nothing set up to the end of `limit_tick`'s word, in which case the walk consults only
+`TickSummary` (always declared): if some word beyond has a set bit, `BestTick(opposite)`
+stands on the *first tick of that word* in the walk direction — a bit-less tick, no
+`TickWord` beyond the bound read, at-or-better than every live level in and beyond that
+word (invariant 3) — so the other side's post-only orders and replaces are not
+false-rejected by a swept tick; if no word beyond has a set bit the side is marked
+empty, exactly. Scanning past the limit's word would read whichever `TickWord` holds the
+next set bit — possibly far past `pad_end` — and turn a completed take into a footprint
+trap that anyone could arm for ~0.09 XLM by resting one min-size order at a distant
+tick. Consequently the band never needs to extend beyond the deepest level a take can
+*consume* plus the words through `limit_tick`'s (§14). Only a walk that began at the
+recorded best moves `BestTick` (otherwise the recorded best is still live and
+unvisited); an empty recorded side is never overwritten with a frontier. A walk whose
+first tick is a recorded best it did not get from the client (worse than `start_tick`,
+or a frontier written in flight) checks that tick's bit in its word before reading any
+`Level` there — a bit-less tick outside the client's band is never read.
 
 **Deterministic pay-in (auth).** Every SAC `transfer(user → vault, amount)` carries
 `user.require_auth()` on its exact arguments, and the user's signed authorization tree

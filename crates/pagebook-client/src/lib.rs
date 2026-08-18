@@ -236,6 +236,7 @@ pub fn restore_marks(q: &Quoted, out: &PadOut, archived: &[ClientKey]) -> Vec<Cl
         ClientKey::TickSummary(m, q.own_side),
         ClientKey::BestTick(m, q.own_side),
         ClientKey::Order(m, q.taker, q.nonce),
+        ClientKey::LevelPage(m, q.own_side, q.limit_tick, 0),
         ClientKey::LevelPage(m, q.own_side, q.limit_tick, page(q.tail_seq)),
         ClientKey::LevelPage(
             m,

@@ -181,7 +181,7 @@ fn simulated_footprint_declares_own_side_rest_keys() {
     // still names Level(asks, 40) as the one-key band.
     assert_eq!(q.start_tick, 40);
     assert_eq!(q.crossed.len(), 0);
-    assert!(q.keys.contains(&DataKey::Level(m, false, 40)));
+    assert!(q.keys.contains(DataKey::Level(m, false, 40)));
 }
 
 #[test]
