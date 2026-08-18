@@ -13,6 +13,7 @@ mod reliquify;
 mod route;
 mod sizes;
 mod ttl;
+mod worst_case;
 
 use soroban_sdk::{testutils::EnvTestConfig, Env};
 

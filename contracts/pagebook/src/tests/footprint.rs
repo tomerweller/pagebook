@@ -230,22 +230,30 @@ fn settle_does_not_write_instance() {
 use super::harness::{flags, mint, rest_ask, rest_bid, setup, window, Harness};
 use crate::{PlaceFlags, PlaceLeg, ReplaceItem};
 
-fn assert_within(name: &str, fp: &Footprint, max_reads: u32, max_writes: u32) {
+fn assert_within(name: &str, fp: &Footprint, max_reads: u32, max_writes: u32, max_bytes: u32) {
     std::println!(
-        "footprint[{name}]: memory_read_entries={} write_entries={} write_bytes={} (gates {max_reads} / {max_writes})",
+        "footprint[{name}]: memory_read_entries={} write_entries={} write_bytes={} (gates {max_reads} / {max_writes} / {max_bytes})",
         fp.memory_read_entries,
         fp.write_entries,
         fp.write_bytes
     );
     assert!(
         fp.memory_read_entries <= max_reads,
-        "{name}: memory_read_entries {} > gate {max_reads}",
+        "{name}: memory_read_entries {} > gate {max_reads} (measured {})",
+        fp.memory_read_entries,
         fp.memory_read_entries
     );
     assert!(
         fp.write_entries <= max_writes,
-        "{name}: write_entries {} > gate {max_writes}",
+        "{name}: write_entries {} > gate {max_writes} (measured {})",
+        fp.write_entries,
         fp.write_entries
+    );
+    assert!(
+        fp.write_bytes <= max_bytes,
+        "{name}: write_bytes {} > gate {max_bytes} (measured {})",
+        fp.write_bytes,
+        fp.write_bytes
     );
 }
 
@@ -291,7 +299,8 @@ fn bound_place_rest_existing_level() {
     rest_ask(&h, &a, 10, 2, 1);
     mint(&h, &h.base, &b, 1_000);
     let fp = place_fp(&h, &b, false, 10, 2, 10, 1, flags());
-    assert_within("place rest existing level", &fp, 15, 6);
+    // calibrated 13 / 5 / 1,200; §17 0.9 KB is below measured (see 08).
+    assert_within("place rest existing level", &fp, 15, 6, 1_200 + 256);
 }
 
 #[test]
@@ -300,7 +309,8 @@ fn bound_place_rest_new_level() {
     let a = Address::generate(&h.env);
     mint(&h, &h.base, &a, 1_000);
     let fp = place_fp(&h, &a, false, 10, 2, 10, 1, flags());
-    assert_within("place rest new level", &fp, 17, 9);
+    // calibrated 15 / 8 / 2,104; §17 1.2 KB is below measured (see 08).
+    assert_within("place rest new level", &fp, 17, 9, 2_104 + 256);
 }
 
 #[test]
@@ -313,7 +323,8 @@ fn bound_place_take_eight_levels() {
     let taker = Address::generate(&h.env);
     mint(&h, &h.quote, &taker, 1_000_000);
     let fp = place_fp(&h, &taker, true, 17, 8, 10, 1, no_rest());
-    assert_within("place take 8 levels", &fp, 24, 18);
+    // calibrated 22 / 17 / 5,288; §17 6 KB holds for this same-word shape.
+    assert_within("place take 8 levels", &fp, 24, 18, 5_288 + 256);
 }
 
 #[test]
@@ -341,7 +352,8 @@ fn bound_place_take_eight_levels_then_rest() {
     assert!(rested);
     assert_eq!(filled, 8);
     // 8-level take plus a rest at a new level (the two rows composed).
-    assert_within("place take 8 levels + rest", &fp, 29, 23);
+    // calibrated 27 / 22 / 6,872.
+    assert_within("place take 8 levels + rest", &fp, 29, 23, 6_872 + 256);
 }
 
 #[test]
@@ -350,7 +362,8 @@ fn bound_settle() {
     let maker = Address::generate(&h.env);
     rest_ask(&h, &maker, 10, 2, 1);
     let (_, fp) = footprint_of(&h.env, &h.id, || h.client().settle(&maker, &h.market, &1));
-    assert_within("settle", &fp, 11, 6);
+    // calibrated 9 / 5 / 924; §17 0.6 KB is below measured (see 08).
+    assert_within("settle", &fp, 11, 6, 924 + 256);
 }
 
 #[test]
@@ -362,7 +375,8 @@ fn bound_replace() {
         h.client()
             .replace(&maker, &h.market, &1, &false, &12, &3, &window(&h))
     });
-    assert_within("replace", &fp, 15, 8);
+    // calibrated 13 / 7 / 1,980; §17 1.5 KB is below measured (see 08).
+    assert_within("replace", &fp, 15, 8, 1_980 + 256);
 }
 
 #[test]
@@ -387,7 +401,8 @@ fn bound_replace_batch_five_items() {
     });
     // §17: one quote ≈ 14 / 8, a 40-quote refresh ≈ 130 / 90 — so about
     // 3 footprint / 2.1 writes per extra item on top of the first.
-    assert_within("replace_batch 5", &fp, 27, 20);
+    // calibrated 25 / 19 / 6,316.
+    assert_within("replace_batch 5", &fp, 27, 20, 6_316 + 256);
 }
 
 #[test]
@@ -416,7 +431,8 @@ fn bound_route_two_legs() {
     assert_eq!(out.get(0).unwrap().1, 4);
     assert_eq!(out.get(1).unwrap().1, 4);
     // Two legs sweeping 4 levels each: bounded by the 8-level take row.
-    assert_within("route 2 legs (8 levels)", &fp, 24, 18);
+    // calibrated 22 / 17 / 5,288.
+    assert_within("route 2 legs (8 levels)", &fp, 24, 18, 5_288 + 256);
 }
 
 #[test]
@@ -427,7 +443,8 @@ fn bound_create_market() {
             .create_market(&h.base, &h.quote, &1, &1, &1, &1000, &10, &1, &1_000_000)
     });
     // Config (instance), two SAC instances for `authorized`, the new Market.
-    assert_within("create_market", &fp, 10, 4);
+    // calibrated 9 / 3 / 976.
+    assert_within("create_market", &fp, 10, 4, 976 + 256);
 }
 
 #[test]
@@ -437,7 +454,8 @@ fn bound_set_market_caps() {
         h.client()
             .set_market_caps(&h.market, &16, &32, &10, &1, &1_000_000, &1)
     });
-    assert_within("set_market_caps", &fp, 6, 3);
+    // calibrated 5 / 2 / 652.
+    assert_within("set_market_caps", &fp, 6, 3, 652 + 256);
 }
 
 #[test]
@@ -463,14 +481,16 @@ fn bound_collect_fees() {
     });
     assert!(got > 0);
     // Config, FeeAccrual, SAC instance, vault + recipient balances.
-    assert_within("collect_fees", &fp, 7, 4);
+    // calibrated 6 / 3 / 632.
+    assert_within("collect_fees", &fp, 7, 4, 632 + 256);
 }
 
 #[test]
 fn bound_keepalive() {
     let h = setup();
     let (_, fp) = footprint_of(&h.env, &h.id, || h.client().keepalive());
-    assert_within("keepalive", &fp, 4, 1);
+    // calibrated 2 / 0 / 0 (native test contract: no wasm write).
+    assert_within("keepalive", &fp, 4, 1, 256);
 }
 
 #[test]
@@ -484,11 +504,21 @@ fn quote_place_writes_nothing() {
     });
     assert_eq!(q.filled_lots, 3);
     std::println!(
-        "footprint[quote_place]: memory_read_entries={} write_entries={}",
+        "footprint[quote_place]: memory_read_entries={} write_entries={} write_bytes={}",
         fp.memory_read_entries,
+        fp.write_entries,
+        fp.write_bytes
+    );
+    assert_eq!(
+        fp.write_entries, 0,
+        "quote_place: write_entries {} (measured)",
         fp.write_entries
     );
-    assert_eq!(fp.write_entries, 0);
+    assert_eq!(
+        fp.write_bytes, 0,
+        "quote_place: write_bytes {} (measured)",
+        fp.write_bytes
+    );
     assert_eq!(fp.written_keys.len(), 0);
 }
 
@@ -499,10 +529,37 @@ fn views_write_nothing() {
     rest_ask(&h, &maker, 10, 2, 1);
     rest_bid(&h, &maker, 5, 2, 2);
     let (_, fp) = footprint_of(&h.env, &h.id, || h.client().best(&h.market, &false));
-    assert_eq!(fp.write_entries, 0);
+    assert_eq!(
+        fp.write_entries, 0,
+        "best: write_entries {} (measured)",
+        fp.write_entries
+    );
+    assert_eq!(
+        fp.write_bytes, 0,
+        "best: write_bytes {} (measured)",
+        fp.write_bytes
+    );
     let (_, fp) = footprint_of(&h.env, &h.id, || h.client().level(&h.market, &false, &10));
-    assert_eq!(fp.write_entries, 0);
+    assert_eq!(
+        fp.write_entries, 0,
+        "level: write_entries {} (measured)",
+        fp.write_entries
+    );
+    assert_eq!(
+        fp.write_bytes, 0,
+        "level: write_bytes {} (measured)",
+        fp.write_bytes
+    );
     let (_, fp) = footprint_of(&h.env, &h.id, || h.client().order(&h.market, &maker, &1));
-    assert_eq!(fp.write_entries, 0);
+    assert_eq!(
+        fp.write_entries, 0,
+        "order: write_entries {} (measured)",
+        fp.write_entries
+    );
+    assert_eq!(
+        fp.write_bytes, 0,
+        "order: write_bytes {} (measured)",
+        fp.write_bytes
+    );
     assert_eq!(fp.written_keys.len(), 0);
 }
