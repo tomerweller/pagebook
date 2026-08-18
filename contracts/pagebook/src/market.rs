@@ -129,6 +129,11 @@ fn prove_bounds(
     {
         env.panic_with_error(Error::Overflow);
     }
+    // `open_lots` and `head_consumed_lots` are u64: a full level of max-size
+    // orders must fit (the i128 bounds above do not imply this).
+    if (cap as u128) * (max_order_lots as u128) > u64::MAX as u128 {
+        env.panic_with_error(Error::Overflow);
+    }
 }
 
 pub fn require_qty(env: &Env, m: &Market, qty: u64) {
