@@ -462,7 +462,7 @@ place(taker, market, side, limit_tick, qty_lots, start_tick, nonce, window, flag
       lvl.generation += 1; reset queue          # ONE small write; orders abandoned
       clear bit in TickWord(word(best)) [and TickSummary if word empties]
       best = next_set_tick(bounded by word(limit_tick))        # bitmap walk, reads only (below)
-      if none: best = frontier(limit_tick) or, if word(limit_tick) is the band's last, mark empty
+      if none: best = first tick of the next summary-set word, or mark the side empty if there is none
       if qty_lots == 0 or none: break
     else:                                       # partial: advance head
       if head slot lies outside window[best]: break   # graceful stop, like a cap
