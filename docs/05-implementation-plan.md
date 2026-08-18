@@ -1,7 +1,9 @@
 # Implementation plan (proposal — deviate with a decision note)
 
-*Revised after adversarial reviews — see `decisions/001-adversarial-review-round-1.md`
-and `decisions/003-adversarial-review-round-2-resolutions.md`.*
+*Revised after adversarial reviews — see `decisions/001-adversarial-review-round-1.md`,
+`decisions/003-adversarial-review-round-2-resolutions.md`, and
+`decisions/012-adversarial-review-round-3-resolutions.md`; pre-implementation
+decisions in `decisions/014-implementation-plan-readiness.md`.*
 
 ## Workspace layout
 
@@ -32,9 +34,15 @@ pagebook/
 pub struct PlaceFlags { pub post_only: bool, pub fill_or_kill: bool, pub no_rest: bool }
 
 /// Slot-access windows the client declared pages for (architecture §8/§14).
-/// Exact encoding is implementer's choice (decision note) — semantically:
-/// per-band-level consume windows + the taker's own append window.
-pub struct SlotWindow { /* ... */ }
+/// Encoding decided in ADR-014: one consume window per set level in the band and
+/// one append window for the taker's own rest. Page ranges are inclusive; a level
+/// absent from `consume` has an empty window (inline slots only).
+pub struct PageRange { pub first: u32, pub last: u32 }
+pub struct ConsumeWindow { pub tick: u32, pub pages: PageRange }
+pub struct SlotWindow {
+    pub consume: Vec<ConsumeWindow>,   // ≤ MAX_LEVELS_CROSSED entries
+    pub append: PageRange,             // {page(tail_sim), +1}; page 0 is always implied
+}
 
 pub trait PageBook {
     // ---- deploy-time; no init entry point, no first-caller race (architecture §12) ----
@@ -99,8 +107,14 @@ pub trait PageBook {
     fn best(e: Env, market: MarketId, is_bid: bool) -> Option<u32>;
     fn level(e: Env, market: MarketId, is_bid: bool, tick: u32) -> LevelInfo;
     fn order(e: Env, market: MarketId, owner: Address, nonce: u64) -> OrderInfo; // coords + settlement preview
+    /// The simulate step (architecture §11/§14). Runs the SAME walk as `place` in
+    /// dry-run mode (matching.rs `Mode::DryRun`: caps, lazy-clear decisions, and
+    /// window logic identical; nothing written). Returns `start_tick`, the crossed
+    /// ticks with per-level head positions, the tail position at `limit_tick`, the
+    /// keys the client should declare (band `Level`s, words, own-side keys) as
+    /// typed keys — not footprint XDR — and which of them are archived (ADR-014).
     fn quote_place(e: Env, market: MarketId, is_bid: bool, limit_tick: u32, qty: u64)
-        -> QuoteResult;  // start_tick + band + slot windows the client should declare
+        -> QuoteResult;
 
     /// Permissionless cranks (no auth; effects defined by config, not caller):
     fn collect_fees(e: Env, market: MarketId, token: Address) -> i128;  // pays recipient
@@ -122,7 +136,13 @@ Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs`. Ther
   `pagebook-types` packed entry layouts, a serialized-size test per entry type at max
   occupancy (budgets from architecture Part I — these assume the packed-`Bytes` encoding;
   `contracttype` maps blow the Level budget ~2.5×, which is why packing is mandated,
-  not optional). Empty contract deploys to testnet via constructor.
+  not optional). Empty contract deploys to testnet via constructor. **Footprint-test
+  spike (half a day, gates M2's test design):** confirm what the SDK test host exposes
+  for the recorded footprint and budget, and land a `footprint_of(|| call)` test
+  helper that returns the set of keys read and written plus write bytes. M2 and M4
+  assert against it as described under Testing strategy; if exact key sets are not
+  reachable, fall back to entry-count and write-byte upper bounds (CLAUDE.md) and
+  record the fallback in a decision note.
 - **M1 — single level end-to-end.** Constructor/admin/pause skeleton + auth tests
   (malicious-caller per entry point); market creation with the full §0.3 bound checks
   (property tests at each maximum: max order, full level, route headroom, fee cap);
@@ -134,14 +154,20 @@ Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs`. Ther
   reused — assert no entry create/delete in the write set); nonce lifecycle
   (`OrderExists`, reuse after settle); vault escrow + settlement (incl. escrow *delta*
   on replace); `set_market_caps` tests (auth; §0.3 re-proof rejects breaking values;
-  `MAX_PAGES` lower rejected; live orders unaffected across a retune); conservation
+  `MAX_PAGES` lower rejected; live orders unaffected across a retune); `create_market`
+  refuses an asset whose SAC reports `authorized(vault) == false` (ADR-012 L3; mock
+  SAC test); conservation
   invariant test, with the settle-then-sweep case called out (settle a partial head,
   then sweep the level: `open_lots` must have dropped by the refund — ADR-012 M3);
   fee split-form equivalence property (`(o ÷ 10⁴)·bps + ceil((o mod 10⁴)·bps / 10⁴)
   == ceil(o·bps / 10⁴)` and no intermediate above `o`); `create_market` rejects
   `base == quote` and `tick_max > 2^22`. This proves the settlement
   state machine — the riskiest logic — before any book traversal exists.
-- **M2 — matching.** Multi-level matching loop, `start_tick` clamping, sweep-vs-partial,
+- **M2 — matching.** `matching.rs` walk with a `Mode::{Apply, DryRun}` switch so
+  `quote_place` and `place` share one code path; a minimal in-repo padding helper
+  (`quote_place` output → declared key set + `SlotWindow`) that the race tests use as
+  their simulate step — the client SDK in M5 wraps this same logic, it does not
+  reinvent it. Multi-level matching loop, `start_tick` clamping, sweep-vs-partial,
   generation semantics, `BestTick` maintenance (incl. stale-bit lazy clearing, the
   empty flag, and **no scan past the last sweep** — a take that finishes on a sweep
   reads no `TickWord` beyond the swept tick's word), **re-liquification** (sweep →
@@ -163,7 +189,9 @@ Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs`. Ther
   (ceil) + `collect_fees` to recipient; `route` with in-memory netting, shared caps
   across legs, and event-byte assertions at the route worst case; `replace_batch`
   with netted settlement and the `MAX_REPLACE_BATCH` bound (fee gate: a 40-quote
-  refresh stays ~0.03 XLM with zero rent — ADR-005's headline number).
+  refresh stays ~0.03 XLM with zero rent — ADR-005's headline number). `PlaceLeg` /
+  `LegResult` shapes are decided here (decision note): a leg is `place`'s arguments
+  minus `taker`; a result is `place`'s return tuple.
 - **M4 — resource hardening.** Build the **worst-case state-transition matrix** first
   (per op: entries touched × bytes, incl. bitmap dispersal, windows, page cleanup, TTL
   bumps, SAC entries), then footprint-count and write-byte assertions per op against
@@ -178,10 +206,17 @@ Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs`. Ther
   counters survive restore — but P23 auto-restore is a simulation/tx-build feature, not
   host behavior, so the auto-restore *path* is exercised only in the testnet soak with
   a book-driving bot (which must include a quote-improving spammer and a same-level
-  rest storm to hit the race paths under real inclusion latency).
+  rest storm to hit the race paths under real inclusion latency). The soak MUST also
+  **verify per-entry restore opt-in** (03 §Storage): submit a place whose footprint
+  declares an archived `Level` unmarked for restore and does not touch it — expect
+  success and no restore charge; then one that touches it unmarked — expect the
+  archived-entry failure; then marked — expect success and the rent. Architecture §14's
+  "pad archived keys for free" rests on this; if the host behaves otherwise, §14/§15/§17
+  need a decision note before M5.
 - **M5 — client SDK sketch.** Key computation + padding helper (`quote_place` →
   `start_tick` + band + slot windows + nonce management), since padding is a
-  client-side responsibility.
+  client-side responsibility; wraps the M2 in-repo helper and adds the
+  archived-key marking rule (§14) and nonce policy (open question 7).
 
 ## Testing strategy
 
@@ -203,7 +238,12 @@ Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs`. Ther
   assert per-op entry counts and write bytes against architecture §17's table (derived
   from the worst-case matrix, not sampled). Regression gates, like Deepstate's
   `.gas-snapshot.runtime` but for footprints. Include the negative assertion: market
-  ops never write the instance entry.
+  ops never write the instance entry. **Padding correctness is invariant 6 as a set
+  test:** for every race scenario, `recorded_keys(place) ⊆ declared_keys(sim)` — the
+  test host records, the helper computes what a client would declare, and the
+  assertion is inclusion, so no footprint *enforcement* mode is needed; a "trap" is
+  asserted as a recorded key outside the declared set, expected only when the walk
+  passes `pad_end`.
 - **Archival tests:** cold level expired in test env → touched → counters intact;
   dormant `Order` expired → settle still pays. (Auto-restore path itself: testnet
   soak only — see M4.)
@@ -211,13 +251,18 @@ Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs`. Ther
 ## Open questions for the implementer to resolve (with decision notes)
 
 1. Inline level capacity `INLINE_SLOTS`, page capacity `PAGE_SLOTS`, `MAX_PAGES`,
-   `MAX_SLOTS_SCANNED` — tune from measured entry sizes/fees (start both slot
-   constants at 32).
+   `MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED` — final values tuned from measured entry
+   sizes/fees in M4. **Starting values (ADR-014):** `INLINE_SLOTS = 32`,
+   `PAGE_SLOTS = 32`, `MAX_PAGES = 1`, `MAX_LEVELS_CROSSED = 32` (§17's worst-case
+   rows assume it), `MAX_SLOTS_SCANNED = 64` (one full inline run plus one page —
+   enough to clear any single-generation tombstone run at `MAX_PAGES = 1` in one
+   take), `MAX_ROUTE_LEGS = 4`, `MAX_REPLACE_BATCH = 64` (§0.3).
 2. Whether rest should offer the optional `extend_ttl`-to-180-d flag for `Order`
    in v1 (TTL targets themselves are resolved: protocol minimum ~120 d covers every
    entry class; see architecture §18 / ADR-004).
-3. `quote_place` return shape for the padding helper (keys vs opaque footprint XDR) and
-   the concrete `SlotWindow` encoding (per-level page ranges vs a compact global form).
+3. ~~`quote_place` return shape and the concrete `SlotWindow` encoding~~ — resolved
+   (ADR-014): typed keys plus archived flags, not footprint XDR; `SlotWindow` is
+   per-level inclusive page ranges plus one append range (interface sketch above).
 4. Self-trade prevention flag in v1 (cheap: compare owner on head consume — but that
    reads `Order` in the hot path; likely defer).
 5. Fee *split* (protocol/integrator) — custody and recipient are defined (architecture
