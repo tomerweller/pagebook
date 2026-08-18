@@ -161,7 +161,8 @@
 
 <nav class="toc">
   <div class="in">
-    <a href="#model"><b>Model</b></a>
+    <a href="#why"><b>Why</b></a>
+    <a href="#model">Model</a>
     <a href="#storage">Storage</a>
     <a href="#level">Level queue</a>
     <a href="#order">Order</a>
@@ -177,13 +178,26 @@
 
 <main>
 
+<section id="why">
+  <h3>Why an order book is hard on Soroban <span class="ref"><a href="03-soroban-constraints.md">03</a></span></h3>
+  <p>
+    An order book is a sorted structure that takers walk and makers insert into. On the chains where CLOBs already run, the walk goes wherever the next order happens to sit (a slab, a radix tree) and the book lives in whatever container is convenient, often one large account. Two rules of Soroban break both habits.
+  </p>
+  <p>
+    <strong>The footprint is declared before execution.</strong> A transaction lists every ledger entry it will read or write. Simulation computes that list, and the host rejects any access to an entry that is not on it. Declaring entries you never touch is legal; touching one you never declared fails the transaction. A matching engine that follows pointers to wherever the next order lives has a footprint nobody can name in advance, and the book keeps moving between simulation and inclusion, so a footprint that was right at simulation can be wrong a few seconds later.
+  </p>
+  <p>
+    <strong>Write bytes are the scarce shared resource.</strong> Each ledger, about five seconds, allows 286,720 bytes of writes across all Soroban traffic, and Soroban charges for every byte of every entry a transaction rewrites, whether or not that byte changed. If the book is one blob, every place and every settle rewrites the whole book, and a few of them can fill a ledger. Rent points the same way: a persistent entry prepays about 120 days at roughly 1,667 stroops per byte, so a bloated entry costs money as well as throughput. Going too small does not help either, because every entry carries 100 to 200 bytes of key and framing on top of its payload. A hot entry wants to be a few hundred bytes.
+  </p>
+  <p>
+    The design answers each in turn. Against the footprint: every key is a pure function of identifiers the client already knows (market, side, tick, owner, nonce), and every loop bounds on a config constant, so a client can compute the full key set from a simulation and pad it against whatever the book does before the transaction lands. Against the write budget: every hot entry is packed bytes with a size budget, and each operation's worst-case reads and writes are a number in a table that tests enforce. Everything below is those two answers worked out.
+  </p>
+</section>
+
 <section id="model">
   <h3>The model in one paragraph <span class="ref"><a href="04-architecture.md#01-model-and-vocabulary">04 §0</a></span></h3>
   <p>
     One contract hosts many markets. A market is a pair of SAC addresses plus two numbers, <code>lot_size</code> and <code>tick_size</code>, that turn every quantity into an integer count of lots and every price into an integer tick. Each side of a market (bids, asks) is a set of price levels; each level is a FIFO queue of maker orders at exactly one price. A taker calls <code>place</code>, which crosses the book and settles in the same transaction. A maker's order rests, and later the maker calls <code>settle</code>, the one exit: it pays whatever happened, proceeds if the order filled, a refund if it did not, both if it partly filled. There is no rounding anywhere in matching, because <code>lots × tick × tick_size</code> is exact; the taker fee is the only place the contract rounds, and it rounds up.
-  </p>
-  <p>
-    The footprint is the reason the design looks the way it does. A transaction's read/write footprint is fixed at submission, and the book keeps moving between simulation and inclusion. So place and settle need footprints a client can compute from simulation and pad against whatever the book does before the transaction lands. Everything below follows from that.
   </p>
 </section>
 
