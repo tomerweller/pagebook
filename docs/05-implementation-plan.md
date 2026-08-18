@@ -115,7 +115,8 @@ pub trait PageBook {
     /// window logic identical; nothing written). Returns `start_tick`, the crossed
     /// ticks with per-level head positions, the tail position at `limit_tick`, the
     /// keys the client should declare (band `Level`s, words, own-side keys) as
-    /// typed keys — not footprint XDR — and which of them are archived (ADR-014).
+    /// typed keys — not footprint XDR (ADR-014); archival is not observable
+    /// on-chain, so archived flags come from RPC in the client (ADR-020).
     fn quote_place(e: Env, market: MarketId, is_bid: bool, limit_tick: u32, qty: u64)
         -> QuoteResult;
 
@@ -132,7 +133,8 @@ BadStartTick, QtyOutOfBounds, Crossed (post_only), Unfilled (FoK), LevelFull, Re
 Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs, BadWindow
 (`consume.len() > MAX_LEVELS_CROSSED` or a malformed page range), BatchTooLarge
 (`replace_batch` items > MAX_REPLACE_BATCH), TokenNotAuthorized (`create_market`: the
-SAC reports the vault unauthorized)`. Error codes are the declaration order
+SAC reports the vault unauthorized), CorruptEntry (a stored entry that does not decode),
+NotInitialized (no Config), SelfTrade (a `route` leg would take an earlier leg's rest)`. Error codes are the declaration order
 above, starting at 1, and are stable across upgrades (append only). `BadStartTick` is
 defined in architecture §8 (`start_tick` outside `[tick_min, tick_max)`; every in-band
 value is legal). There is no `MarketExists`: the schema has no pair index and duplicate
@@ -340,7 +342,8 @@ default that a decision note may change once measured.
    in v1 (TTL targets themselves are resolved: protocol minimum ~120 d covers every
    entry class; see architecture §18 / ADR-004).
 3. ~~`quote_place` return shape and the concrete `SlotWindow` encoding~~ — resolved
-   (ADR-014): typed keys plus archived flags, not footprint XDR; `SlotWindow` is
+   (ADR-014, amended by ADR-020: archived flags come from RPC, the contract returns
+   the touched key set): typed keys, not footprint XDR; `SlotWindow` is
    per-level inclusive page ranges plus one append range (interface sketch above).
 4. Self-trade prevention flag in v1 (cheap: compare owner on head consume — but that
    reads `Order` in the hot path; likely defer).

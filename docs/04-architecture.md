@@ -304,8 +304,8 @@ the next place that walks through.
 | Entry | Durability | Key | Contents | Target size |
 |---|---|---|---|---|
 | `BestTick` | persistent | `BestTick(market, side)` | best tick (u32), empty flag | ~40 B |
-| `TickSummary` | persistent | `TickSummary(market, side)` | summary bitmap: bit `word` = "`TickWord(word)` has any set bit" (2,048 words) | 256 B |
-| `TickWord` | persistent | `TickWord(market, side, word)` | presence bitmap for ticks `[word·2048, (word+1)·2048)` | 256 B |
+| `TickSummary` | persistent | `TickSummary(market, side)` | summary bitmap: bit `word` = "`TickWord(word)` has any set bit" (2,048 words) | 257 B payload, 268 B XDR (ADR-017) |
+| `TickWord` | persistent | `TickWord(market, side, word)` | presence bitmap for ticks `[word·2048, (word+1)·2048)` | 257 B payload, 268 B XDR (ADR-017) |
 
 **Coverage.** The bitmap hierarchy covers ticks `[0, 2048 × 2048 = 2^22)` per side per
 market — the market's tick band MUST fit inside one TickSummary entry, enforced at
@@ -327,9 +327,10 @@ rewrite). Bits are cleared by sweeps — or lazily, on the walk (§8). `BestTick
 toward the book on rest and away from it on take; its **empty flag** is set only when a
 walk's `next_set_tick` finds no set bit on that side, and is cleared by any rest on
 that side (a rest onto an empty-flagged side takes `BestTick` regardless of how the
-stale recorded tick compares). A walk that finishes its quantity on a sweep leaves
-`BestTick` at the swept tick without scanning further — stale-better, which the
-contract allows (§8). 120-day TTL at creation/restore; auto-restore on touch.
+stale recorded tick compares). After a sweep the walk moves `BestTick` to the next set
+tick within `limit_tick`'s word, or to the first tick of the next word whose summary bit
+is set (a bit-less tick that is still never worse than the true best), or marks the
+side empty when the summary shows nothing beyond (§8). 120-day TTL at creation/restore; auto-restore on touch.
 Staleness is benign because the index carries no funds: a stale bit costs one extra
 step on the walk, and the place that lands on it clears it (§8). Archival is benign
 for the same reason: a word comes back on restore exactly as last written, and every
@@ -460,9 +461,9 @@ place(taker, market, side, limit_tick, qty_lots, start_tick, nonce, window, flag
       quote += lvl.open_lots * best * tick_size
       lvl.generation += 1; reset queue          # ONE small write; orders abandoned
       clear bit in TickWord(word(best)) [and TickSummary if word empties]
-      if qty_lots == 0: break                   # done: no scan past the last sweep (below)
-      best = next_set_tick(TickWord/TickSummary)               # bitmap walk, reads only
-      if none: set BestTick(opposite).empty; break
+      best = next_set_tick(bounded by word(limit_tick))        # bitmap walk, reads only (below)
+      if none: best = first tick of the next summary-set word, or mark the side empty if there is none
+      if qty_lots == 0 or none: break
     else:                                       # partial: advance head
       if head slot lies outside window[best]: break   # graceful stop, like a cap
       consume from head (skip tombstones; bounded by MAX_SLOTS_SCANNED and window)
@@ -473,19 +474,52 @@ place(taker, market, side, limit_tick, qty_lots, start_tick, nonce, window, flag
     if no_rest, or the recorded BestTick(opposite) still crosses limit_tick:
       refund remainder                          # NEVER rest a crossing order (inv. 8)
     else: rest remainder at limit_tick (append must land in window — §9)
-  transfer: SAC moves taker↔vault (base, quote)
+  transfer: taker pays the vault the FULL escrow at limit_tick (bid: qty × limit × tick_size
+            quote; ask: qty × lot_size base) — a pure function of the arguments — and the
+            vault pays back the unspent part and the output net of fee (below)
   fee = split-form ceil(taker_output × fee_bps / 10_000) → FeeAccrual(token)   # §0.2
   update BestTick(opposite) if moved; emit filled/swept per level, top_changed if moved
 ```
 
-**No scan past the last sweep.** When the final sweep exhausts the taker's quantity the
-walk stops *without* calling `next_set_tick`: `BestTick(opposite)` is left at the
-just-swept tick, which is stale-better and legal under invariant 3 (the next walk reads
-that `Level`, sees `open_lots == 0`, and moves on at the cost of one crossed level).
-Scanning would read whichever `TickWord` holds the next set bit — possibly far past
-`pad_end` — and turn a completed take into a footprint trap that anyone could arm for
-~0.09 XLM by resting one min-size order at a distant tick. Consequently the band never
-needs to extend beyond the deepest level a take can *consume* (§14).
+**The bounded scan, and where `BestTick` stands after a sweep.** `next_set_tick` never
+reads a `TickWord` beyond `limit_tick`'s word — the words from `start_tick`'s to
+`limit_tick`'s are part of every declared pad (§14) — so the scan cannot trap, and it
+runs after every sweep, the last one included. Its outcomes: the next set tick (the
+walk continues, or, if the quantity is done, `BestTick(opposite)` moves there); or
+nothing set up to the end of `limit_tick`'s word, in which case the walk consults only
+`TickSummary` (always declared): if some word beyond has a set bit, `BestTick(opposite)`
+stands on the *first tick of that word* in the walk direction — a bit-less tick, no
+`TickWord` beyond the bound read, at-or-better than every live level in and beyond that
+word (invariant 3) — so the other side's post-only orders and replaces are not
+false-rejected by a swept tick; if no word beyond has a set bit the side is marked
+empty, exactly. Scanning past the limit's word would read whichever `TickWord` holds the
+next set bit — possibly far past `pad_end` — and turn a completed take into a footprint
+trap that anyone could arm for ~0.09 XLM by resting one min-size order at a distant
+tick. Consequently the band never needs to extend beyond the deepest level a take can
+*consume* plus the words through `limit_tick`'s (§14). Only a walk that began at the
+recorded best moves `BestTick` (otherwise the recorded best is still live and
+unvisited); an empty recorded side is never overwritten with a frontier. A walk whose
+first tick is a recorded best it did not get from the client (worse than `start_tick`,
+or a frontier written in flight) checks that tick's bit in its word before reading any
+`Level` there — a bit-less tick outside the client's band is never read.
+
+**Deterministic pay-in (auth).** Every SAC `transfer(user → vault, amount)` carries
+`user.require_auth()` on its exact arguments, and the user's signed authorization tree
+is built at simulation. A pay-in that depended on the book (the netted "what I ended
+up spending") would therefore fail authorization on any race — the opposite of
+graceful degradation. So the taker's pay-in is the full escrow at the limit price
+(bid: `qty × limit_tick × tick_size` quote; ask: `qty × lot_size` base), knowable from
+the arguments alone; what the walk did not spend and did not rest flows back out of
+the vault, together with the taker's output net of fee, and the rested part stays as
+the order's escrow. Pay-ins are never netted against pay-outs. Per token the flush order
+is fixed: first what the vault already holds for certain (fills, and a settled order's
+proceeds and refund), then the pay-in, then the unspent part of this call's own pay-in
+— so a chained `route` pays a later leg with what an earlier leg bought, a `replace`
+needs no liquid duplicate of escrow it already holds, and the vault is never asked to
+front a user's own refund; the order depends on nothing but the call (`replace`: the
+full new escrow in; the old order's proceeds and refund out; `route` / `replace_batch`:
+sums of the same). Vault → user transfers need no user authorization, so they may vary
+freely.
 
 **`start_tick` validity, and "still crosses".** `start_tick` MUST lie in
 `[tick_min, tick_max)` — otherwise `BadStartTick`. Every in-band value is legal: one
@@ -606,8 +640,10 @@ would carry.) Replace never
 takes liquidity: it applies §9's conservative post-only check against recorded
 `BestTick` and fails `Crossed` instead. And it is atomic — the maker is never unquoted
 between the settlement and the re-rest, which a settle-then-place pair cannot
-guarantee. Escrow moves as a single *delta* (new escrow − refund − proceeds), netted
-per token.
+guarantee. The maker pays in the full new escrow (a function of the arguments, so the
+signed authorization holds whatever filled in flight — §8 "Deterministic pay-in") and
+the old order's proceeds and refund flow back out; per token, at most one transfer
+each way.
 
 **`replace_batch(items[])`** — ≤ `MAX_REPLACE_BATCH` items, settlement deltas netted
 in invocation memory, one transfer per token at the end. A full book refresh is one
@@ -638,9 +674,11 @@ declared as read-only and never conflict.
   `start_tick`, the crossed ticks, and the band and slot windows the client should
   declare. It MUST run the same walk code as `place` (same caps, same lazy-clear
   decisions, computed but not written) so that simulation and application diverge only
-  by what the book does in flight, never by logic; it also reports which declared
-  entries are archived, so the client knows which restores the transaction will pay
-  for (§14). Its exact return shape is an implementer decision (05 open questions).
+  by what the book does in flight, never by logic; and it returns the keys the
+  simulated execution touched, so the client can tell touched keys from padded-only
+  keys when it marks restores (§14). Archival itself is not observable from inside a
+  contract (an archived entry cannot be read); the client learns which of those keys
+  are archived from RPC. Return shape: 05 "Encoding decisions" and ADR-020.
 
 ### 12. Entry points, authentication, administration, cranks
 
@@ -723,7 +761,7 @@ The contract's output surface (per tx ≤ 16,384 bytes):
 | Event | Emitted by | Fields |
 |---|---|---|
 | `rested` | rest (§9), replace (§10) | `owner, nonce, side, tick, generation, seq` |
-| `filled` | walk (§8), one per crossed level | `side, tick, lots, quote` |
+| `filled` | walk (§8), one per crossed level | `side, tick, lots, quote` — `side` is the consumed level's (makers') side, as for `swept` |
 | `swept` | walk (§8) | `side, tick, generation` |
 | `settled` | settlement (§7), replace (§10) | `owner, nonce, filled_lots, refunded_lots` |
 | `top_changed` | walk (§8), rest (§9) | `side, old, new` |
@@ -752,8 +790,9 @@ slot windows: for each *set* level in the band, pages
 none — their queues are inline). On the taker's **own** side, for its possible rest:
 `Level(own_side, limit_tick)` (set or not — the rest rewrites or creates it),
 `TickWord(own_side, word(limit_tick))`, own-side `TickSummary` and `BestTick`,
-`Order(taker, nonce)`, and append pages `{page(tail_sim), +1, 0}`. Both vault balances
-and `FeeAccrual`. That list is exhaustive: a take-plus-rest place touches nothing else.
+`Order(taker, nonce)`, and append pages `{page(tail_sim), +1, 0}`. Both vault balances,
+the caller's own balance entries in both tokens (every transfer touches them), and
+both `FeeAccrual`s. That list is exhaustive: a take-plus-rest place touches nothing else.
 Band padding is required because a new level can appear at *any* tick inside the walk
 range; window padding is required because a concurrent take can move a head into
 pages, and a concurrent rest can move a tail across a page boundary. The band need not
@@ -767,8 +806,8 @@ transaction lists which archived entries to restore and pays their rent; an arch
 key that is declared but *not* listed costs only its footprint slot, and traps only if
 execution touches it. So: mark for restore exactly the archived entries simulation
 touched (a stale bit over an archived level, an archived word on the walk, an archived
-`Level` at the rest tick — `quote_place` reports them, §11) and pad every other
-archived key unmarked. Nothing can turn an unmarked archived key into a touched one in
+`Level` at the rest tick — `quote_place` returns the touched key set, §11, and RPC
+says which are archived) and pad every other archived key unmarked. Nothing can turn an unmarked archived key into a touched one in
 flight: the only way an archived `Level` re-enters the walk is a rest at that tick,
 which restores it first. Restore rent therefore lands only on entries the taker's own
 execution needs, once. A stale bit over an archived level costs one restore (~0.064
@@ -843,7 +882,7 @@ resource tests gate against these):
 | place — maximal take (32 levels, 32 distinct `TickWord` entries) | ~85 + pad | ~70 | ~22 KB |
 
 Worst-case write-byte arithmetic for the max sweep, so nobody trusts the table
-blindly: 32 Level (×384 B) + 32 TickWord (×256 B) + TickSummary + BestTick +
+blindly: 32 Level (×384 B) + 32 TickWord (×268 B) + TickSummary + BestTick +
 FeeAccrual + 2 vault balances + own-rest entries ≈ 12.3 + 8.2 + 0.3 + ~1.2 KB ≈
 **22 KB** and ~70 writes — within per-tx limits (400 entries / 200 writes / 132 KB)
 but **7.6% of a whole ledger's 286,720 write bytes**. Typical ops are the rest/settle
@@ -936,7 +975,7 @@ entries). Per-structure lifecycles are specified in Part I; the summary:
 | Vault SAC balances (§6) | the token contract's policy; touched by every settling op | auto-restore on touch; toucher pays (in practice never idle while a market is active) |
 
 Requirements: **never `del` a `Level`** (§2 — archival IS the garbage collector).
-Pages behind the head and `Order` on settle ARE deleted (their lifecycles are done).
+`Order` on settle IS deleted; pages wholly behind the head MAY be deleted (v1 leaves them: the stale-slot rule makes them unobservable, ADR-021).
 Temporary storage is allowed only for lossless-if-lost data (e.g., optional
 time-in-force expiry index) — never for funds-bearing state.
 
