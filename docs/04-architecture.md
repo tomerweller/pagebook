@@ -327,9 +327,10 @@ rewrite). Bits are cleared by sweeps — or lazily, on the walk (§8). `BestTick
 toward the book on rest and away from it on take; its **empty flag** is set only when a
 walk's `next_set_tick` finds no set bit on that side, and is cleared by any rest on
 that side (a rest onto an empty-flagged side takes `BestTick` regardless of how the
-stale recorded tick compares). A walk that finishes its quantity on a sweep leaves
-`BestTick` at the swept tick without scanning further — stale-better, which the
-contract allows (§8). 120-day TTL at creation/restore; auto-restore on touch.
+stale recorded tick compares). After a sweep the walk moves `BestTick` to the next set
+tick within `limit_tick`'s word, or to that word's frontier (a bit-less tick that is
+still never worse than the true best), or marks the side empty when that word is the
+band's last (§8). 120-day TTL at creation/restore; auto-restore on touch.
 Staleness is benign because the index carries no funds: a stale bit costs one extra
 step on the walk, and the place that lands on it clears it (§8). Archival is benign
 for the same reason: a word comes back on restore exactly as last written, and every
@@ -460,9 +461,9 @@ place(taker, market, side, limit_tick, qty_lots, start_tick, nonce, window, flag
       quote += lvl.open_lots * best * tick_size
       lvl.generation += 1; reset queue          # ONE small write; orders abandoned
       clear bit in TickWord(word(best)) [and TickSummary if word empties]
-      if qty_lots == 0: break                   # done: no scan past the last sweep (below)
-      best = next_set_tick(TickWord/TickSummary)               # bitmap walk, reads only
-      if none: set BestTick(opposite).empty; break
+      best = next_set_tick(bounded by word(limit_tick))        # bitmap walk, reads only (below)
+      if none: best = frontier(limit_tick) or, if word(limit_tick) is the band's last, mark empty
+      if qty_lots == 0 or none: break
     else:                                       # partial: advance head
       if head slot lies outside window[best]: break   # graceful stop, like a cap
       consume from head (skip tombstones; bounded by MAX_SLOTS_SCANNED and window)
@@ -478,14 +479,23 @@ place(taker, market, side, limit_tick, qty_lots, start_tick, nonce, window, flag
   update BestTick(opposite) if moved; emit filled/swept per level, top_changed if moved
 ```
 
-**No scan past the last sweep.** When the final sweep exhausts the taker's quantity the
-walk stops *without* calling `next_set_tick`: `BestTick(opposite)` is left at the
-just-swept tick, which is stale-better and legal under invariant 3 (the next walk reads
-that `Level`, sees `open_lots == 0`, and moves on at the cost of one crossed level).
-Scanning would read whichever `TickWord` holds the next set bit — possibly far past
-`pad_end` — and turn a completed take into a footprint trap that anyone could arm for
-~0.09 XLM by resting one min-size order at a distant tick. Consequently the band never
-needs to extend beyond the deepest level a take can *consume* (§14).
+**The bounded scan, and where `BestTick` stands after a sweep.** `next_set_tick` never
+reads a `TickWord` beyond `limit_tick`'s word — the words from `start_tick`'s to
+`limit_tick`'s are part of every declared pad (§14) — so the scan cannot trap, and it
+runs after every sweep, the last one included. Its outcomes: the next set tick (the
+walk continues, or, if the quantity is done, `BestTick(opposite)` moves there); nothing
+set up to the end of `limit_tick`'s word, in which case `BestTick(opposite)` stands on
+that word's *frontier* (its last tick in the walk direction — no bit, no level, and
+never worse than the true best, which lies beyond) so that the other side's post-only
+orders and replaces are not false-rejected by a swept tick; or, when `limit_tick`'s word
+is the band's last word, the side is marked empty. Scanning past the limit's word would
+read whichever `TickWord` holds the next set bit — possibly far past `pad_end` — and
+turn a completed take into a footprint trap that anyone could arm for ~0.09 XLM by
+resting one min-size order at a distant tick. Consequently the band never needs to
+extend beyond the deepest level a take can *consume* plus the words through
+`limit_tick`'s (§14). Only a walk that began at the recorded best moves `BestTick`
+(otherwise the recorded best is still live and unvisited); an empty recorded side is
+never overwritten with a frontier.
 
 **`start_tick` validity, and "still crosses".** `start_tick` MUST lie in
 `[tick_min, tick_max)` — otherwise `BadStartTick`. Every in-band value is legal: one

@@ -69,10 +69,16 @@ two small deviations from the plan that the fixes required.
   `cfg(test)` so every key the contract loads or saves is recorded; the inclusion
   test `keys_touched(place) ⊆ declared` therefore covers the whole invocation, not
   only the walk. This is rung 2 of ADR-016's ladder for reads, met.
-- **`BestTick` empty flag.** With the bounded scan the walk marks a side empty
-  only when the scan reached the band's last word; otherwise it leaves BestTick on
-  the last swept tick (stale-better, allowed by invariant 3). Rests still clear the
-  flag.
+- **`BestTick` after a sweep: next set tick, frontier, or empty.** §8 had said the
+  walk stops without scanning after the last sweep and leaves BestTick on the swept
+  tick. With the scan bounded to `limit_tick`'s word (declared by every pad) it
+  cannot trap, so it runs after every sweep, the last one included; on "nothing up
+  to the end of limit's word" BestTick stands on that word's frontier (last tick in
+  the walk direction: no bit, never worse than the true best) rather than on the
+  swept tick, which had been false-rejecting the other side's post-only orders and
+  replaces until liquidity reappeared nearby; the side is marked empty only when
+  the scan reached the band's last word; an empty recorded side is never overwritten
+  with a frontier. §5 and §8 are updated.
 - **`TickWord` / `TickSummary` size.** §5's table now shows the measured 268 B XDR
   (257 B payload) per ADR-017 instead of the earlier 256 B target.
 
