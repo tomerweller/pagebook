@@ -126,9 +126,12 @@ These are the main limits and behaviors behind the design:
   footprint entries plus padding, 72 writes, and about 27 KB of writes.
 
 The repository tests cover matching, settlement, routes, pages, size budgets,
-footprints, TTL behavior in the SDK test host, and conservation properties. The
-full live-host restore behavior and resource-fee measurements still need
-real-network validation.
+footprints, resource-fee gates, TTL behavior in the SDK test host, and
+conservation properties. A testnet deployment
+(`CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO`, market 0 on two test
+assets) has run real rests, takes, settles and a multi-account soak through the
+padding protocol (`tools/soak/`, ADR-025). Live-host restore behavior for
+archived entries still needs its scheduled testnet check (ADR-025 runbook).
 
 ## Repository layout
 
@@ -137,6 +140,7 @@ real-network validation.
 | `contracts/pagebook/` | Soroban contract modules and tests |
 | `crates/pagebook-types/` | Shared contract types, packed encodings, constants, and key helpers |
 | `crates/pagebook-client/` | Client-side key and footprint helpers |
+| `tools/soak/` | Testnet soak driver: padded footprints through the stellar CLI, outcome classification (ADR-025) |
 | `docs/04-architecture.md` | Full technical specification |
 | `docs/index.html` | Visual companion to the technical specification, rendered at [blob.tomerweller.com/pagebook](https://blob.tomerweller.com/pagebook/) |
 | `docs/03-soroban-constraints.md` | Soroban storage, footprint, and resource background |

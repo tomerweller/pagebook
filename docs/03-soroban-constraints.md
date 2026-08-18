@@ -87,8 +87,11 @@ put funds-bearing state here), **persistent** (archived at TTL expiry, restorabl
 
 Total tx fee = instructions + write entries + write bytes + rent + events + tx size.
 Post-P23, **live-state reads are free** (in-memory; `fee_disk_read_*` applies only to
-archived/classic entries) — declared-but-untouched footprint keys cost only their tx
-bytes (~300 stroops per padded key).
+archived/classic entries) — a declared-but-untouched footprint key that does not
+exist costs only its tx bytes (~300 stroops); a read-write key also pays the write-entry
+fee (2,500 stroops) and, if the entry exists, its write bytes as if written, whether or
+not the invocation touches it (measured on testnet, ADR-025). Read-only existing keys
+are free.
 
 | Component | Rate (stroops) |
 |---|---|

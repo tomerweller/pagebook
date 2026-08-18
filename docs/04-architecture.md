@@ -799,16 +799,26 @@ slot windows: for each *set* level in the band, pages
 none, their queues are inline). On the taker's **own** side, for its possible rest:
 `Level(own_side, limit_tick)` (set or not, the rest rewrites or creates it),
 `TickWord(own_side, word(limit_tick))`, own-side `TickSummary` and `BestTick`,
-`Order(taker, nonce)`, and append pages `{page(tail_sim), +1, 0}`. Both vault balances,
-the caller's own balance entries in both tokens (every transfer touches them), and
-both `FeeAccrual`s. That list is exhaustive: a take-plus-rest place touches nothing else.
-Band padding is required because a new level can appear at *any* tick inside the walk
+`Order(taker, nonce)`, and append pages `{page(tail_sim), +1, 0}`. For **both** tokens
+(not only the one simulation happened to move): the SAC contract instance, the vault's
+SAC balance, and the caller's own balance entry (a trustline for a classic asset), plus
+both `FeeAccrual`s. That list is exhaustive: a take-plus-rest place touches nothing
+else. Two rules the testnet soak made explicit (ADR-025): every band key is declared
+**read-write**, and a key simulation listed as read-only (an empty level, a word with
+no bit) is *promoted* to read-write, because the book may move it in flight and the
+walk would then write it; and the declared resources need headroom over the simulated
+ones (instructions for the extra keys, write bytes for band keys that exist, disk-read
+bytes for classic entries), since simulation budgets exactly what it touched. Band
+padding is required because a new level can appear at *any* tick inside the walk
 range; window padding is required because a concurrent take can move a head into
 pages, and a concurrent rest can move a tail across a page boundary. The band need not
 extend past the deepest level the take can *consume*: the walk never scans for the
-next set tick once its quantity is done (§8). For a `route`, split the 400-entry
-footprint across legs' bands. Padding is cheap (§17): pad generously; the 400-entry
-cap is the constraint, not the fee.
+next set tick once its quantity is done (§8). For a `route`, split the footprint across
+legs' bands. Padding is cheap in fees but not free in capacity (§17): a read-write key
+pays the write-entry fee (~2,500 stroops) whether or not it is written, an *existing*
+read-write key is charged its write bytes as if written, and both count against the
+per-transaction caps (400 entries, 200 read-write entries, 132 KB) and the ledger's
+write budget. Pad the band the book can plausibly move into, not the maximum.
 
 **Archived keys in the pad.** P23 restore is opt-in per footprint entry: the
 transaction lists which archived entries to restore and pays their rent; an archived
@@ -847,9 +857,11 @@ band deep enough to be safe may not fit in the 400-entry footprint; clients trad
 `pad_end` against trap probability. This residual is inherent and far smaller than the
 whole-book race in 02, but it is not zero, do not claim otherwise.
 
-Declared-but-untouched entries are free apart from footprint slots, live or archived,
-provided archived ones are not marked for restore (§14). A *touched* archived entry
-costs its restore rent, and only entries simulation touched are marked. Per-transaction
+Declared-but-untouched entries cost no rent and no restore, live or archived, provided
+archived ones are not marked for restore (§14); a *touched* archived entry costs its
+restore rent, and only entries simulation touched are marked. They are not free of
+fees or capacity: a read-write key pays the write-entry fee, and one that exists is
+charged its write bytes as if written (measured on testnet, ADR-025). Per-transaction
 limits: 400 footprint entries, 200 writes, 132 KB written; per-ledger: 286,720 write
 bytes (03).
 
@@ -982,11 +994,16 @@ Readings, in design terms:
   then binds: at ~28 KB per same-tick refresh the *network* fits ~10 per ledger, and
   ~6 when every quote changes tick (44 KB). Full analysis and SDEX comparison in
   ADR-005.
-- **Padding is negligible:** ~300 stroops (0.00003 XLM) per declared-but-untouched
-  key, live or archived-and-unmarked, a 100-key band costs ~0.003 XLM. Pad
-  generously; the budget constraint is the 400-entry cap, not the fee. The exception
-  is an archived entry the walk *touches* (a stale bit over an archived level): that
-  one is restored at ~0.067 XLM, once, and simulation shows it (§14).
+- **Padding is cheap in fees, not in capacity.** A declared-but-untouched key that
+  does not exist costs its tx bytes (~300 stroops) plus, if read-write, the
+  write-entry fee (2,500 stroops, 0.00025 XLM); one that exists and is read-write is
+  also charged its write bytes as if written (~350 stroops for a `Level`); a 100-key
+  band is therefore ~0.03 XLM, still small. What it is not small in is capacity: each
+  read-write key is one of the transaction's 200 and the ledger's 1,000 write entries,
+  and each existing one is write bytes against 132 KB / 286,720 B (ADR-025). The
+  exception in rent terms is an archived entry the walk *touches* (a stale bit over an
+  archived level): that one is restored at ~0.067 XLM, once, and simulation shows it
+  (§14).
 - **Level rent is paid once per tick per ~120 days of activity**, by whoever
   creates/restores it (`Level`s are never deleted, so re-activating a swept tick is a
   rewrite, not a create).
