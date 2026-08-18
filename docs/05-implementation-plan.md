@@ -3,7 +3,8 @@
 *Revised after adversarial reviews — see `decisions/001-adversarial-review-round-1.md`,
 `decisions/003-adversarial-review-round-2-resolutions.md`, and
 `decisions/012-adversarial-review-round-3-resolutions.md`; pre-implementation
-decisions in `decisions/014-implementation-plan-readiness.md`.*
+decisions in `decisions/014-implementation-plan-readiness.md` and
+`decisions/015-plan-review-for-non-interactive-build.md`.*
 
 ## Workspace layout
 
@@ -18,7 +19,7 @@ pagebook/
 │           ├── market.rs      # market create/config, quantization + §0.3 bound checks
 │           ├── keys.rs        # DataKey enum (contracttype, full-word variants) + TTL policy
 │           ├── level.rs       # Level/LevelPage packed encoding, positional queue, resets, settlement state machine
-│           ├── bitmap.rs      # TickWord/TickSummary ops: set/clear/next_set_tick(at_or_after)
+│           ├── bitmap.rs      # TickWord/TickSummary ops: set/clear/next_set_tick(from, direction) — asks ascend, bids descend
 │           ├── matching.rs    # matching loop (place), sweep/partial, caps + windows, best maintenance
 │           ├── settle.rs      # vault SAC transfers, fee accrual (ceil), route netting
 │           ├── events.rs      # typed event emitters
@@ -51,7 +52,7 @@ pub trait PageBook {
     // ---- admin (admin.require_auth() on all four) ----
     fn set_admin(e: Env, new_admin: Address);
     fn set_fee_recipient(e: Env, recipient: Address);
-    fn set_paused(e: Env, paused: bool);       // pause blocks place/replace; never settle
+    fn set_paused(e: Env, paused: bool);       // pause blocks place/route/replace; never settle or collect_fees
     fn upgrade(e: Env, wasm_hash: BytesN<32>);
 
     /// Retune a market's mutable caps as network limits move (SLPs; architecture §12,
@@ -98,8 +99,10 @@ pub trait PageBook {
     fn replace(e: Env, owner: Address, market: MarketId, nonce: u64, is_bid: bool,
                tick: u32, qty_lots: u64, window: SlotWindow) -> (i128, i128);
 
-    /// Batched replace: items.len() ≤ MAX_REPLACE_BATCH, settlement deltas netted,
-    /// one transfer per token. A full book refresh is one transaction.
+    /// Batched replace: items.len() ≤ MAX_REPLACE_BATCH (else BatchTooLarge), settlement
+    /// deltas netted, one transfer per token. A full book refresh is one transaction.
+    /// ReplaceItem = { nonce: u64, is_bid: bool, tick: u32, qty_lots: u64, window: SlotWindow }
+    /// — `replace`'s arguments minus owner/market.
     fn replace_batch(e: Env, owner: Address, market: MarketId, items: Vec<ReplaceItem>)
         -> Vec<(i128, i128)>;
 
@@ -126,9 +129,49 @@ Error taxonomy (`contracterror`): `NotAdmin, Paused, SameToken (base == quote),
 UnknownMarket, BadQuantization, TickOutOfBand (also tick_max > 2^22 at creation),
 BadStartTick, QtyOutOfBounds, Crossed (post_only), Unfilled (FoK), LevelFull, RetryRest
 (append outside declared window), OrderExists (live nonce), NotOwner, UnknownOrder,
-Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs`. There is no
-`MarketExists`: the schema has no pair index and duplicate pairs are allowed
-(architecture §0.1; ADR-012).
+Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs, BadWindow
+(`consume.len() > MAX_LEVELS_CROSSED` or a malformed page range), BatchTooLarge
+(`replace_batch` items > MAX_REPLACE_BATCH), TokenNotAuthorized (`create_market`: the
+SAC reports the vault unauthorized)`. Error codes are the declaration order
+above, starting at 1, and are stable across upgrades (append only). `BadStartTick` is
+defined in architecture §8 (`start_tick` outside `[tick_min, tick_max)`; every in-band
+value is legal). There is no `MarketExists`: the schema has no pair index and duplicate
+pairs are allowed (architecture §0.1; ADR-012).
+
+## Encoding decisions (defaults the builder uses without asking — ADR-015)
+
+Anything not listed here follows the architecture doc; anything listed here is a
+default that a decision note may change once measured.
+
+- **`MarketId`** is `u32`, assigned from `Config`'s counter starting at 0.
+- **`DataKey`** is a `#[contracttype]` enum with full-word variants and tuple fields in
+  the order the architecture writes the key: `Config`, `Market(u32)`,
+  `Level(u32, bool, u32)`, `LevelPage(u32, bool, u32, u32)`, `Order(u32, Address, u64)`,
+  `FeeAccrual(u32, Address)`, `BestTick(u32, bool)`, `TickSummary(u32, bool)`,
+  `TickWord(u32, bool, u32)`; `bool` is `is_bid`.
+- **Packed layouts** (little-endian, leading `version: u8 = 1`), field order exactly as
+  the architecture's contents columns: `Level` = version, generation u32, head_seq u32,
+  tail_seq u32, head_consumed_lots u64, open_lots u64, then `INLINE_SLOTS` × qty u64;
+  `LevelPage` = version, then `PAGE_SLOTS` × qty u64; `BestTick` = version, flags u8
+  (bit 0 = empty), tick u32; `TickSummary` / `TickWord` = version, then 256 bytes of
+  bitmap, bit `i` = byte `i / 8`, mask `1 << (i % 8)`. `Order`, `Market`, `Config`,
+  `FeeAccrual` are `#[contracttype]` structs (small; the size tests decide if any must
+  be packed).
+- **`page(seq)`** for an inline seq is 0; the append window for an inline tail is
+  `{0, 1}` — a `PageRange` is never empty.
+- **Events**: topics = `(symbol name, market_id)`; data = the remaining fields from
+  architecture §13 as a tuple in the listed order. Byte assertions count topics + data.
+- **`keepalive`** extends the instance and code TTLs to the 180-day maximum
+  unconditionally (no threshold logic; the crank is idempotent and cheap when nothing
+  is due).
+- **`authorized(vault)`**: `create_market` calls the SAC's `authorized(pagebook_address)`
+  on both tokens through the SDK token client and fails `TokenNotAuthorized` (add to the
+  taxonomy) if either returns false.
+- **`place` return** when nothing rests and nothing fills: `(false, 0, 0)`; `settle` of a
+  fully filled order returns `(paid, 0)`; `route` returns one `LegResult` per leg in
+  order and fails atomically, so partial legs never surface.
+- **`quote_place` on an empty-flagged side** returns `start_tick = limit_tick` and a
+  one-key band (architecture §8).
 
 ## Order of work
 
@@ -142,7 +185,23 @@ Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs`. Ther
   helper that returns the set of keys read and written plus write bytes. M2 and M4
   assert against it as described under Testing strategy; if exact key sets are not
   reachable, fall back to entry-count and write-byte upper bounds (CLAUDE.md) and
-  record the fallback in a decision note.
+  record the fallback in a decision note. **Fallback ladder for the spike (in order;
+  stop at the first rung that works, and record which):** (1) read the recorded
+  footprint as a key set from the test host; (2) writes — diff the test-env ledger
+  snapshot before/after the call and XDR-serialize the changed entries for write
+  bytes; reads — a `Mode::Trace` variant of the shared walk that records every key it
+  visits into a test-only buffer; (3) entry counts and write-byte upper bounds only.
+  Rung 3 cannot express `recorded ⊆ declared`, so if reached, the M2 padding suite is
+  marked partial in the decision note, not "done". The same spike confirms whether the
+  test env can **advance ledgers past a TTL and observe expiry/restore** and whether
+  TTL values are readable; if not, the two archival tests move into the M4 soak and
+  only TTL-value assertions stay in-repo. **Testnet procedure** (M0 deploy, M4 gates
+  and soak): `stellar keys generate --network testnet` for a builder identity, fund it
+  via Friendbot (public HTTP faucet), and keep the RPC URL and key alias in an
+  uncommitted `.stellar/` (already git-ignored). If the network is unreachable from
+  the build sandbox, deploy is skipped and every testnet-only gate is marked *blocked*
+  in a decision note; the in-repo fee gates still run from counted writes and bytes at
+  the rates §17 records.
 - **M1 — single level end-to-end.** Constructor/admin/pause skeleton + auth tests
   (malicious-caller per entry point); market creation with the full §0.3 bound checks
   (property tests at each maximum: max order, full level, route headroom, fee cap);
@@ -178,7 +237,8 @@ Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs`. Ther
   FoK/no_rest. Property tests (below), plus the **sim-to-apply race tests** — the
   padding rule gets coverage here, not first on testnet: simulate a place, mutate the
   book (better-priced rest; new level inside the band; level emptied; **head advanced
-  into pages; tail pushed across a page boundary; generation bumped by a sweep**),
+  into pages; tail pushed across a page boundary; tail pushed to `LEVEL_CAP` —
+  `LevelFull`, not `RetryRest`; generation bumped by a sweep**),
   re-apply with the stale `start_tick`/band/window and assert the defined outcome
   (graceful refund or `RetryRest`; a trap only when the walk passes the band); and a
   footprint assertion that a resting place's simulated footprint contains its own-side
@@ -189,9 +249,11 @@ Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs`. Ther
   (ceil) + `collect_fees` to recipient; `route` with in-memory netting, shared caps
   across legs, and event-byte assertions at the route worst case; `replace_batch`
   with netted settlement and the `MAX_REPLACE_BATCH` bound (fee gate: a 40-quote
-  refresh stays ~0.03 XLM with zero rent — ADR-005's headline number). `PlaceLeg` /
-  `LegResult` shapes are decided here (decision note): a leg is `place`'s arguments
-  minus `taker`; a result is `place`'s return tuple.
+  refresh: assert ~90 writes and **zero rent-bearing creates** in-repo; the ~0.03 XLM
+  figure — ADR-005's headline — is measured in M4). Paused `route` fails `Paused`
+  (architecture §12). `PlaceLeg` / `LegResult` shapes are decided here (decision
+  note): a leg is `place`'s arguments minus `taker`; a result is `place`'s return
+  tuple.
 - **M4 — resource hardening.** Build the **worst-case state-transition matrix** first
   (per op: entries touched × bytes, incl. bitmap dispersal, windows, page cleanup, TTL
   bumps, SAC entries), then footprint-count and write-byte assertions per op against
@@ -212,19 +274,36 @@ Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs`. Ther
   success and no restore charge; then one that touches it unmarked — expect the
   archived-entry failure; then marked — expect success and the rent. Architecture §14's
   "pad archived keys for free" rests on this; if the host behaves otherwise, §14/§15/§17
-  need a decision note before M5.
+  need a decision note before M5. **M4 is done when:** the footprint/write-byte gates
+  pass in-repo; the fee gates pass within tolerance (or are marked blocked per M0);
+  the three restore-opt-in transactions behave as stated; and the bot has run ≥ 2,000
+  ledgers (~3 hours) with the spammer and rest storm active and no trap other than a
+  walk past `pad_end`, with every `RetryRest` re-simulated and landed.
 - **M5 — client SDK sketch.** Key computation + padding helper (`quote_place` →
   `start_tick` + band + slot windows + nonce management), since padding is a
   client-side responsibility; wraps the M2 in-repo helper and adds the
-  archived-key marking rule (§14) and nonce policy (open question 7).
+  archived-key marking rule (§14) and nonce policy (open question 7). **Deliverable:**
+  a `crates/pagebook-client` crate (Rust, `std`) exposing `keys_for(place | replace |
+  settle)`, `pad(quote_result, pad_end) -> (declared keys, SlotWindow, restore
+  marks)`, and a nonce allocator, with unit tests that round-trip against the M2
+  helper on the same fixtures; no TypeScript in v1.
 
 ## Testing strategy
 
 - **Property/fuzz (proptest):** random op sequences (place/replace/settle interleavings) vs
-  a naive in-memory reference book. Assert: identical takes (price-time priority scoped
-  by `start_tick`), conservation, settlement path-independence (invariant 4), bitmap/BestTick
-  coherence (weakened invariant 3), `open_lots` (invariant 2 with stale-slot
-  exclusion), slot validity (invariant 9), **book never crossed (invariant 8)**.
+  a naive in-memory reference book. **The reference models observable outcomes only** —
+  fills, payouts, refunds, price-time priority scoped by `start_tick`, `replace ≡
+  settle+place` — not bitmaps, generations, tombstones, or pages; those are checked
+  against the real book by the invariant assertions below. Property runs use
+  **non-binding caps** (`MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED` set above any
+  sequence's needs) and inline-only queues by default, so the reference never has to
+  predict truncation; cap/window/page truncation is covered by the targeted adversarial
+  shapes, not by proptest. Assert: identical takes, conservation, settlement
+  path-independence (invariant 4), bitmap/BestTick coherence (weakened invariant 3),
+  `open_lots` (invariant 2 with stale-slot exclusion), slot validity (invariant 9),
+  **book never crossed (invariant 8)**. The contract crate is `no_std`; proptest runs
+  in the test target only (`std` under `cfg(test)`), driving the contract through the
+  SDK test env.
 - **Differential settlement:** for every random history, settle every order at the end and
   assert Σ payouts + fees == Σ deposits exactly (fee dust included — the ceil is the
   only rounding; any other discrepancy is a bug).

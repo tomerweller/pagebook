@@ -81,7 +81,9 @@ the floor is the dust-order defense, the ceiling is half the overflow proof.
 `FeeAccrual(token)` accrues in i128; its ceiling is total token supply, which SAC bounds
 below i128 by construction. Config constants that bound loops but are not per-market:
 `MAX_ROUTE_LEGS` (target 4) and `MAX_REPLACE_BATCH` (target 64: `replace` emits two
-events per item, ~100 B each, against the 16,384-byte event budget, §13).
+events per item, ~100 B each, against the 16,384-byte event budget, §13 — for a batch
+whose items sit on *dispersed* levels the 400-entry footprint cap binds first, at
+roughly 5–6 entries per item; clients batch to fit, the constant is the ceiling).
 
 ### 0.4 Actors
 
@@ -142,7 +144,11 @@ admin-governed, exact at all times.
 **Mutability classes.** Market variables split by what may ever change (full analysis
 in `06-slp-sensitivity.md`). Frozen forever: quantization (`lot_size`, `tick_size`,
 tick band) and queue geometry (`INLINE_SLOTS`, `PAGE_SLOTS`) — slot location and price
-are pure functions of them, so changing them corrupts live state. Retunable via
+are pure functions of them, so changing them corrupts live state. Geometry is not a
+`create_market` parameter: `INLINE_SLOTS` and `PAGE_SLOTS` are contract-wide
+compile-time constants, copied into `Market` at creation for introspection and so a
+future wasm with different constants can still decode old markets; `MAX_PAGES` starts
+at the contract constant and is retunable per market. Retunable via
 `set_market_caps` (§12): `MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED`, `taker_fee_bps`
 (≤ `FEE_BPS_MAX`), `min_order_lots`/`max_order_lots`, and `MAX_PAGES` (raise-only —
 existing seqs may live beyond a lowered value). `Config`'s fields change only through
@@ -464,7 +470,7 @@ place(taker, market, side, limit_tick, qty_lots, start_tick, nonce, window, flag
       quote += consumed * best * tick_size      # ONE small write; loop ends
   if qty_lots > 0:
     fill_or_kill ⇒ fail Unfilled; post_only + crossed ⇒ fail Crossed
-    if no_rest, or loop terminated by a cap or window edge while the book still crosses limit_tick:
+    if no_rest, or the recorded BestTick(opposite) still crosses limit_tick:
       refund remainder                          # NEVER rest a crossing order (inv. 8)
     else: rest remainder at limit_tick (append must land in window — §9)
   transfer: SAC moves taker↔vault (base, quote)
@@ -480,6 +486,19 @@ Scanning would read whichever `TickWord` holds the next set bit — possibly far
 `pad_end` — and turn a completed take into a footprint trap that anyone could arm for
 ~0.09 XLM by resting one min-size order at a distant tick. Consequently the band never
 needs to extend beyond the deepest level a take can *consume* (§14).
+
+**`start_tick` validity, and "still crosses".** `start_tick` MUST lie in
+`[tick_min, tick_max)` — otherwise `BadStartTick`. Every in-band value is legal: one
+better than the recorded best is clamped by `worse_of`; one worse than `limit_tick`
+makes the walk a no-op (a pure rest); one past the book's end simply finds no set bit.
+On an empty-flagged opposite side `worse_of(empty, start_tick) = start_tick` and the
+walk proceeds normally (a rest may have arrived in flight); `quote_place` returns
+`start_tick = limit_tick` and a one-key band in that case. "The book still crosses
+`limit_tick`" is decided from the **recorded `BestTick(opposite)` as it stands after
+this walk's own updates** — never by reading further levels: a rest that arrived at a
+price better than `start_tick` is invisible to the walk (invariant 5) but did move
+`BestTick`, so it is exactly what this check catches; the remainder is refunded, not
+rested, and the book stays uncrossed (invariant 8).
 
 **Degradation: the bounded tombstone scan.** Tombstones (§2) are skipped when the head
 advances, but the scan is bounded: a place scans at most `MAX_SLOTS_SCANNED` slots
