@@ -16,3 +16,4 @@ pagebook-types = { workspace = true }
 soroban-sdk = { workspace = true, features = ["testutils"] }
 pagebook-types = { workspace = true, features = ["testutils"] }
 proptest = "1"
+pagebook-client = { workspace = true }

@@ -1,7 +1,10 @@
 //! PageBook client helper (05 M5): key computation and the padding protocol of
 //! architecture §14. Pure functions over the contract's `quote_place` output;
 //! the SDK that wraps this resolves `ClientKey`s to ledger keys, adds archived
-//! flags from RPC (`getLedgerEntries`), and assembles the footprint.
+//! flags from RPC (`getLedgerEntries`), and LAYERS the result on the
+//! simulation footprint: `pad()` names the PageBook and balance entries the
+//! book can move between simulation and inclusion; the simulation footprint
+//! already carries the fixed entries (PageBook and SAC instances/code).
 
 use pagebook_types::{page, word_of, MarketId};
 

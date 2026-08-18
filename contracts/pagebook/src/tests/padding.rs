@@ -596,3 +596,103 @@ fn race_frontier_written_in_flight_stays_inside_declared_keys() {
     let extra = undeclared(&touched, &declared);
     assert!(extra.is_empty(), "undeclared keys touched: {extra:?}");
 }
+
+/// The shipped client `pad()` and the in-repo `declare_place` must declare the
+/// same PageBook keys (05 M5: the client wraps the M2 helper). Compared by
+/// shape (variant + numeric fields; addresses are opaque on the client side).
+#[test]
+fn client_pad_matches_in_repo_declare_place() {
+    use pagebook_client::{pad, ClientKey, CrossedLevel as CCross, Quoted};
+    let h = setup();
+    let maker = Address::generate(&h.env);
+    for n in 1..=34u64 {
+        rest_ask(&h, &maker, 20, 1, n); // head will sit in page 0 after 33 takes
+    }
+    rest_ask(&h, &maker, 23, 2, 40);
+    let t = Address::generate(&h.env);
+    mint(&h, &h.quote, &t, 1_000_000);
+    h.client().place(
+        &t,
+        &h.market,
+        &true,
+        &20,
+        &33,
+        &20,
+        &1,
+        &window(&h),
+        &no_rest(),
+    );
+    let taker = Address::generate(&h.env);
+    let (q, declared, win) = sim_bid(&h, &taker, 9, 25, 5, 27);
+
+    let cq = Quoted {
+        market: h.market,
+        own_side: true,
+        limit_tick: 25,
+        start_tick: q.start_tick,
+        crossed: q
+            .crossed
+            .iter()
+            .map(|c| CCross {
+                tick: c.tick,
+                head_seq: c.head_seq,
+                open_lots: c.open_lots,
+            })
+            .collect(),
+        tail_seq: q.tail_seq,
+        taker: [1; 32],
+        nonce: 9,
+        base: [2; 32],
+        quote: [3; 32],
+    };
+    let out = pad(&cq, 27);
+
+    fn shape_d(k: &DataKey) -> std::string::String {
+        match k {
+            DataKey::Config => "Config".into(),
+            DataKey::Market(m) => std::format!("Market({m})"),
+            DataKey::Level(m, s, t) => std::format!("Level({m},{s},{t})"),
+            DataKey::LevelPage(m, s, t, p) => std::format!("LevelPage({m},{s},{t},{p})"),
+            DataKey::Order(m, _, n) => std::format!("Order({m},_,{n})"),
+            DataKey::FeeAccrual(m, _) => std::format!("FeeAccrual({m},_)"),
+            DataKey::BestTick(m, s) => std::format!("BestTick({m},{s})"),
+            DataKey::TickSummary(m, s) => std::format!("TickSummary({m},{s})"),
+            DataKey::TickWord(m, s, w) => std::format!("TickWord({m},{s},{w})"),
+        }
+    }
+    fn shape_c(k: &ClientKey) -> Option<std::string::String> {
+        Some(match k {
+            ClientKey::Config => "Config".into(),
+            ClientKey::Market(m) => std::format!("Market({m})"),
+            ClientKey::Level(m, s, t) => std::format!("Level({m},{s},{t})"),
+            ClientKey::LevelPage(m, s, t, p) => std::format!("LevelPage({m},{s},{t},{p})"),
+            ClientKey::Order(m, _, n) => std::format!("Order({m},_,{n})"),
+            ClientKey::FeeAccrual(m, _) => std::format!("FeeAccrual({m},_)"),
+            ClientKey::BestTick(m, s) => std::format!("BestTick({m},{s})"),
+            ClientKey::TickSummary(m, s) => std::format!("TickSummary({m},{s})"),
+            ClientKey::TickWord(m, s, w) => std::format!("TickWord({m},{s},{w})"),
+            ClientKey::VaultBalance(_) | ClientKey::UserBalance(_) => return None,
+        })
+    }
+    let mut a: Vec<_> = declared.iter().map(shape_d).collect();
+    let mut b: Vec<_> = out.keys.iter().filter_map(shape_c).collect();
+    a.sort();
+    a.dedup();
+    b.sort();
+    b.dedup();
+    assert_eq!(a, b, "client pad() and in-repo declare_place() disagree");
+    // and the windows agree
+    assert_eq!(out.window.append.first, win.append.first);
+    assert_eq!(out.window.append.last, win.append.last);
+    assert_eq!(out.window.consume.len(), win.consume.len() as usize);
+    for (i, (tick, r)) in out.window.consume.iter().enumerate() {
+        let w = win.consume.get(i as u32).unwrap();
+        assert_eq!(
+            (*tick, r.first, r.last),
+            (w.tick, w.pages.first, w.pages.last)
+        );
+    }
+    // both include vault + user balances on the client side
+    assert!(out.keys.contains(&ClientKey::VaultBalance([2; 32])));
+    assert!(out.keys.contains(&ClientKey::UserBalance([3; 32])));
+}

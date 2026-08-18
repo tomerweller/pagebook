@@ -69,6 +69,14 @@ findings below are fixed on the branch.
     mismatch in a stored `Market` was silently misread.** All fixed; several
     no-op tests strengthened; `Cargo.lock` tracked; CI builds the wasm target.
 
+14. **Page deletion behind the head is not implemented** (§2 says MAY, §18 said
+    ARE). v1 leaves pages in place: invariant 9 (stale-slot rule) makes their
+    contents unobservable and the M3 tests cover the reuse path. §18 now says MAY.
+15. **Route budget** is the minimum of every leg market's caps, fixed before the
+    first leg runs (it was clamped as legs loaded). **`create_market` /
+    `set_market_caps` use `require_admin`** (instance TTL bump). The client
+    `pad()` is checked against the in-repo `declare_place` by a parity test.
+
 ## Checked and found sound (by the reviewers)
 
 §7 settlement rows and `open_lots` accounting; escrow versus payout per token; the

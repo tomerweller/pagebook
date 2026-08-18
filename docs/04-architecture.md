@@ -975,7 +975,7 @@ entries). Per-structure lifecycles are specified in Part I; the summary:
 | Vault SAC balances (§6) | the token contract's policy; touched by every settling op | auto-restore on touch; toucher pays (in practice never idle while a market is active) |
 
 Requirements: **never `del` a `Level`** (§2 — archival IS the garbage collector).
-Pages behind the head and `Order` on settle ARE deleted (their lifecycles are done).
+`Order` on settle IS deleted; pages wholly behind the head MAY be deleted (v1 leaves them: the stale-slot rule makes them unobservable, ADR-021).
 Temporary storage is allowed only for lossless-if-lost data (e.g., optional
 time-in-force expiry index) — never for funds-bearing state.
 

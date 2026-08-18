@@ -223,8 +223,8 @@ fn settle_does_not_write_instance() {
 
 // ---------------------------------------------------------------------------
 // Per-entry-point resource gates (architecture §17, ADR-021). Each gate is the
-// measured value at calibration plus a small slack (+2 in-memory read entries,
-// +1 write entry) so any regression that adds a storage access shows up; the
+// measured value at calibration plus a small slack (one or two in-memory read
+// entries, one write entry) so any regression that adds a storage access shows up; the
 // §17 rows are the design ceilings and every gate sits under them. Every
 // assertion prints the measured numbers.
 // ---------------------------------------------------------------------------

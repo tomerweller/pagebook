@@ -172,21 +172,32 @@ impl PageBook {
         }
         let mut out = soroban_sdk::Vec::new(&env);
         let mut net = settle::Netting::new(&env);
+        // One budget for the whole route: the minimum of every leg market's caps,
+        // fixed before the first leg runs (architecture §8, invariant 7).
+        const LEGS: usize = pagebook_types::MAX_ROUTE_LEGS as usize;
+        let mut markets: [Option<pagebook_types::Market>; LEGS] = [const { None }; LEGS];
         let mut budget: Option<matching::Budget> = None;
-        for leg in legs.iter() {
+        for (i, leg) in legs.iter().enumerate() {
             let m = store::load_market(&env, leg.market);
-            let b = match budget.as_mut() {
-                Some(b) => {
-                    b.clamp_to(&m);
-                    b
-                }
-                None => budget.insert(matching::Budget::from_market(&m)),
-            };
+            match budget.as_mut() {
+                Some(b) => b.clamp_to(&m),
+                None => budget = Some(matching::Budget::from_market(&m)),
+            }
+            markets[i] = Some(m);
+        }
+        let mut b = budget.unwrap_or(matching::Budget {
+            levels: 0,
+            slots: 0,
+        });
+        for (i, leg) in legs.iter().enumerate() {
+            let m = markets[i]
+                .as_ref()
+                .unwrap_or_else(|| env.panic_with_error(Error::UnknownMarket));
             let r = matching::place_body(
                 &env,
                 &taker,
                 leg.market,
-                &m,
+                m,
                 leg.is_bid,
                 leg.limit_tick,
                 leg.qty_lots,
@@ -194,7 +205,7 @@ impl PageBook {
                 leg.nonce,
                 &leg.window,
                 &leg.flags,
-                b,
+                &mut b,
                 &mut net,
             );
             out.push_back(r);

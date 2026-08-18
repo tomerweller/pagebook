@@ -13,6 +13,7 @@ version = "0.0.0"
 [workspace.dependencies]
 soroban-sdk = "27.0.6"
 pagebook-types = { path = "crates/pagebook-types" }
+pagebook-client = { path = "crates/pagebook-client" }
 
 [profile.release]
 opt-level = "z"
