@@ -53,10 +53,15 @@ put funds-bearing state here), **persistent** (archived at TTL expiry, restorabl
   the max. Consequence: entries live in ~120-day prepaid chunks, and hot paths never
   need to extend anything.
 - **Protocol 23 auto-restore:** simulation detects archived persistent/instance entries
-  a transaction touches and the `InvokeHostFunction` op restores them in-line. Manually
-  built transactions that skip simulation fail on archived entries. Restores consume
-  disk-read budget (small: 400 KB/ledger) — designs should make archived-entry touches
-  rare and beneficiary-paid.
+  a transaction touches and the `InvokeHostFunction` op restores them in-line. Restore
+  is **opt-in per footprint entry**: the transaction lists which archived read-write
+  entries to restore and pays their rent; an archived key that is declared but not
+  listed costs only its footprint slot and fails the transaction only if execution
+  touches it (this is what lets PageBook pad archived keys for free, architecture
+  §14). Manually built transactions that skip simulation fail on archived entries.
+  Restores consume disk-read budget (small: 400 KB/ledger) — designs should make
+  archived-entry touches rare and beneficiary-paid. Verify the per-entry opt-in
+  against the live host in M4 (fee gate).
 - Creating an entry at a key whose previous incarnation is archived is a
   restore-then-write, not a fresh create — key lifecycle matters (PageBook makes
   restore-on-touch the *designed* path for cold levels, and never deletes them).

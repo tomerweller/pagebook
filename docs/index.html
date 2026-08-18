@@ -459,7 +459,7 @@
           <rect x="300" y="166" width="190" height="36" rx="7" fill="var(--ask-soft)" stroke="var(--ask)"/><text x="395" y="189" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">g=2  s=3  q=10</text>
           <text x="520" y="189" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">s = H</text>
           <text x="660" y="184" fill="currentColor" font-weight="600">pay 4 × price, refund 6</text>
-          <text x="660" y="199" fill="var(--muted)" font-size="11">then H → 5 (skips tombstone 4), C → 0</text>
+          <text x="660" y="199" fill="var(--muted)" font-size="11">open_lots −= 6; H → 5 (skips tombstone 4), C → 0</text>
           <!-- row 4 -->
           <rect x="300" y="228" width="190" height="36" rx="7" fill="var(--code-bg)"/><text x="395" y="251" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">g=2  s=6  q=9</text>
           <text x="520" y="251" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">s &gt; H</text>
@@ -606,7 +606,7 @@
   </p>
   <figure>
     <div class="box">
-      <svg viewBox="0 0 880 268" role="img" aria-label="A tick axis from 99 to 109. Simulated best t1 is 100; pad_end is 106. The band from 100 to 106 is shaded: every Level key in it is declared, set or not. Set levels at 100, 101 and 103 each get a small window of LevelPage keys around their simulated head. Ticks 102, 104, 105 and 106 are declared but empty. Beyond 106 is the trap zone: if the walk must pass pad_end, the transaction fails. The taker's own rest keys (Order, its level's bitmap words, append pages around the simulated tail) are declared separately.">
+      <svg viewBox="0 0 880 268" role="img" aria-label="A tick axis from 99 to 109. Simulated best t1 is 100; pad_end is 106. The band from 100 to 106 is shaded: every Level key in it is declared, set or not. Set levels at 100, 101 and 103 each get a small window of LevelPage keys around their simulated head. Ticks 102, 104, 105 and 106 are declared but empty. Beyond 106 is the trap zone: if the walk must pass pad_end, the transaction fails. The taker's own-side rest keys (its Level at the limit tick, that side's bitmap words, TickSummary and BestTick, Order, append pages around the simulated tail) are declared separately.">
         <g font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12">
           <!-- band shading: ticks at x = 60 + (t-99)*70, tick 100 -> 130 ... 106 -> 550; band from 100 to 106 inclusive: 105..585 -->
           <rect x="102" y="60" width="490" height="120" rx="8" fill="var(--accent-soft)"/>
@@ -645,8 +645,8 @@
           <text x="238" y="76" text-anchor="middle" fill="var(--muted)" font-size="10.5">per set level: LevelPage keys around the simulated head (small window)</text>
 
           <!-- own rest -->
-          <text x="40" y="242" fill="var(--muted)" font-size="11.5">Also declared: the TickWords over the band, TickSummary, BestTick, both vault balances, FeeAccrual;</text>
-          <text x="40" y="260" fill="var(--muted)" font-size="11.5">and for the taker's own possible rest: Order(taker, nonce), its level's bitmap words, append pages {page(tail_sim), +1, 0}.</text>
+          <text x="40" y="242" fill="var(--muted)" font-size="11.5">Also declared: the TickWords over the band, that side's TickSummary and BestTick, both vault balances, FeeAccrual;</text>
+          <text x="40" y="260" fill="var(--muted)" font-size="11.5">and on the taker's own side, for its possible rest: Level(limit_tick), its TickWord, TickSummary, BestTick, Order(taker, nonce), append pages {page(tail_sim), +1, 0}.</text>
         </g>
       </svg>
     </div>
@@ -686,7 +686,7 @@
   <p>Nine properties, all covered by property tests; the numbers match the architecture doc.</p>
   <ol class="inv">
     <li>Conservation: vault balance per token equals open escrows plus unclaimed proceeds plus accrued fees. <span class="ref">vault</span></li>
-    <li><code>open_lots</code> equals the sum of live slot quantities (tombstones and stale slots excluded). <span class="ref">level queue</span></li>
+    <li><code>open_lots</code> equals the sum of live slot quantities minus the head's consumed lots (tombstones and stale slots excluded); takes and settles both decrement it. <span class="ref">level queue</span></li>
     <li>A live level always has its bit set; a set bit over an empty level is allowed and healed lazily. <code>BestTick</code> is never worse than the true best. <span class="ref">tick index</span></li>
     <li>Settlement is exact and path independent. <span class="ref">settlement</span></li>
     <li>Price-time priority, scoped by <code>start_tick</code>: best tick first among ticks at or worse than it, FIFO within a level. <span class="ref">walk</span></li>

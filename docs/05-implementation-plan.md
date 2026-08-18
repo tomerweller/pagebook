@@ -54,8 +54,9 @@ pub trait PageBook {
                        max_slots_scanned: u32, taker_fee_bps: u32,
                        min_order_lots: u64, max_order_lots: u64, max_pages: u32);
 
-    /// Admin-gated in v1. Enforces tick_min ≥ 1, fee_bps ≤ FEE_BPS_MAX, and the §0.3
-    /// creation bounds (LEVEL_CAP × max_order_lots × price / base, with route headroom).
+    /// Admin-gated in v1. Enforces base ≠ quote, 1 ≤ tick_min < tick_max ≤ 2^22,
+    /// fee_bps ≤ FEE_BPS_MAX, and the §0.3 creation bounds (LEVEL_CAP × max_order_lots
+    /// × price / base, with route headroom). No duplicate-pair check (§0.1).
     fn create_market(e: Env, base: Address, quote: Address, lot_size: u64,
                      tick_size: u64, tick_min: u32, tick_max: u32,
                      taker_fee_bps: u32, min_order_lots: u64, max_order_lots: u64)
@@ -107,10 +108,13 @@ pub trait PageBook {
 }
 ```
 
-Error taxonomy (`contracterror`): `NotAdmin, Paused, MarketExists, UnknownMarket,
-BadQuantization, TickOutOfBand, BadStartTick, QtyOutOfBounds, Crossed (post_only),
-Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExists
-(live nonce), NotOwner, UnknownOrder, Overflow, FeeTooHigh, TooManyLegs`.
+Error taxonomy (`contracterror`): `NotAdmin, Paused, SameToken (base == quote),
+UnknownMarket, BadQuantization, TickOutOfBand (also tick_max > 2^22 at creation),
+BadStartTick, QtyOutOfBounds, Crossed (post_only), Unfilled (FoK), LevelFull, RetryRest
+(append outside declared window), OrderExists (live nonce), NotOwner, UnknownOrder,
+Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs`. There is no
+`MarketExists`: the schema has no pair index and duplicate pairs are allowed
+(architecture §0.1; ADR-012).
 
 ## Order of work
 
@@ -131,10 +135,18 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
   (`OrderExists`, reuse after settle); vault escrow + settlement (incl. escrow *delta*
   on replace); `set_market_caps` tests (auth; §0.3 re-proof rejects breaking values;
   `MAX_PAGES` lower rejected; live orders unaffected across a retune); conservation
-  invariant test. This proves the settlement
+  invariant test, with the settle-then-sweep case called out (settle a partial head,
+  then sweep the level: `open_lots` must have dropped by the refund — ADR-012 M3);
+  fee split-form equivalence property (`(o ÷ 10⁴)·bps + ceil((o mod 10⁴)·bps / 10⁴)
+  == ceil(o·bps / 10⁴)` and no intermediate above `o`); `create_market` rejects
+  `base == quote` and `tick_max > 2^22`. This proves the settlement
   state machine — the riskiest logic — before any book traversal exists.
 - **M2 — matching.** Multi-level matching loop, `start_tick` clamping, sweep-vs-partial,
-  generation semantics, `BestTick` maintenance (incl. stale-bit lazy clearing), bitmap
+  generation semantics, `BestTick` maintenance (incl. stale-bit lazy clearing, the
+  empty flag, and **no scan past the last sweep** — a take that finishes on a sweep
+  reads no `TickWord` beyond the swept tick's word), **re-liquification** (sweep →
+  re-rest same tick; lazy-clear → re-rest; empty side → rest at a tick worse than the
+  stale recorded best: bit set and `BestTick` correct in all three), bitmap
   TickWord/TickSummary walk, cap + **window** termination (remainder refunded — book never crossed),
   post_only (conservative vs recorded `BestTick`, incl. stale-best false-reject test),
   FoK/no_rest. Property tests (below), plus the **sim-to-apply race tests** — the
@@ -142,7 +154,9 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
   book (better-priced rest; new level inside the band; level emptied; **head advanced
   into pages; tail pushed across a page boundary; generation bumped by a sweep**),
   re-apply with the stale `start_tick`/band/window and assert the defined outcome
-  (graceful refund or `RetryRest`; a trap only when the walk passes the band).
+  (graceful refund or `RetryRest`; a trap only when the walk passes the band); and a
+  footprint assertion that a resting place's simulated footprint contains its own-side
+  `Level`, `TickWord`, `TickSummary`, and `BestTick` keys (ADR-012 H1).
 - **M3 — pages + fees + route.** Overflow pages incl. deletion-behind-head,
   `LevelFull` at `LEVEL_CAP`, and **stale-slot tests** (invariant 9: generation reset
   over dirty pages, then reuse — decode rule `seq < tail_seq`); taker fee accrual
@@ -209,7 +223,8 @@ Unfilled (FoK), LevelFull, RetryRest (append outside declared window), OrderExis
 5. Fee *split* (protocol/integrator) — custody and recipient are defined (architecture
    §1, §4, §12); Deepstate's dual-fee model remains a reasonable template for the split (both
    capped, both on taker output).
-6. Whether settle-at-head should also advance past tombstones in its declared page
-   (cheap win) or stay counter-minimal.
+6. ~~Whether settle-at-head should also advance past tombstones in its declared page~~
+   — resolved: it advances through its declared entries only and may leave the head
+   on a tombstone at a page boundary (architecture §7 "stranded head"; ADR-012).
 7. Nonce policy in the client SDK (random u64 vs per-owner counter) — the contract only
    requires "not currently live for this owner".
