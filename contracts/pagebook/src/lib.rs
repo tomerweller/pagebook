@@ -189,10 +189,25 @@ impl PageBook {
             levels: 0,
             slots: 0,
         });
+        // A leg may not take liquidity an earlier leg of this call rested: that
+        // fill's payout would be backed by this call's own pay-in, which lands
+        // only after the backed pay-outs (Netting order, ADR-021). Conservative:
+        // reject a later leg on the same market whose limit crosses an earlier
+        // leg's rest tick on the other side.
+        let mut rests: [Option<(u32, bool, u32)>; LEGS] = [const { None }; LEGS];
         for (i, leg) in legs.iter().enumerate() {
             let m = markets[i]
                 .as_ref()
                 .unwrap_or_else(|| env.panic_with_error(Error::UnknownMarket));
+            for r in rests.iter().flatten() {
+                let (mkt, side, tick) = *r;
+                if mkt == leg.market
+                    && side != leg.is_bid
+                    && rest::crosses(leg.is_bid, tick, leg.limit_tick)
+                {
+                    env.panic_with_error(Error::SelfTrade);
+                }
+            }
             let r = matching::place_body(
                 &env,
                 &taker,
@@ -208,6 +223,9 @@ impl PageBook {
                 &mut b,
                 &mut net,
             );
+            if r.0 {
+                rests[i] = Some((leg.market, leg.is_bid, leg.limit_tick));
+            }
             out.push_back(r);
         }
         net.flush(&env, &taker);
@@ -230,6 +248,15 @@ impl PageBook {
         let m = store::load_market(&env, market);
         let mut out = soroban_sdk::Vec::new(&env);
         let mut net = settle::Netting::new(&env);
+        // Duplicate nonces in one batch would settle an order this batch just
+        // rested (its refund backed by this call's own pay-in): reject.
+        for (i, a) in items.iter().enumerate() {
+            for b in items.iter().skip(i + 1) {
+                if a.nonce == b.nonce {
+                    env.panic_with_error(Error::OrderExists);
+                }
+            }
+        }
         for item in items.iter() {
             let r = replace::replace_body(
                 &env,

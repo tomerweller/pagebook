@@ -246,3 +246,38 @@ fn chained_route_needs_no_intermediate_balance() {
     assert_eq!(bal(&h, &h.base, &taker), 0);
     assert_eq!(bal(&h, &h.quote, &taker), 1_000_000 - 40 + 36 - 1);
 }
+
+#[test]
+fn route_leg_taking_its_own_earlier_rest_is_rejected() {
+    let h = setup();
+    let taker = Address::generate(&h.env);
+    mint(&h, &h.quote, &taker, 1_000_000);
+    mint(&h, &h.base, &taker, 1_000_000);
+    let mut legs = soroban_sdk::Vec::new(&h.env);
+    legs.push_back(leg(&h, h.market, 30, 2, 1, flags())); // rests a bid at 30
+    let mut sell = leg(&h, h.market, 30, 1, 2, flags());
+    sell.is_bid = false; // an ask at 30 would take that bid
+    legs.push_back(sell);
+    super::assert_err(h.client().try_route(&taker, &legs), Error::SelfTrade);
+}
+
+#[test]
+fn replace_batch_duplicate_nonce_is_rejected() {
+    let h = setup();
+    let owner = Address::generate(&h.env);
+    rest_ask(&h, &owner, 10, 2, 1);
+    let mut items = soroban_sdk::Vec::new(&h.env);
+    for tick in [11u32, 12] {
+        items.push_back(ReplaceItem {
+            nonce: 1,
+            is_bid: false,
+            tick,
+            qty_lots: 2,
+            window: window(&h),
+        });
+    }
+    super::assert_err(
+        h.client().try_replace_batch(&owner, &h.market, &items),
+        Error::OrderExists,
+    );
+}

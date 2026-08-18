@@ -27,4 +27,5 @@ pub enum Error {
     TokenNotAuthorized = 21,
     CorruptEntry = 22,
     NotInitialized = 23,
+    SelfTrade = 24,
 }

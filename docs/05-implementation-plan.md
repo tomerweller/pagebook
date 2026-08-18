@@ -133,7 +133,8 @@ BadStartTick, QtyOutOfBounds, Crossed (post_only), Unfilled (FoK), LevelFull, Re
 Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs, BadWindow
 (`consume.len() > MAX_LEVELS_CROSSED` or a malformed page range), BatchTooLarge
 (`replace_batch` items > MAX_REPLACE_BATCH), TokenNotAuthorized (`create_market`: the
-SAC reports the vault unauthorized)`. Error codes are the declaration order
+SAC reports the vault unauthorized), CorruptEntry (a stored entry that does not decode),
+NotInitialized (no Config), SelfTrade (a `route` leg would take an earlier leg's rest)`. Error codes are the declaration order
 above, starting at 1, and are stable across upgrades (append only). `BadStartTick` is
 defined in architecture §8 (`start_tick` outside `[tick_min, tick_max)`; every in-band
 value is legal). There is no `MarketExists`: the schema has no pair index and duplicate

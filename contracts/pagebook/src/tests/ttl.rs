@@ -51,10 +51,9 @@ fn keepalive_and_admin_ops_extend_instance_ttl() {
     env.ledger().set_sequence_number(seq + 1_000);
     client.keepalive();
     let after = env.as_contract(&id, || env.storage().instance().get_ttl());
-    assert!(
-        after >= before,
-        "keepalive extends to the max TTL: {after} >= {before}"
-    );
+    let max = env.as_contract(&id, || env.storage().max_ttl());
+    assert!(after >= before, "keepalive extends: {after} >= {before}");
+    assert_eq!(after, max, "keepalive extends to the max TTL");
     env.ledger().set_sequence_number(seq + 2_000);
     client.set_paused(&false);
     let after_admin = env.as_contract(&id, || env.storage().instance().get_ttl());

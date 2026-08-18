@@ -77,6 +77,13 @@ findings below are fixed on the branch.
     `set_market_caps` use `require_admin`** (instance TTL bump). The client
     `pad()` is checked against the in-repo `declare_place` by a parity test.
 
+16. **Self-fills inside one call broke the "backed pay-out is vault-held"
+    premise** (a route leg taking an earlier leg's rest; duplicate nonces in a
+    `replace_batch`): the payout would be backed by this call's own pay-in, which
+    lands one pass later — a thin vault would revert. Both are rejected
+    (`SelfTrade`; `OrderExists`), which is also the conservative reading of ADR-014's
+    open self-trade question for v1.
+
 ## Checked and found sound (by the reviewers)
 
 §7 settlement rows and `open_lots` accounting; escrow versus payout per token; the
