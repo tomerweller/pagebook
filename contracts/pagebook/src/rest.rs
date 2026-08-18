@@ -82,7 +82,3 @@ pub fn crosses(taker_is_bid: bool, opp_tick: u32, limit_tick: u32) -> bool {
         opp_tick >= limit_tick
     }
 }
-
-pub fn clear_presence(env: &Env, market: u32, is_bid: bool, tick: u32) {
-    crate::bitmap::clear_tick(env, market, is_bid, tick);
-}

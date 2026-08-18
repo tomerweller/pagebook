@@ -25,4 +25,6 @@ pub enum Error {
     BadWindow = 19,
     BatchTooLarge = 20,
     TokenNotAuthorized = 21,
+    CorruptEntry = 22,
+    NotInitialized = 23,
 }

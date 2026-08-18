@@ -1,6 +1,5 @@
-use crate::errors::Error;
-use crate::keys::DataKey;
-use pagebook_types::{Config, ConfigStore};
+use crate::store::{load_config, save_config};
+use pagebook_types::Config;
 use soroban_sdk::{Address, BytesN, Env};
 
 pub fn construct(env: &Env, admin: Address, fee_recipient: Address) {
@@ -11,21 +10,6 @@ pub fn construct(env: &Env, admin: Address, fee_recipient: Address) {
         market_counter: 0,
     };
     save_config(env, &config);
-}
-
-fn load_config(env: &Env) -> Config {
-    let store: ConfigStore = env
-        .storage()
-        .instance()
-        .get(&DataKey::Config)
-        .unwrap_or_else(|| env.panic_with_error(Error::NotAdmin));
-    Config::from_store(store)
-}
-
-fn save_config(env: &Env, config: &Config) {
-    env.storage()
-        .instance()
-        .set(&DataKey::Config, &config.to_store());
 }
 
 pub fn require_admin(env: &Env) -> Config {

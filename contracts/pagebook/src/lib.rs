@@ -21,8 +21,8 @@ use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
 
 pub use errors::Error;
 pub use iface::{
-    empty_window, ConsumeWindow, LevelInfo, OrderInfo, PageRange, PlaceFlags, PlaceLeg,
-    QuoteResult, ReplaceItem, SlotWindow,
+    empty_window, ConsumeWindow, CrossedLevel, LevelInfo, OrderInfo, PageRange, PlaceFlags,
+    PlaceLeg, QuoteResult, ReplaceItem, SlotWindow,
 };
 pub use keys::{DataKey, MAX_ENTRY_TTL, MIN_PERSISTENT_TTL};
 pub use pagebook_types::{Config, MarketId};
@@ -157,58 +157,84 @@ impl PageBook {
         settle::collect_fees(&env, market, token)
     }
 
+    /// Multi-leg atomic route (architecture §8): one auth, one pause check, ONE
+    /// shared level/slot budget across all legs (clamped to every leg market's
+    /// caps), deltas netted in memory, one SAC transfer per token at the end.
     pub fn route(
         env: Env,
         taker: Address,
         legs: soroban_sdk::Vec<PlaceLeg>,
     ) -> soroban_sdk::Vec<(bool, u64, i128)> {
+        taker.require_auth();
         store::require_not_paused(&env);
         if legs.len() > pagebook_types::MAX_ROUTE_LEGS {
             env.panic_with_error(Error::TooManyLegs);
         }
-        taker.require_auth();
         let mut out = soroban_sdk::Vec::new(&env);
+        let mut net = settle::Netting::new(&env);
+        let mut budget: Option<matching::Budget> = None;
         for leg in legs.iter() {
-            let r = matching::place(
+            let m = store::load_market(&env, leg.market);
+            let b = match budget.as_mut() {
+                Some(b) => {
+                    b.clamp_to(&m);
+                    b
+                }
+                None => budget.insert(matching::Budget::from_market(&m)),
+            };
+            let r = matching::place_body(
                 &env,
-                taker.clone(),
+                &taker,
                 leg.market,
+                &m,
                 leg.is_bid,
                 leg.limit_tick,
                 leg.qty_lots,
                 leg.start_tick,
                 leg.nonce,
-                leg.window,
-                leg.flags,
+                &leg.window,
+                &leg.flags,
+                b,
+                &mut net,
             );
             out.push_back(r);
         }
+        net.flush(&env, &taker);
         out
     }
 
+    /// Batched replace (architecture §10): one auth, one pause check, settlement
+    /// deltas netted, one transfer per token. All-or-nothing.
     pub fn replace_batch(
         env: Env,
         owner: Address,
         market: u32,
         items: soroban_sdk::Vec<ReplaceItem>,
     ) -> soroban_sdk::Vec<(i128, i128)> {
+        owner.require_auth();
+        store::require_not_paused(&env);
         if items.len() > pagebook_types::MAX_REPLACE_BATCH {
             env.panic_with_error(Error::BatchTooLarge);
         }
+        let m = store::load_market(&env, market);
         let mut out = soroban_sdk::Vec::new(&env);
+        let mut net = settle::Netting::new(&env);
         for item in items.iter() {
-            let r = replace::replace(
+            let r = replace::replace_body(
                 &env,
-                owner.clone(),
+                &owner,
                 market,
+                &m,
                 item.nonce,
                 item.is_bid,
                 item.tick,
                 item.qty_lots,
-                item.window,
+                &item.window,
+                &mut net,
             );
             out.push_back(r);
         }
+        net.flush(&env, &owner);
         out
     }
 

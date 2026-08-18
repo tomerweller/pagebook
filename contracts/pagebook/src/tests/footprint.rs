@@ -5,6 +5,16 @@ use soroban_sdk::{
     Address, Env, TryFromVal, Val,
 };
 
+/// Every PageBook key the call loaded or saved (reads and writes), from the
+/// test-only store trace (ADR-020). Use to assert `touched ⊆ declared`.
+extern crate std;
+
+pub fn keys_touched<F: FnOnce()>(_h: &super::harness::Harness, call: F) -> std::vec::Vec<DataKey> {
+    crate::store::trace::start();
+    call();
+    crate::store::trace::stop()
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Footprint {
     pub written_keys: soroban_sdk::Vec<DataKey>,

@@ -95,20 +95,31 @@ pub fn default_append() -> PageRange {
     PageRange { first: 0, last: 1 }
 }
 
+/// One level the simulated walk visited, with its head position at simulation
+/// (the client's consume window is pages `[page(head_seq), page(head_seq)+1]`).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct QuotedKey {
-    pub key: DataKey,
-    pub archived: bool,
+pub struct CrossedLevel {
+    pub tick: u32,
+    pub head_seq: u32,
+    pub open_lots: u64,
 }
 
+/// `quote_place` output: the simulate step of the client protocol (§14). `keys`
+/// is every PageBook key the walk and a possible rest can touch on both sides
+/// (band levels visited, words start..limit, summaries, bests, own-side rest
+/// keys, fee accruals); the client adds `Order(taker, nonce)`, both vault
+/// balances, the pad band, and consume/append page windows, and marks archived
+/// keys for restore from RPC (ADR-020).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QuoteResult {
     pub start_tick: u32,
-    pub crossed: Vec<u32>,
+    pub crossed: Vec<CrossedLevel>,
+    pub filled_lots: u64,
+    pub quote_atoms: i128,
     pub tail_seq: u32,
-    pub keys: Vec<QuotedKey>,
+    pub keys: Vec<DataKey>,
 }
 
 pub fn empty_window(env: &soroban_sdk::Env) -> SlotWindow {

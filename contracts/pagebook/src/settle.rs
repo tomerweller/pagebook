@@ -4,7 +4,7 @@ use crate::level;
 use crate::math::{base_atoms, chk_add, chk_sub, quote_atoms};
 use crate::store;
 use pagebook_types::{Market, Order};
-use soroban_sdk::{token::TokenClient, Address, Env};
+use soroban_sdk::{token::TokenClient, Address, Env, Map};
 
 pub struct SettleResult {
     pub paid: i128,
@@ -20,12 +20,12 @@ pub fn settle_order(
     env: &Env,
     owner: &Address,
     market: u32,
+    m: &Market,
     nonce: u64,
     delete_order: bool,
 ) -> SettleResult {
     let order = store::load_order(env, market, owner, nonce)
         .unwrap_or_else(|| env.panic_with_error(Error::UnknownOrder));
-    let m = store::load_market(env, market);
     let mut lvl = store::load_level(env, market, order.is_bid, order.tick);
     let (filled_lots, refunded_lots) =
         level::preview_settle(order.generation, order.seq, order.qty_lots, &lvl);
@@ -34,13 +34,16 @@ pub fn settle_order(
         level::consume_open(env, &mut lvl, refunded_lots);
         lvl.head_seq += 1;
         lvl.head_consumed_lots = 0;
+        // Settle declares at most one LevelPage: the page holding the settled
+        // seq (page 0 for an inline seq, so an inline head may advance into
+        // page 0). The scan is bounded by the market's slot cap.
         level::advance_head(
             env,
             market,
             order.is_bid,
             order.tick,
             &mut lvl,
-            m.inline_slots,
+            m.max_slots_scanned,
             Some(pagebook_types::page(order.seq)),
         );
         store::save_level(env, market, order.is_bid, order.tick, &lvl);
@@ -58,7 +61,7 @@ pub fn settle_order(
         store::save_level(env, market, order.is_bid, order.tick, &lvl);
     }
 
-    let (paid, refunded) = payouts(env, &m, &order, filled_lots, refunded_lots);
+    let (paid, refunded) = payouts(env, m, &order, filled_lots, refunded_lots);
     if delete_order {
         store::del_order(env, market, owner, nonce);
     }
@@ -118,14 +121,6 @@ pub fn escrow_for(env: &Env, m: &Market, is_bid: bool, tick: u32, qty: u64) -> (
     }
 }
 
-pub fn net_add(env: &Env, acc: &mut i128, delta: i128) {
-    *acc = chk_add(env, *acc, delta);
-}
-
-pub fn net_sub(env: &Env, acc: &mut i128, delta: i128) {
-    *acc = chk_sub(env, *acc, delta);
-}
-
 pub fn apply_net(env: &Env, token: &Address, user: &Address, net: i128) {
     let vault = env.current_contract_address();
     if net > 0 {
@@ -153,4 +148,35 @@ pub fn collect_fees(env: &Env, market: u32, token: Address) -> i128 {
     let vault = env.current_contract_address();
     transfer(env, &token, &vault, &config.fee_recipient, accrued);
     accrued
+}
+
+/// Per-transaction token netting (architecture §8/§10): every leg or item adds
+/// its deltas here and the entry point flushes once, one SAC transfer per token.
+/// Positive = user pays the vault; negative = the vault pays the user.
+pub struct Netting {
+    deltas: Map<Address, i128>,
+}
+
+impl Netting {
+    pub fn new(env: &Env) -> Self {
+        Self {
+            deltas: Map::new(env),
+        }
+    }
+
+    pub fn add(&mut self, env: &Env, token: &Address, amount: i128) {
+        let cur = self.deltas.get(token.clone()).unwrap_or(0);
+        self.deltas.set(token.clone(), chk_add(env, cur, amount));
+    }
+
+    pub fn sub(&mut self, env: &Env, token: &Address, amount: i128) {
+        let cur = self.deltas.get(token.clone()).unwrap_or(0);
+        self.deltas.set(token.clone(), chk_sub(env, cur, amount));
+    }
+
+    pub fn flush(&self, env: &Env, user: &Address) {
+        for (token, net) in self.deltas.iter() {
+            apply_net(env, &token, user, net);
+        }
+    }
 }
