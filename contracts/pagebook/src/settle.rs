@@ -44,7 +44,7 @@ pub fn settle_order(
             order.tick,
             &mut lvl,
             m.max_slots_scanned,
-            Some(pagebook_types::page(order.seq)),
+            Some((0, pagebook_types::page(order.seq))),
         );
         store::save_level(env, market, order.is_bid, order.tick, &lvl);
     } else if order.generation == lvl.generation && order.seq > lvl.head_seq && refunded_lots > 0 {

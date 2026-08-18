@@ -96,14 +96,18 @@ pub fn sweep_reset(env: &Env, level: &mut Level) {
 }
 
 /// The one window predicate (05 "Encoding decisions"): an inline head is always
-/// readable; a paged head is readable only up to the declared last page, and a
-/// level with no declared window is inline-only.
-pub fn head_in_window(level: &Level, page_last: Option<u32>) -> bool {
+/// readable; page 0 is always implied; any other page is readable only inside the
+/// declared inclusive range; a level with no declared window is inline-only.
+pub fn head_in_window(level: &Level, window: Option<(u32, u32)>) -> bool {
     if is_inline(level.head_seq) {
         return true;
     }
-    match page_last {
-        Some(last) => page(level.head_seq) <= last,
+    let p = page(level.head_seq);
+    if p == 0 {
+        return window.is_some();
+    }
+    match window {
+        Some((first, last)) => p >= first && p <= last,
         None => false,
     }
 }
@@ -115,11 +119,11 @@ pub fn advance_head(
     tick: u32,
     level: &mut Level,
     max_slots: u32,
-    page_last: Option<u32>,
+    window: Option<(u32, u32)>,
 ) {
     let mut scanned = 0u32;
     while level.head_seq < level.tail_seq && scanned < max_slots {
-        if !head_in_window(level, page_last) {
+        if !head_in_window(level, window) {
             break;
         }
         let qty = slot_qty(env, market, is_bid, tick, level, level.head_seq);

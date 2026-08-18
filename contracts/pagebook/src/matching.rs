@@ -302,8 +302,8 @@ fn walk(
         }
         // Partial: consume from the head inside the declared window and the
         // shared slot budget; progress persists even if a cap ends it.
-        let page_last = consume_last(window, cur);
-        let took = consume_partial(env, market, opp, cur, &mut lvl, left, page_last, budget);
+        let range = consume_range(window, cur);
+        let took = consume_partial(env, market, opp, cur, &mut lvl, left, range, budget);
         let q = quote_atoms(env, took, cur, m.tick_size);
         filled += took;
         quote = crate::math::chk_add(env, quote, q);
@@ -354,12 +354,12 @@ fn walk(
     }
 }
 
-/// The last page the client declared for consumption at `tick`; a level absent
+/// The page range the client declared for consumption at `tick`; a level absent
 /// from the consume window is inline-only (05 "Encoding decisions").
-fn consume_last(window: &SlotWindow, tick: u32) -> Option<u32> {
+fn consume_range(window: &SlotWindow, tick: u32) -> Option<(u32, u32)> {
     for w in window.consume.iter() {
         if w.tick == tick {
-            return Some(w.pages.last);
+            return Some((w.pages.first, w.pages.last));
         }
     }
     None
@@ -373,12 +373,12 @@ fn consume_partial(
     tick: u32,
     lvl: &mut pagebook_types::Level,
     want: u64,
-    page_last: Option<u32>,
+    window: Option<(u32, u32)>,
     budget: &mut Budget,
 ) -> u64 {
     let mut left = want;
     while left > 0 && lvl.head_seq < lvl.tail_seq && budget.slots > 0 {
-        if !level::head_in_window(lvl, page_last) {
+        if !level::head_in_window(lvl, window) {
             break;
         }
         budget.slots -= 1;
