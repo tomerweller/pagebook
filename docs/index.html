@@ -382,7 +382,7 @@
 
 <header class="masthead">
   <h1>PageBook</h1>
-  <p class="sub">A central limit order book for Soroban with deterministic footprints: every ledger key an operation touches is computable at simulation time. This page is the short version of the <a href="04-architecture.md">architecture doc</a>: the same data structures and processes, with pictures and worked numbers.</p>
+  <p class="sub">A central limit order book for Soroban with deterministic footprints: every ledger key an operation touches is computable at simulation time. This page is the short version of the <a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md">architecture doc</a>: the same data structures and processes, with pictures and worked numbers.</p>
   <p class="sub">Implementation status: the Rust contract, shared types, client padding helpers, and tests are in the repository. M0 through M3 are implemented, M4 resource hardening is partial, and the M5 client SDK sketch is present.</p>
 </header>
 
@@ -419,7 +419,7 @@
 <main>
 
 <section id="why">
-  <h3>Why an order book is hard on Soroban <span class="ref"><a href="03-soroban-constraints.md">03</a></span></h3>
+  <h3>Why an order book is hard on Soroban <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/03-soroban-constraints.md">03</a></span></h3>
   <p>
     An order book is a sorted structure that takers walk and makers insert into. On the chains where CLOBs already run, the walk goes wherever the next order happens to sit (a slab, a radix tree) and the book lives in whatever container is convenient, often one large account. Two rules of Soroban break both habits.
   </p>
@@ -435,7 +435,7 @@
 </section>
 
 <section id="model">
-  <h3>The model in one paragraph <span class="ref"><a href="04-architecture.md#01-model-and-vocabulary">04 §0</a></span></h3>
+  <h3>The model in one paragraph <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#01-model-and-vocabulary">04 §0</a></span></h3>
   <p>
     One contract hosts many markets. A market is a pair of SAC addresses plus two numbers, <code>lot_size</code> and <code>tick_size</code>, that turn every quantity into an integer count of lots and every price into an integer tick. Each side of a market (bids, asks) is a set of price levels; each level is a FIFO queue of maker orders at exactly one price. A taker calls <code>place</code>, which crosses the book and settles in the same transaction. A maker's order rests, and later the maker calls <code>settle</code>, the one exit: it pays whatever happened, proceeds if the order filled, a refund if it did not, both if it partly filled. There is no rounding anywhere in matching, because <code>lots × tick × tick_size</code> is exact; the taker fee is the only place the contract rounds, and it rounds up.
   </p>
@@ -445,7 +445,7 @@
 <p class="lead">There are nine PageBook entry types in three groups, plus the token contracts' vault balances. Two principles govern all of them: every key is a pure function of client-known identifiers, and the order store is authoritative while the tick index is derived.</p>
 
 <section id="storage">
-  <h3>Storage map <span class="ref"><a href="04-architecture.md#part-i--data-structures">04 Part I</a></span></h3>
+  <h3>Storage map <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#part-i-data-structures">04 Part I</a></span></h3>
   <p>
     Keys are one <code>#[contracttype]</code> <code>DataKey</code> enum: the variant name is the type, the fields are coordinates. Nothing that execution assigns (a generation, a queue position, a page index) may appear in a key the client has to put in the footprint. All entries are persistent except <code>Config</code>. Sizes are XDR-serialized budgets at max occupancy, enforced by tests. <code>Level</code> and <code>LevelPage</code> use packed <code>Bytes</code>, as do the 2,048-bit <code>TickWord</code> and <code>TickSummary</code> bitmaps. <code>Config</code>, <code>Market</code>, <code>BestTick</code>, <code>Order</code>, and <code>FeeAccrual</code> use named <code>#[contracttype]</code> structs.
   </p>
@@ -500,7 +500,7 @@
 </section>
 
 <section id="level">
-  <h3>The level queue <span class="ref"><a href="04-architecture.md#2-the-level-queue-level-and-levelpage">04 §2</a></span></h3>
+  <h3>The level queue <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#2-the-level-queue-level-and-levelpage">04 §2</a></span></h3>
   <p>
     A <code>Level</code> is one price's queue: five counters and a run of quantity slots. Queue position is by seq, and seq is implicit in slot position, so a slot stores only a quantity. Seqs beyond the inline slots spill into <code>LevelPage</code> entries. Nothing is ever moved or compacted; "remove the head" means a counter advanced.
   </p>
@@ -579,7 +579,7 @@
 </section>
 
 <section id="order">
-  <h3>Order: the maker's claim <span class="ref"><a href="04-architecture.md#3-order">04 §3</a></span></h3>
+  <h3>Order: the maker's claim <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#3-order">04 §3</a></span></h3>
   <p>
     A resting order is one <code>Order</code> entry. Its key is <code>(market, owner, nonce)</code>, and the nonce is chosen by the client before submission. So the key is known at simulation time, whatever the book does before the transaction lands. The queue coordinates, which execution assigns, live inside the entry.
   </p>
@@ -599,7 +599,7 @@
 </section>
 
 <section id="index">
-  <h3>The tick index <span class="ref"><a href="04-architecture.md#5-the-tick-index-besttick-ticksummary-tickword">04 §5</a></span></h3>
+  <h3>The tick index <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#5-the-tick-index-besttick-ticksummary-tickword">04 §5</a></span></h3>
   <p>
     Finding the next tick with liquidity is a two-level bitmap plus a cached best. <code>TickSummary</code> has one bit per <code>TickWord</code>; each <code>TickWord</code> has one bit per tick. Together they cover 2,048 × 2,048 ≈ 4.19 million ticks per side. <code>BestTick</code> is where the walk starts.
   </p>
@@ -657,7 +657,7 @@
 <p class="lead">Four mechanisms do the work (settlement, the matching walk, rest, and replace) and the entry points compose them. The client runs a fifth process off-chain: simulate, pad, submit.</p>
 
 <section id="settle">
-  <h3>Settlement <span class="ref"><a href="04-architecture.md#7-the-settlement-state-machine">04 §7</a></span></h3>
+  <h3>Settlement <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#7-the-settlement-state-machine">04 §7</a></span></h3>
   <p>
     Because every take at a level happens at exactly the tick price, it does not matter when a fill happened, only whether the queue moved past you. So an order's stored coordinates <code>(g, s, q)</code> compared with the level's counters <code>(G, H, C)</code> decide everything. Matching writes nothing per maker; the maker reads the answer off the counters when they settle.
   </p>
@@ -719,7 +719,7 @@
 </section>
 
 <section id="walk">
-  <h3>The matching walk <span class="ref"><a href="04-architecture.md#8-the-matching-walk-the-taker-path">04 §8</a></span></h3>
+  <h3>The matching walk <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#8-the-matching-walk-the-taker-path">04 §8</a></span></h3>
   <p>
     A taker's <code>place</code> starts at <code>start_tick</code>, the best opposite tick the client saw when it simulated, and walks toward its limit. Ticks better than <code>start_tick</code> are never visited: an order that arrived there after simulation is outside the footprint by construction, and the walk never reaches for it. Sweeping a whole level needs no slot reads (<code>open_lots × tick × tick_size</code> is exact) and is one small write: bump the generation. Only the last, partial level touches slots.
   </p>
@@ -789,7 +789,7 @@
 </section>
 
 <section id="rest">
-  <h3>Rest, and replace <span class="ref"><a href="04-architecture.md#9-rest-append">04 §9</a>, <a href="04-architecture.md#10-replace-the-maker-update-path">§10</a></span></h3>
+  <h3>Rest, and replace <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#9-rest-append">04 §9</a>, <a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#10-replace-the-maker-update-path">§10</a></span></h3>
   <p>
     A rest is an append: <code>seq = tail_seq++</code>, write the quantity into that slot, write the <code>Order</code>, set the tick's bit if the level was empty, move <code>BestTick</code> if this is a new best, escrow with one SAC transfer. The slot must land inside the append window the client declared (the pages around the simulated tail); if a concurrent rest pushed the tail past it, the result is the typed error <code>RetryRest</code>, not a host trap on an undeclared key.
   </p>
@@ -838,7 +838,7 @@
 </section>
 
 <section id="client">
-  <h3>The client's process <span class="ref"><a href="04-architecture.md#14-the-clients-process-simulate--pad--submit">04 §14</a></span></h3>
+  <h3>The client's process <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#14-the-clients-process-simulate--pad--submit">04 §14</a></span></h3>
   <p>
     Every key the contract touches is a function of <code>(market, side, tick, word, page, owner, nonce)</code>, so the client builds the footprint itself. Its job is to pad that footprint so the transaction still fits the book it lands on, which may differ from the one <code>simulateTransaction</code> saw. Between simulation and inclusion, new levels can appear at any tick inside the walk range, and heads and tails can cross page boundaries.
   </p>
@@ -896,7 +896,7 @@
 <p class="lead">Small hot entries, capped loops, and a client-padded footprint give a router a transaction it can simulate once and trust, and one that parallelizes with anything outside its read-write set.</p>
 
 <section id="budgets">
-  <h3>Budgets and fees <span class="ref"><a href="04-architecture.md#17-budgets-and-fees">04 §17</a></span></h3>
+  <h3>Budgets and fees <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#17-budgets-and-fees">04 §17</a></span></h3>
   <div class="tablewrap">
     <table>
       <thead><tr><th>Operation</th><th class="num">Footprint entries</th><th class="num">Write entries</th><th class="num">Write bytes</th><th class="num">Est. resource fee</th><th>Dominated by</th></tr></thead>
@@ -915,12 +915,12 @@
     Matching is nearly free and placement pays rent: a 32-level sweep costs about the same as resting one order, so the book's carrying cost sits with makers at roughly 0.027 XLM per open order per minimum TTL, which doubles as anti-spam for <em>holding</em> orders (churn is priced by <code>min_order_lots</code>: dust that arms a phantom best or poisons a queue gets filled or swept for its notional). And write bytes, not fees, are the throughput ceiling: the max sweep is 7.6% of the ledger-wide write-bytes limit (286,720), so a ledger fits about 13 of them, or hundreds of rests and settles. Every hot entry is a few hundred bytes for that reason.
   </p>
   <aside class="note">
-    <p><span class="lbl">Concurrency:</span> the vault's SAC balance entries are the serialization points. Every settling transaction has one or both in its read-write footprint, so under P23 parallel execution all markets sharing a token form one dependent-transaction cluster. v1 accepts this because write bytes bind first; per-market vault sub-accounts are the v2 fix. No market operation writes the instance entry (no <code>bump_instance</code> on the hot path; <code>keepalive()</code> cranks the TTL), so instance reads stay read-only and never widen the cluster. <a href="04-architecture.md#16-concurrency-and-serialization">04 §16</a></p>
+    <p><span class="lbl">Concurrency:</span> the vault's SAC balance entries are the serialization points. Every settling transaction has one or both in its read-write footprint, so under P23 parallel execution all markets sharing a token form one dependent-transaction cluster. v1 accepts this because write bytes bind first; per-market vault sub-accounts are the v2 fix. No market operation writes the instance entry (no <code>bump_instance</code> on the hot path; <code>keepalive()</code> cranks the TTL), so instance reads stay read-only and never widen the cluster. <a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#16-concurrency-and-serialization">04 §16</a></p>
   </aside>
 </section>
 
 <section id="invariants">
-  <h3>Invariants <span class="ref"><a href="04-architecture.md#19-invariants-must-hold-property-test-all">04 §19</a></span></h3>
+  <h3>Invariants <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#19-invariants-must-hold-property-test-all">04 §19</a></span></h3>
   <p>Nine properties, covered by the in-repository tests; the numbers match the architecture doc.</p>
   <ol class="inv">
     <li>Conservation: vault balance per token equals open escrows plus unclaimed proceeds plus accrued fees. <span class="ref">vault</span></li>
@@ -938,7 +938,7 @@
 </main>
 
 <footer>
-  Deferred to v2 or a sibling market type: global cross-market orders, per-market vault sub-accounts, permissionless market creation, geometric ticks, pooled pro-rata levels, volatility-scaled fees. Full list and reasons in <a href="04-architecture.md#20-non-goals--deferred">04 §20</a>; the decisions behind the design in <a href="decisions/">docs/decisions</a>.
+  Deferred to v2 or a sibling market type: global cross-market orders, per-market vault sub-accounts, permissionless market creation, geometric ticks, pooled pro-rata levels, volatility-scaled fees. Full list and reasons in <a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#20-non-goals--deferred">04 §20</a>; the decisions behind the design in <a href="https://github.com/tomerweller/pagebook/tree/main/docs/decisions">docs/decisions</a>.
 </footer>
 
 </div>
