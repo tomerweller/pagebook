@@ -4,3 +4,4 @@ target/
 *.wasm
 Cargo.lock
 .DS_Store
+test_snapshots/
