@@ -25,7 +25,10 @@ fn advancing_past_ttl_does_not_drop_config_in_test_host() {
     env.ledger()
         .set_sequence_number(seq.saturating_add(ttl).saturating_add(10));
     let still_there = env.as_contract(&id, || env.storage().instance().has(&DataKey::Config));
-    let _ = still_there;
+    assert!(
+        still_there,
+        "documented test-host behaviour (ADR-016): expiry does not evict; archival is a soak-only path"
+    );
 }
 
 #[test]

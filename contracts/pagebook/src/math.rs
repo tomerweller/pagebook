@@ -17,6 +17,11 @@ pub fn chk_sub(env: &Env, a: i128, b: i128) -> i128 {
         .unwrap_or_else(|| env.panic_with_error(Error::Overflow))
 }
 
+pub fn chk_sub_u64(env: &Env, a: u64, b: u64) -> u64 {
+    a.checked_sub(b)
+        .unwrap_or_else(|| env.panic_with_error(Error::Overflow))
+}
+
 pub fn u64_i128(_env: &Env, n: u64) -> i128 {
     i128::from(n)
 }

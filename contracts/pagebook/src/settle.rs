@@ -1,7 +1,7 @@
 use crate::errors::Error;
 use crate::events;
 use crate::level;
-use crate::math::{base_atoms, chk_add, chk_sub, quote_atoms};
+use crate::math::{base_atoms, chk_add, quote_atoms};
 use crate::store;
 use pagebook_types::{Market, Order};
 use soroban_sdk::{token::TokenClient, Address, Env, Map};
@@ -121,15 +121,6 @@ pub fn escrow_for(env: &Env, m: &Market, is_bid: bool, tick: u32, qty: u64) -> (
     }
 }
 
-pub fn apply_net(env: &Env, token: &Address, user: &Address, net: i128) {
-    let vault = env.current_contract_address();
-    if net > 0 {
-        transfer(env, token, user, &vault, net);
-    } else if net < 0 {
-        transfer(env, token, &vault, user, -net);
-    }
-}
-
 pub fn accrue_fee(env: &Env, market: u32, token: &Address, fee: i128) {
     if fee == 0 {
         return;
@@ -150,33 +141,47 @@ pub fn collect_fees(env: &Env, market: u32, token: Address) -> i128 {
     accrued
 }
 
-/// Per-transaction token netting (architecture §8/§10): every leg or item adds
-/// its deltas here and the entry point flushes once, one SAC transfer per token.
-/// Positive = user pays the vault; negative = the vault pays the user.
+/// Per-transaction token movement (architecture §8/§10, ADR-021). Two ledgers per
+/// token, flushed once by the entry point: `pay_in` (user pays the vault) MUST be
+/// a pure function of the call's arguments — the SAC `transfer(user, vault, amt)`
+/// carries `user.require_auth()` on exact arguments, and the user's signed auth
+/// tree is built at simulation, so a book-dependent pay-in would fail auth on
+/// any race; `pay_out` (vault pays the user) is variable and needs no auth. Never
+/// net the two against each other.
 pub struct Netting {
-    deltas: Map<Address, i128>,
+    pay_in: Map<Address, i128>,
+    pay_out: Map<Address, i128>,
 }
 
 impl Netting {
     pub fn new(env: &Env) -> Self {
         Self {
-            deltas: Map::new(env),
+            pay_in: Map::new(env),
+            pay_out: Map::new(env),
         }
     }
 
-    pub fn add(&mut self, env: &Env, token: &Address, amount: i128) {
-        let cur = self.deltas.get(token.clone()).unwrap_or(0);
-        self.deltas.set(token.clone(), chk_add(env, cur, amount));
+    /// User pays the vault `amount` of `token`. Callers pass amounts derived only
+    /// from call arguments (escrow at the limit price, full order escrow).
+    pub fn pay_in(&mut self, env: &Env, token: &Address, amount: i128) {
+        let cur = self.pay_in.get(token.clone()).unwrap_or(0);
+        self.pay_in.set(token.clone(), chk_add(env, cur, amount));
     }
 
-    pub fn sub(&mut self, env: &Env, token: &Address, amount: i128) {
-        let cur = self.deltas.get(token.clone()).unwrap_or(0);
-        self.deltas.set(token.clone(), chk_sub(env, cur, amount));
+    /// Vault pays the user `amount` of `token` (proceeds, refunds, unspent escrow).
+    pub fn pay_out(&mut self, env: &Env, token: &Address, amount: i128) {
+        let cur = self.pay_out.get(token.clone()).unwrap_or(0);
+        self.pay_out.set(token.clone(), chk_add(env, cur, amount));
     }
 
+    /// One transfer in and one transfer out per token, at most.
     pub fn flush(&self, env: &Env, user: &Address) {
-        for (token, net) in self.deltas.iter() {
-            apply_net(env, &token, user, net);
+        let vault = env.current_contract_address();
+        for (token, amt) in self.pay_in.iter() {
+            transfer(env, &token, user, &vault, amt);
+        }
+        for (token, amt) in self.pay_out.iter() {
+            transfer(env, &token, &vault, user, amt);
         }
     }
 }

@@ -22,6 +22,10 @@ pub enum ClientKey {
     TickSummary(u32, bool),
     TickWord(u32, bool, u32),
     VaultBalance([u8; 32]),
+    /// The caller's own balance entry inside `token` (an account's trustline or
+    /// native balance, or a contract's SAC balance): touched by every transfer
+    /// to or from the caller (ADR-021).
+    UserBalance([u8; 32]),
 }
 
 /// One level the simulated walk visited (mirror of the contract's `CrossedLevel`).
@@ -98,6 +102,8 @@ pub fn keys_for_settle(
         ClientKey::LevelPage(market, is_bid, tick, page(seq)),
         ClientKey::VaultBalance(base),
         ClientKey::VaultBalance(quote),
+        ClientKey::UserBalance(base),
+        ClientKey::UserBalance(quote),
     ]
 }
 
@@ -204,6 +210,8 @@ pub fn pad(q: &Quoted, pad_end: u32) -> PadOut {
     keys.push(ClientKey::FeeAccrual(m, q.quote));
     keys.push(ClientKey::VaultBalance(q.base));
     keys.push(ClientKey::VaultBalance(q.quote));
+    keys.push(ClientKey::UserBalance(q.base));
+    keys.push(ClientKey::UserBalance(q.quote));
 
     dedup(&mut keys);
     PadOut {
@@ -229,12 +237,26 @@ pub fn restore_marks(q: &Quoted, out: &PadOut, archived: &[ClientKey]) -> Vec<Cl
         ClientKey::BestTick(m, q.own_side),
         ClientKey::Order(m, q.taker, q.nonce),
         ClientKey::LevelPage(m, q.own_side, q.limit_tick, page(q.tail_seq)),
+        ClientKey::LevelPage(
+            m,
+            q.own_side,
+            q.limit_tick,
+            page(q.tail_seq).saturating_add(1),
+        ),
         ClientKey::FeeAccrual(m, q.base),
         ClientKey::FeeAccrual(m, q.quote),
     ];
     for c in &q.crossed {
         touched.push(ClientKey::Level(m, opp, c.tick));
-        touched.push(ClientKey::LevelPage(m, opp, c.tick, page(c.head_seq)));
+        // consumption may run from the head's page into the next declared one
+        let p = page(c.head_seq);
+        touched.push(ClientKey::LevelPage(m, opp, c.tick, p));
+        touched.push(ClientKey::LevelPage(
+            m,
+            opp,
+            c.tick,
+            p.saturating_add(CONSUME_WIDTH),
+        ));
     }
     if q.crossed.is_empty() {
         touched.push(ClientKey::Level(m, opp, q.start_tick));
@@ -351,6 +373,8 @@ mod tests {
         assert!(has(ClientKey::FeeAccrual(0, [3; 32])));
         assert!(has(ClientKey::VaultBalance([2; 32])));
         assert!(has(ClientKey::VaultBalance([3; 32])));
+        assert!(has(ClientKey::UserBalance([2; 32])));
+        assert!(has(ClientKey::UserBalance([3; 32])));
         assert!(has(ClientKey::Config));
         assert!(has(ClientKey::Market(0)));
         assert_eq!(

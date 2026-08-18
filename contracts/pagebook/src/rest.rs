@@ -33,6 +33,7 @@ pub fn rest(
         m,
         &mut lvl,
         qty,
+        window.append.first,
         window.append.last,
     );
     store::save_level(env, market, is_bid, tick, &lvl);

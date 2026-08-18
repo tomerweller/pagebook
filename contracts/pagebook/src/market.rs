@@ -98,6 +98,7 @@ pub fn set_market_caps(
     if max_pages < m.max_pages {
         env.panic_with_error(Error::QtyOutOfBounds);
     }
+    require_caps(env, max_levels_crossed, max_slots_scanned, max_pages);
     prove_bounds(
         env,
         max_pages,
@@ -113,6 +114,20 @@ pub fn set_market_caps(
     m.max_order_lots = max_order_lots;
     m.max_pages = max_pages;
     store::save_market(env, market, &m);
+}
+
+/// Loop caps must be usable (a zero cap disables matching or every consume
+/// window) and `max_pages` must keep `level_cap` well inside u32 and the
+/// per-level footprint sane (§17): a hard ceiling of 1,024 pages.
+pub const MAX_PAGES_CEILING: u32 = 1_024;
+
+fn require_caps(env: &Env, max_levels_crossed: u32, max_slots_scanned: u32, max_pages: u32) {
+    if max_levels_crossed == 0 || max_slots_scanned == 0 {
+        env.panic_with_error(Error::BadQuantization);
+    }
+    if max_pages > MAX_PAGES_CEILING {
+        env.panic_with_error(Error::QtyOutOfBounds);
+    }
 }
 
 fn prove_bounds(

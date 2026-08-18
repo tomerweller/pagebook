@@ -51,6 +51,7 @@ pub fn append(
     m: &Market,
     level: &mut Level,
     qty: u64,
+    append_first: u32,
     append_last: u32,
 ) -> u32 {
     reset_empty(env, level);
@@ -61,11 +62,13 @@ pub fn append(
     let seq = level.tail_seq;
     if !is_inline(seq) {
         let p = page(seq);
-        if p > append_last {
-            env.panic_with_error(Error::RetryRest);
-        }
         if p >= m.max_pages {
             env.panic_with_error(Error::LevelFull);
+        }
+        // Same window rule as consumption: page 0 is always implied, any other
+        // page must lie inside the declared inclusive range (ADR-021).
+        if p != 0 && (p < append_first || p > append_last) {
+            env.panic_with_error(Error::RetryRest);
         }
     }
     write_slot(env, market, is_bid, tick, level, seq, qty);

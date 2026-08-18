@@ -103,7 +103,8 @@ fn route_two_markets_nets_to_one_transfer_per_token() {
     assert_eq!(out.get(0).unwrap(), (false, 4, 40));
     assert_eq!(out.get(1).unwrap(), (false, 6, 72));
 
-    // One transfer per token, both legs netted.
+    // Both legs netted: the quote pay-in equals what was spent (full fills at
+    // the limit), so nothing flows back; base flows out once.
     assert_eq!(
         transfer_events(&h, &h.quote),
         1,
@@ -199,8 +200,9 @@ fn replace_batch_third_item_crossed_reverts_all() {
     assert_eq!(bal(&h, &h.base, &h.id), vb0);
     assert_eq!(h.client().best(&h.market, &false), Some(10));
     assert_eq!(h.client().best(&h.market, &true), Some(5));
-    // Without the crossing item the same batch lands, netted into one base
-    // transfer (3 × (3 − 2) = 3 lots more escrow).
+    // Without the crossing item the same batch lands: one deterministic pay-in
+    // (3 × 3 lots of new escrow) and one pay-out (3 × 2 lots refunded) in base
+    // (ADR-021), net 3 lots more escrow.
     let mut ok = soroban_sdk::Vec::new(&h.env);
     for (nonce, tick) in [(1u64, 11u32), (2, 13), (3, 15)] {
         ok.push_back(ReplaceItem {
@@ -212,7 +214,7 @@ fn replace_batch_third_item_crossed_reverts_all() {
         });
     }
     h.client().replace_batch(&owner, &h.market, &ok);
-    assert_eq!(transfer_events(&h, &h.base), 1);
+    assert_eq!(transfer_events(&h, &h.base), 2, "one pay-in, one pay-out");
     assert_eq!(transfer_events(&h, &h.quote), 0);
     assert_eq!(ob0 - bal(&h, &h.base, &owner), 3);
 }

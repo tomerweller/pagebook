@@ -474,7 +474,9 @@ place(taker, market, side, limit_tick, qty_lots, start_tick, nonce, window, flag
     if no_rest, or the recorded BestTick(opposite) still crosses limit_tick:
       refund remainder                          # NEVER rest a crossing order (inv. 8)
     else: rest remainder at limit_tick (append must land in window — §9)
-  transfer: SAC moves taker↔vault (base, quote)
+  transfer: taker pays the vault the FULL escrow at limit_tick (bid: qty × limit × tick_size
+            quote; ask: qty × lot_size base) — a pure function of the arguments — and the
+            vault pays back the unspent part and the output net of fee (below)
   fee = split-form ceil(taker_output × fee_bps / 10_000) → FeeAccrual(token)   # §0.2
   update BestTick(opposite) if moved; emit filled/swept per level, top_changed if moved
 ```
@@ -496,6 +498,19 @@ extend beyond the deepest level a take can *consume* plus the words through
 `limit_tick`'s (§14). Only a walk that began at the recorded best moves `BestTick`
 (otherwise the recorded best is still live and unvisited); an empty recorded side is
 never overwritten with a frontier.
+
+**Deterministic pay-in (auth).** Every SAC `transfer(user → vault, amount)` carries
+`user.require_auth()` on its exact arguments, and the user's signed authorization tree
+is built at simulation. A pay-in that depended on the book (the netted "what I ended
+up spending") would therefore fail authorization on any race — the opposite of
+graceful degradation. So the taker's pay-in is the full escrow at the limit price
+(bid: `qty × limit_tick × tick_size` quote; ask: `qty × lot_size` base), knowable from
+the arguments alone; what the walk did not spend and did not rest flows back out of
+the vault, together with the taker's output net of fee, and the rested part stays as
+the order's escrow. Pay-in and pay-out are never netted against each other: at most
+one transfer in and one out per token per transaction (`replace`: the full new escrow
+in; the old order's proceeds and refund out; `route` / `replace_batch`: sums of the
+same). Vault → user transfers need no user authorization, so they may vary freely.
 
 **`start_tick` validity, and "still crosses".** `start_tick` MUST lie in
 `[tick_min, tick_max)` — otherwise `BadStartTick`. Every in-band value is legal: one
@@ -616,8 +631,10 @@ would carry.) Replace never
 takes liquidity: it applies §9's conservative post-only check against recorded
 `BestTick` and fails `Crossed` instead. And it is atomic — the maker is never unquoted
 between the settlement and the re-rest, which a settle-then-place pair cannot
-guarantee. Escrow moves as a single *delta* (new escrow − refund − proceeds), netted
-per token.
+guarantee. The maker pays in the full new escrow (a function of the arguments, so the
+signed authorization holds whatever filled in flight — §8 "Deterministic pay-in") and
+the old order's proceeds and refund flow back out; per token, at most one transfer
+each way.
 
 **`replace_batch(items[])`** — ≤ `MAX_REPLACE_BATCH` items, settlement deltas netted
 in invocation memory, one transfer per token at the end. A full book refresh is one
@@ -764,8 +781,9 @@ slot windows: for each *set* level in the band, pages
 none — their queues are inline). On the taker's **own** side, for its possible rest:
 `Level(own_side, limit_tick)` (set or not — the rest rewrites or creates it),
 `TickWord(own_side, word(limit_tick))`, own-side `TickSummary` and `BestTick`,
-`Order(taker, nonce)`, and append pages `{page(tail_sim), +1, 0}`. Both vault balances
-and `FeeAccrual`. That list is exhaustive: a take-plus-rest place touches nothing else.
+`Order(taker, nonce)`, and append pages `{page(tail_sim), +1, 0}`. Both vault balances,
+the caller's own balance entries in both tokens (every transfer touches them), and
+both `FeeAccrual`s. That list is exhaustive: a take-plus-rest place touches nothing else.
 Band padding is required because a new level can appear at *any* tick inside the walk
 range; window padding is required because a concurrent take can move a head into
 pages, and a concurrent rest can move a tail across a page boundary. The band need not

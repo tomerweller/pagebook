@@ -140,28 +140,39 @@ pub fn place_body(
         rested = true;
     }
 
-    // Taker's token movement, netted into `net` (flushed by the entry point).
-    if out.filled > 0 {
-        if is_bid {
-            net.add(env, &m.quote, out.quote);
+    // Taker's token movement (ADR-021): the pay-in is the full escrow at the
+    // limit price — a pure function of the arguments, so the SAC transfer's
+    // auth matches what the taker signed at simulation whatever the book did in
+    // flight — and everything variable flows back out of the vault: the unspent
+    // part of the escrow (what neither filled nor rested), and the taker's
+    // output net of fee. The rested part stays in the vault as the order's escrow.
+    let rested_lots = if rested { out.left } else { 0 };
+    let unspent_lots = crate::math::chk_sub_u64(env, qty_lots, out.filled + rested_lots);
+    if is_bid {
+        // in: qty × limit × tick_size quote; out: quote not spent, base output − fee
+        let escrow = quote_atoms(env, qty_lots, limit_tick, m.tick_size);
+        net.pay_in(env, &m.quote, escrow);
+        let spent = out.quote;
+        let rest_escrow = quote_atoms(env, rested_lots, limit_tick, m.tick_size);
+        let back = crate::math::chk_sub(env, crate::math::chk_sub(env, escrow, spent), rest_escrow);
+        net.pay_out(env, &m.quote, back);
+        if out.filled > 0 {
             let base_out = crate::math::base_atoms(env, out.filled, m.lot_size);
             let fee = taker_fee(env, base_out, m.taker_fee_bps);
-            net.sub(env, &m.base, crate::math::chk_sub(env, base_out, fee));
+            net.pay_out(env, &m.base, crate::math::chk_sub(env, base_out, fee));
             settle::accrue_fee(env, market, &m.base, fee);
-        } else {
-            net.add(
-                env,
-                &m.base,
-                crate::math::base_atoms(env, out.filled, m.lot_size),
-            );
+        }
+    } else {
+        // in: qty × lot_size base; out: base not spent, quote output − fee
+        let escrow = crate::math::base_atoms(env, qty_lots, m.lot_size);
+        net.pay_in(env, &m.base, escrow);
+        let back = crate::math::base_atoms(env, unspent_lots, m.lot_size);
+        net.pay_out(env, &m.base, back);
+        if out.filled > 0 {
             let fee = taker_fee(env, out.quote, m.taker_fee_bps);
-            net.sub(env, &m.quote, crate::math::chk_sub(env, out.quote, fee));
+            net.pay_out(env, &m.quote, crate::math::chk_sub(env, out.quote, fee));
             settle::accrue_fee(env, market, &m.quote, fee);
         }
-    }
-    if rested {
-        let (tok, amt) = settle::escrow_for(env, m, is_bid, limit_tick, out.left);
-        net.add(env, &tok, amt);
     }
     (rested, out.filled, out.quote)
 }

@@ -52,15 +52,18 @@ pub fn replace_body(
     rest::rest(
         env, owner, market, m, is_bid, tick, qty_lots, nonce, window, true,
     );
+    // ADR-021: the pay-in is the full new escrow (a function of the arguments);
+    // the old order's proceeds and refund flow out separately, whatever filled
+    // in flight.
     if r.is_bid {
-        net.sub(env, &m.base, r.paid);
-        net.sub(env, &m.quote, r.refunded);
+        net.pay_out(env, &m.base, r.paid);
+        net.pay_out(env, &m.quote, r.refunded);
     } else {
-        net.sub(env, &m.quote, r.paid);
-        net.sub(env, &m.base, r.refunded);
+        net.pay_out(env, &m.quote, r.paid);
+        net.pay_out(env, &m.base, r.refunded);
     }
     let (new_tok, new_amt) = settle::escrow_for(env, m, is_bid, tick, qty_lots);
-    net.add(env, &new_tok, new_amt);
+    net.pay_in(env, &new_tok, new_amt);
     (r.paid, r.refunded)
 }
 
