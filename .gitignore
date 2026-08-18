@@ -6,3 +6,4 @@ target/
 test_snapshots/
 tools/soak/*.log
 tools/soak/*.out
+__pycache__/
