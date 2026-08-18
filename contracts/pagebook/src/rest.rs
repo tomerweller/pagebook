@@ -37,7 +37,7 @@ pub fn rest(
     );
     store::save_level(env, market, is_bid, tick, &lvl);
     if was_empty {
-        set_presence(env, market, is_bid, tick);
+        crate::bitmap::set_tick(env, market, is_bid, tick);
     }
     update_best_on_rest(env, market, is_bid, tick);
     store::save_order(
@@ -54,17 +54,6 @@ pub fn rest(
         },
     );
     events::rested(env, market, owner, nonce, is_bid, tick, lvl.generation, seq);
-}
-
-fn set_presence(env: &Env, market: u32, is_bid: bool, tick: u32) {
-    let word = pagebook_types::word_of(tick);
-    let bit = pagebook_types::bit_in_word(tick);
-    let mut tw = load_bitmap(env, DataKeyWord::Word(market, is_bid, word));
-    tw.set(bit);
-    save_bitmap(env, DataKeyWord::Word(market, is_bid, word), &tw);
-    let mut sum = load_bitmap(env, DataKeyWord::Summary(market, is_bid));
-    sum.set(word);
-    save_bitmap(env, DataKeyWord::Summary(market, is_bid), &sum);
 }
 
 fn update_best_on_rest(env: &Env, market: u32, is_bid: bool, tick: u32) {
@@ -94,53 +83,6 @@ pub fn crosses(taker_is_bid: bool, opp_tick: u32, limit_tick: u32) -> bool {
     }
 }
 
-enum DataKeyWord {
-    Word(u32, bool, u32),
-    Summary(u32, bool),
-}
-
-fn load_bitmap(env: &Env, k: DataKeyWord) -> pagebook_types::TickBitmap {
-    use crate::keys::DataKey;
-    use pagebook_types::{TickBitmap, TICK_BITMAP_BYTES};
-    use soroban_sdk::Bytes;
-    let key = match k {
-        DataKeyWord::Word(m, b, w) => DataKey::TickWord(m, b, w),
-        DataKeyWord::Summary(m, b) => DataKey::TickSummary(m, b),
-    };
-    match env.storage().persistent().get::<_, Bytes>(&key) {
-        Some(bytes) => {
-            let mut raw = [0u8; TICK_BITMAP_BYTES];
-            if bytes.len() != TICK_BITMAP_BYTES as u32 {
-                return TickBitmap::default();
-            }
-            bytes.copy_into_slice(&mut raw);
-            TickBitmap::decode(&raw).unwrap_or_default()
-        }
-        None => TickBitmap::default(),
-    }
-}
-
-fn save_bitmap(env: &Env, k: DataKeyWord, bm: &pagebook_types::TickBitmap) {
-    use crate::keys::DataKey;
-    use soroban_sdk::Bytes;
-    let key = match k {
-        DataKeyWord::Word(m, b, w) => DataKey::TickWord(m, b, w),
-        DataKeyWord::Summary(m, b) => DataKey::TickSummary(m, b),
-    };
-    env.storage()
-        .persistent()
-        .set(&key, &Bytes::from_array(env, &bm.encode()));
-}
-
 pub fn clear_presence(env: &Env, market: u32, is_bid: bool, tick: u32) {
-    let word = pagebook_types::word_of(tick);
-    let bit = pagebook_types::bit_in_word(tick);
-    let mut tw = load_bitmap(env, DataKeyWord::Word(market, is_bid, word));
-    tw.clear(bit);
-    save_bitmap(env, DataKeyWord::Word(market, is_bid, word), &tw);
-    if !tw.any_set() {
-        let mut sum = load_bitmap(env, DataKeyWord::Summary(market, is_bid));
-        sum.clear(word);
-        save_bitmap(env, DataKeyWord::Summary(market, is_bid), &sum);
-    }
+    crate::bitmap::clear_tick(env, market, is_bid, tick);
 }

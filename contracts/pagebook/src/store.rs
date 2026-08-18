@@ -51,12 +51,6 @@ pub fn load_level(env: &Env, market: u32, is_bid: bool, tick: u32) -> Level {
     }
 }
 
-pub fn level_exists(env: &Env, market: u32, is_bid: bool, tick: u32) -> bool {
-    env.storage()
-        .persistent()
-        .has(&DataKey::Level(market, is_bid, tick))
-}
-
 pub fn save_level(env: &Env, market: u32, is_bid: bool, tick: u32, level: &Level) {
     let bytes = Bytes::from_array(env, &level.encode());
     env.storage()

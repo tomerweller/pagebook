@@ -41,8 +41,16 @@ pub fn place(
         }
     }
 
-    let (filled, quote, remainder) = take_one(
-        env, market, &m, is_bid, limit_tick, qty_lots, start_tick, &window,
+    let (filled, quote, remainder) = walk(
+        env,
+        market,
+        &m,
+        is_bid,
+        limit_tick,
+        qty_lots,
+        start_tick,
+        &window,
+        Mode::Apply,
     );
 
     if remainder > 0 && flags.fill_or_kill {
@@ -67,7 +75,13 @@ pub fn place(
     (rested, filled, quote)
 }
 
-fn take_one(
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub enum Mode {
+    Apply,
+    DryRun,
+}
+
+fn walk(
     env: &Env,
     market: u32,
     m: &Market,
@@ -76,45 +90,122 @@ fn take_one(
     qty: u64,
     start_tick: u32,
     window: &SlotWindow,
+    mode: Mode,
 ) -> (u64, i128, u64) {
     let opp = !taker_is_bid;
-    if !rest::crosses(taker_is_bid, start_tick, limit_tick) {
-        return (0, 0, qty);
-    }
-    let mut lvl = store::load_level(env, market, opp, start_tick);
-    if lvl.open_lots == 0 {
-        if store::level_exists(env, market, opp, start_tick) {
-            rest::clear_presence(env, market, opp, start_tick);
+    let ascend = taker_is_bid;
+    let recorded = store::load_best(env, market, opp);
+    let mut cur = if recorded.empty {
+        start_tick
+    } else if ascend {
+        core::cmp::max(recorded.tick, start_tick)
+    } else {
+        core::cmp::min(recorded.tick, start_tick)
+    };
+    let mut left = qty;
+    let mut filled = 0u64;
+    let mut quote = 0i128;
+    let mut crossed = 0u32;
+    let apply = mode == Mode::Apply;
+    let mut last_tick = cur;
+    while left > 0 && rest::crosses(taker_is_bid, cur, limit_tick) && crossed < m.max_levels_crossed
+    {
+        last_tick = cur;
+        let mut lvl = store::load_level(env, market, opp, cur);
+        crossed += 1;
+        if lvl.open_lots == 0 {
+            if apply {
+                rest::clear_presence(env, market, opp, cur);
+            }
+            match crate::bitmap::next_set_tick(env, market, opp, cur, ascend) {
+                Some(n) => cur = n,
+                None => {
+                    if apply {
+                        store::save_best(
+                            env,
+                            market,
+                            opp,
+                            &BestTick {
+                                empty: true,
+                                tick: cur,
+                            },
+                        );
+                    }
+                    break;
+                }
+            }
+            continue;
         }
-        return (0, 0, qty);
+        if lvl.open_lots <= left {
+            let took = lvl.open_lots;
+            let q = quote_atoms(env, took, cur, m.tick_size);
+            filled += took;
+            quote = crate::math::chk_add(env, quote, q);
+            left -= took;
+            if apply {
+                let gen = lvl.generation;
+                level::sweep_reset(env, &mut lvl);
+                store::save_level(env, market, opp, cur, &lvl);
+                rest::clear_presence(env, market, opp, cur);
+                events::filled(env, market, opp, cur, took, q);
+                events::swept(env, market, opp, cur, gen);
+            }
+            if left == 0 {
+                if apply {
+                    store::save_best(
+                        env,
+                        market,
+                        opp,
+                        &BestTick {
+                            empty: false,
+                            tick: cur,
+                        },
+                    );
+                }
+                break;
+            }
+            match crate::bitmap::next_set_tick(env, market, opp, cur, ascend) {
+                Some(n) => cur = n,
+                None => {
+                    if apply {
+                        store::save_best(
+                            env,
+                            market,
+                            opp,
+                            &BestTick {
+                                empty: true,
+                                tick: cur,
+                            },
+                        );
+                    }
+                    break;
+                }
+            }
+            continue;
+        }
+        let page_last = consume_last(window, cur);
+        let took = consume_partial(env, market, m, opp, cur, &mut lvl, left, page_last);
+        let q = quote_atoms(env, took, cur, m.tick_size);
+        filled += took;
+        quote = crate::math::chk_add(env, quote, q);
+        left -= took;
+        if apply {
+            store::save_level(env, market, opp, cur, &lvl);
+            events::filled(env, market, opp, cur, took, q);
+            store::save_best(
+                env,
+                market,
+                opp,
+                &BestTick {
+                    empty: false,
+                    tick: cur,
+                },
+            );
+        }
+        break;
     }
-    if lvl.open_lots <= qty {
-        let took = lvl.open_lots;
-        let quote = quote_atoms(env, took, start_tick, m.tick_size);
-        let gen = lvl.generation;
-        level::sweep_reset(env, &mut lvl);
-        store::save_level(env, market, opp, start_tick, &lvl);
-        rest::clear_presence(env, market, opp, start_tick);
-        store::save_best(
-            env,
-            market,
-            opp,
-            &BestTick {
-                empty: false,
-                tick: start_tick,
-            },
-        );
-        events::filled(env, market, opp, start_tick, took, quote);
-        events::swept(env, market, opp, start_tick, gen);
-        return (took, quote, qty - took);
-    }
-
-    let page_last = consume_last(window, start_tick);
-    let took = consume_partial(env, market, m, opp, start_tick, &mut lvl, qty, page_last);
-    let quote = quote_atoms(env, took, start_tick, m.tick_size);
-    store::save_level(env, market, opp, start_tick, &lvl);
-    events::filled(env, market, opp, start_tick, took, quote);
-    (took, quote, qty - took)
+    let _ = last_tick;
+    (filled, quote, left)
 }
 
 fn consume_last(window: &SlotWindow, tick: u32) -> Option<u32> {
@@ -210,4 +301,79 @@ fn pay_place(
     }
     settle::apply_net(env, &m.base, taker, base_net);
     settle::apply_net(env, &m.quote, taker, quote_net);
+}
+
+pub fn quote_place(
+    env: &Env,
+    market: u32,
+    is_bid: bool,
+    limit_tick: u32,
+    qty: u64,
+) -> crate::iface::QuoteResult {
+    let m = store::load_market(env, market);
+    crate::market::require_tick(env, &m, limit_tick);
+    let opp = store::load_best(env, market, !is_bid);
+    let start_tick = if opp.empty { limit_tick } else { opp.tick };
+    let window = crate::iface::empty_window(env);
+    let _ = walk(
+        env,
+        market,
+        &m,
+        is_bid,
+        limit_tick,
+        qty,
+        start_tick,
+        &window,
+        Mode::DryRun,
+    );
+    let mut crossed = soroban_sdk::Vec::new(env);
+    let mut keys = soroban_sdk::Vec::new(env);
+    let mut t = start_tick;
+    let ascend = is_bid;
+    let mut n = 0u32;
+    while rest::crosses(is_bid, t, limit_tick) && n < m.max_levels_crossed {
+        crossed.push_back(t);
+        keys.push_back(crate::iface::QuotedKey {
+            key: crate::keys::DataKey::Level(market, !is_bid, t),
+            archived: false,
+        });
+        n += 1;
+        match crate::bitmap::next_set_tick(env, market, !is_bid, t, ascend) {
+            Some(nx) => t = nx,
+            None => break,
+        }
+    }
+    if crossed.is_empty() {
+        keys.push_back(crate::iface::QuotedKey {
+            key: crate::keys::DataKey::Level(market, !is_bid, start_tick),
+            archived: false,
+        });
+    }
+    keys.push_back(crate::iface::QuotedKey {
+        key: crate::keys::DataKey::Level(market, is_bid, limit_tick),
+        archived: false,
+    });
+    keys.push_back(crate::iface::QuotedKey {
+        key: crate::keys::DataKey::BestTick(market, !is_bid),
+        archived: false,
+    });
+    keys.push_back(crate::iface::QuotedKey {
+        key: crate::keys::DataKey::BestTick(market, is_bid),
+        archived: false,
+    });
+    keys.push_back(crate::iface::QuotedKey {
+        key: crate::keys::DataKey::TickSummary(market, !is_bid),
+        archived: false,
+    });
+    keys.push_back(crate::iface::QuotedKey {
+        key: crate::keys::DataKey::TickSummary(market, is_bid),
+        archived: false,
+    });
+    let own = store::load_level(env, market, is_bid, limit_tick);
+    crate::iface::QuoteResult {
+        start_tick,
+        crossed,
+        tail_seq: own.tail_seq,
+        keys,
+    }
 }

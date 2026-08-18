@@ -5,6 +5,7 @@ mod fees;
 mod footprint;
 mod harness;
 mod market;
+mod matching;
 mod sizes;
 mod ttl;
 

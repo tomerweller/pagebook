@@ -1,3 +1,4 @@
+use crate::keys::DataKey;
 use soroban_sdk::{contracttype, Vec};
 
 #[contracttype]
@@ -92,6 +93,22 @@ impl PageRange {
 
 pub fn default_append() -> PageRange {
     PageRange { first: 0, last: 1 }
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QuotedKey {
+    pub key: DataKey,
+    pub archived: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QuoteResult {
+    pub start_tick: u32,
+    pub crossed: Vec<u32>,
+    pub tail_seq: u32,
+    pub keys: Vec<QuotedKey>,
 }
 
 pub fn empty_window(env: &soroban_sdk::Env) -> SlotWindow {

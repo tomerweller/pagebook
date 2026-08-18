@@ -2,6 +2,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod admin;
+mod bitmap;
 mod errors;
 mod events;
 mod iface;
@@ -21,7 +22,7 @@ use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
 pub use errors::Error;
 pub use iface::{
     empty_window, ConsumeWindow, LevelInfo, OrderInfo, PageRange, PlaceFlags, PlaceLeg,
-    ReplaceItem, SlotWindow,
+    QuoteResult, ReplaceItem, SlotWindow,
 };
 pub use keys::{DataKey, MAX_ENTRY_TTL, MIN_PERSISTENT_TTL};
 pub use pagebook_types::{Config, MarketId};
@@ -154,5 +155,70 @@ impl PageBook {
 
     pub fn collect_fees(env: Env, market: u32, token: Address) -> i128 {
         settle::collect_fees(&env, market, token)
+    }
+
+    pub fn route(
+        env: Env,
+        taker: Address,
+        legs: soroban_sdk::Vec<PlaceLeg>,
+    ) -> soroban_sdk::Vec<(bool, u64, i128)> {
+        store::require_not_paused(&env);
+        if legs.len() > pagebook_types::MAX_ROUTE_LEGS {
+            env.panic_with_error(Error::TooManyLegs);
+        }
+        taker.require_auth();
+        let mut out = soroban_sdk::Vec::new(&env);
+        for leg in legs.iter() {
+            let r = matching::place(
+                &env,
+                taker.clone(),
+                leg.market,
+                leg.is_bid,
+                leg.limit_tick,
+                leg.qty_lots,
+                leg.start_tick,
+                leg.nonce,
+                leg.window,
+                leg.flags,
+            );
+            out.push_back(r);
+        }
+        out
+    }
+
+    pub fn replace_batch(
+        env: Env,
+        owner: Address,
+        market: u32,
+        items: soroban_sdk::Vec<ReplaceItem>,
+    ) -> soroban_sdk::Vec<(i128, i128)> {
+        if items.len() > pagebook_types::MAX_REPLACE_BATCH {
+            env.panic_with_error(Error::BatchTooLarge);
+        }
+        let mut out = soroban_sdk::Vec::new(&env);
+        for item in items.iter() {
+            let r = replace::replace(
+                &env,
+                owner.clone(),
+                market,
+                item.nonce,
+                item.is_bid,
+                item.tick,
+                item.qty_lots,
+                item.window,
+            );
+            out.push_back(r);
+        }
+        out
+    }
+
+    pub fn quote_place(
+        env: Env,
+        market: u32,
+        is_bid: bool,
+        limit_tick: u32,
+        qty: u64,
+    ) -> QuoteResult {
+        matching::quote_place(&env, market, is_bid, limit_tick, qty)
     }
 }
