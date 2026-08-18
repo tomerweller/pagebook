@@ -4,10 +4,12 @@
 Drives four accounts against a deployed PageBook market through the stellar CLI:
 
   taker   places bids/asks that cross the book (padded footprints, §14)
-  maker   keeps a two-sided book and re-quotes with replace / replace_batch
+  maker   keeps a two-sided book, re-quotes with replace / replace_batch,
+          settles the replaced quotes later
   spam    quote-improving spammer: post-only rests inside the spread, then
           replaces away (arms stale bits and phantom bests)
-  storm   same-level rest storms at the current best (append-window races)
+  storm   same-level rest storms at the current best (append-window races),
+          stepping out a tick on LevelFull and settling each burst 45 s later
 
 Every transaction goes build (`contract invoke --build-only`) -> `tx simulate`
 -> footprint union with the client pad (band Levels, words, summaries, bests,
@@ -350,8 +352,9 @@ class Soak:
             sim = self.cli.simulate(source, xdr)
         except SimError as e:
             e = str(e)
-            self.record(role, fn, "sim:" + classify(1, "", e), e[:400] + " ... " + e[-200:] if len(e) > 600 else e)
-            return None
+            outcome = "sim:" + classify(1, "", e)
+            self.record(role, fn, outcome, e[:400] + " ... " + e[-200:] if len(e) > 600 else e)
+            return outcome
         except Exception as e:
             self.record(role, fn, "build_error", str(e))
             return None
@@ -393,6 +396,15 @@ class Soak:
             keys += token_keys(self.a.contract, [self.a.base, self.a.quote], self.addr[role], self.a.issuer, self.a.codes.split(","))
         return self.submit(role, "place", args, keys), nonce
 
+    def settle(self, role, nonce, is_bid, tick):
+        """settle(owner, market, nonce): simulation sees the order's level and pages;
+        the pad adds both tokens (a fill in flight pays the other one) and the
+        level's pages (a page turn in flight)."""
+        pad = token_keys(self.a.contract, [self.a.base, self.a.quote], self.addr[role], self.a.issuer, self.a.codes.split(","))
+        for pg in (0, 1):
+            pad.append(ck(self.a.contract, "LevelPage", self.a.market, is_bid, tick, pg))
+        return self.submit(role, "settle", ["--owner", self.addr[role], "--market", str(self.a.market), "--nonce", str(nonce)], pad)
+
     def taker_loop(self):
         while not self.stop.is_set():
             is_bid = random.random() < 0.5
@@ -408,6 +420,7 @@ class Soak:
     def maker_loop(self):
         mid = self.a.mid
         live = []
+        settle_later = []
         while not self.stop.is_set():
             # keep ~4 quotes each side; rest missing ones, occasionally replace_batch them 1 tick
             side = random.random() < 0.5
@@ -426,8 +439,17 @@ class Soak:
                 for it in items:
                     for pg in (0, 1):
                         pad.append(ck(self.a.contract, "LevelPage", self.a.market, it["is_bid"], it["tick"], pg))
-                self.submit("pb-maker", "replace_batch", ["--owner", self.addr["pb-maker"], "--market", str(self.a.market), "--items", json.dumps(items)], pad)
+                out = self.submit("pb-maker", "replace_batch", ["--owner", self.addr["pb-maker"], "--market", str(self.a.market), "--items", json.dumps(items)], pad)
+                if out == "ok":
+                    settle_later.append((time.time(), [(it["nonce"], it["is_bid"], it["tick"]) for it in items]))
+                else:
+                    settle_later.append((time.time(), live[:6]))
                 live = live[6:]
+            now = time.time()
+            for (t0, orders) in [x for x in settle_later if now - x[0] > 40]:
+                settle_later.remove((t0, orders))
+                for (n, s, t) in orders:
+                    self.settle("pb-maker", n, s, t)
             time.sleep(random.uniform(2, 6))
 
     def spam_loop(self):
@@ -448,13 +470,25 @@ class Soak:
             time.sleep(random.uniform(3, 8))
 
     def storm_loop(self):
+        pending = []
         while not self.stop.is_set():
             ba = self.best(False)
             if ba is None:
                 time.sleep(5)
                 continue
             for _ in range(random.randint(3, 8)):
-                self.place("pb-storm", False, ba, 1, {"post_only": True, "fill_or_kill": False, "no_rest": False})
+                # a full level is a simulation-time LevelFull: step out one tick at a time
+                for k in range(0, 4):
+                    out, nonce = self.place("pb-storm", False, ba + k, 1, {"post_only": True, "fill_or_kill": False, "no_rest": False})
+                    if out == "ok":
+                        pending.append((time.time(), nonce, ba + k))
+                    if out != "sim:typed:LevelFull":
+                        break
+            now = time.time()
+            due = [p for p in pending if now - p[0] > 45]
+            pending = [p for p in pending if now - p[0] <= 45]
+            for (_, n, t) in due:
+                self.settle("pb-storm", n, False, t)
             time.sleep(random.uniform(8, 20))
 
     def run(self):
