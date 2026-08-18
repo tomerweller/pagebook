@@ -100,7 +100,7 @@ fn signed_pay_in_survives_a_race_that_changes_the_fill() {
     // fill 1 @ 25 and rest 4 @ 30; the pay-in is the full escrow 5 × 30 = 150.
     rest_ask(&h, &maker, 25, 1, 1);
     let (is_bid, limit, qty, start, nonce) = (true, 30u32, 5u64, 25u32, 7u64);
-    let escrow: i128 = 5 * 30 * 1;
+    let escrow: i128 = 5 * 30; // qty × limit × tick_size(1)
     let w: SlotWindow = window(&h);
     let f = PlaceFlags::none();
 
