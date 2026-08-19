@@ -403,11 +403,7 @@
         <li class="item"><a href="#client">The client's process</a></li>
       </ol>
     </li>
-    <li class="group"><a href="#part3">Part III: what comes out</a>
-      <ol>
-        <li class="item"><a href="#budgets">Budgets and fees</a></li>
-      </ol>
-    </li>
+    <li class="item"><a href="#budgets">Budgets and fees</a></li>
   </ol>
 </nav>
 
@@ -464,34 +460,11 @@
     </table>
   </div>
   <p>
-    Plus the vault: the contract's own SAC balance entries, one per token. PageBook does not define them, but every settling transaction has them in its read-write footprint, which makes them the point where transactions serialize (Part III).
+    Plus the vault: the contract's own SAC balance entries, one per token. PageBook does not define them, but every settling transaction has them in its read-write footprint, which makes them the point where transactions serialize (the concurrency note under Budgets and fees).
   </p>
-  <figure>
-    <div class="fig">
-      <svg viewBox="0 0 880 200" role="img" aria-label="Two groups side by side. The order store (Level, LevelPage, Order, FeeAccrual) is authoritative, funds-bearing, and never stale: the source of truth. The tick index (BestTick, TickSummary, TickWord) is derived and money-free, may run stale, and is healed lazily by the next place that walks through.">
-        <g font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12">
-          <rect x="30" y="34" width="360" height="130" rx="10" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
-          <text x="46" y="58" font-weight="650" fill="currentColor">ORDER STORE</text>
-          <text x="46" y="76" fill="var(--muted)">authoritative · funds-bearing · never stale</text>
-          <g font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">
-            <text x="46" y="106">Level</text><text x="120" y="106">LevelPage</text>
-            <text x="46" y="128">Order</text><text x="120" y="128">FeeAccrual</text>
-          </g>
-          <text x="46" y="152" fill="var(--muted)">source of truth</text>
-
-          <rect x="490" y="34" width="360" height="130" rx="10" fill="var(--surface)" stroke="var(--accent)" stroke-dasharray="6 4" stroke-width="1.5"/>
-          <text x="506" y="58" font-weight="650" fill="var(--accent)">TICK INDEX</text>
-          <text x="506" y="76" fill="var(--muted)">derived · money-free · may run stale</text>
-          <g font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">
-            <text x="506" y="106">BestTick</text><text x="600" y="106">TickSummary</text>
-            <text x="506" y="128">TickWord</text>
-          </g>
-          <text x="506" y="152" fill="var(--muted)">healed lazily by the next place that walks through</text>
-        </g>
-      </svg>
-    </div>
-    <figcaption>This asymmetry is what lets the index be sloppy. The order store carries the hard rules (a Level is never deleted; nothing past the tail is ever read). The index only has to satisfy a staleness contract: a bit may be set over an empty level, but never clear over a live one, and BestTick is never worse than the true best.</figcaption>
-  </figure>
+  <p>
+    The asymmetry between the two big groups is what lets the index be sloppy. The order store carries the hard rules (a Level is never deleted; nothing past the tail is ever read); the index only has to satisfy the one-directional staleness contract described with the tick index below, and is healed lazily by the next <code>place</code> that walks through.
+  </p>
 </section>
 
 <section id="level">
@@ -887,11 +860,11 @@
   </figure>
 </section>
 
-<h2 class="part" id="part3">Part III: what comes out</h2>
-<p class="lead">Small hot entries, capped loops, and a client-padded footprint give a router a transaction it can simulate once and trust, and one that parallelizes with anything outside its read-write set.</p>
-
 <section id="budgets">
   <h3>Budgets and fees <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#17-budgets-and-fees">04 §17</a></span></h3>
+  <p>
+    What comes out of all of the above: small hot entries, capped loops, and a client-padded footprint give a router a transaction it can simulate once and trust, and one that parallelizes with anything outside its read-write set. The numbers:
+  </p>
   <div class="tablewrap">
     <table>
       <thead><tr><th>Operation</th><th class="num">Footprint entries</th><th class="num">Write entries</th><th class="num">Write bytes</th><th class="num">Est. resource fee</th><th>Dominated by</th></tr></thead>
