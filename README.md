@@ -125,6 +125,22 @@ These are the main limits and behaviors behind the design:
   transaction write bytes. A maximal 32-level take is estimated at about 85
   footprint entries plus padding, 72 writes, and about 27 KB of writes.
 
+## Testnet deployment
+
+Contract `CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO` is deployed
+on the Stellar testnet. Market 0 trades two test assets (`PBA`/`PBB`) with lot
+1, tick 1, and a 10 bps taker fee. A read-only status page for that market
+updates live at
+[blob.tomerweller.com/pagebook/dashboard](https://blob.tomerweller.com/pagebook/dashboard/).
+
+The market has run real rests, takes, and settles, plus a multi-account soak
+through the full padding protocol (simulate, pad, submit), driven by
+`tools/soak/soak.py` through the stellar CLI. What the network taught the
+padding protocol beyond the SDK test host, and the soak results, are recorded
+in [ADR-025](docs/decisions/025-m4-testnet.md). Live-host restore behavior for
+archived entries still needs its scheduled testnet check (the runbook is in the
+same ADR).
+
 ## Repository layout
 
 | Path | Contents |
