@@ -232,6 +232,23 @@ def pad_keys(contract, market, is_bid, limit, q, pad_end, owner, nonce, base, qu
     return keys
 
 
+def rest_keys(contract, market, is_bid, tick):
+    """The rest half of pagebook-client keys_for_replace (§14 own-side keys): the
+    level, its word, summary and best, the opposite best, and the append pages.
+    Simulation misses the word when the level had open lots (rest.rs sets the
+    bit only on an empty level) and the level then empties in flight."""
+    keys = [
+        ck(contract, "Level", market, is_bid, tick),
+        ck(contract, "TickWord", market, is_bid, word_of(tick)),
+        ck(contract, "TickSummary", market, is_bid),
+        ck(contract, "BestTick", market, is_bid),
+        ck(contract, "BestTick", market, not is_bid),
+    ]
+    for pg in (0, 1):
+        keys.append(ck(contract, "LevelPage", market, is_bid, tick, pg))
+    return keys
+
+
 def token_keys(pagebook, sacs, caller, issuer, codes):
     """Both tokens' entries a place may touch whatever the book does in flight:
     the SAC instance, the vault's SAC balance, the caller's classic trustline.
@@ -437,8 +454,7 @@ class Soak:
                     items.append({"nonce": n, "is_bid": s, "tick": nt, "qty_lots": random.randint(2, 6), "window": {"consume": [], "append": {"first": 0, "last": 1}}})
                 pad = token_keys(self.a.contract, [self.a.base, self.a.quote], self.addr["pb-maker"], self.a.issuer, self.a.codes.split(","))
                 for it in items:
-                    for pg in (0, 1):
-                        pad.append(ck(self.a.contract, "LevelPage", self.a.market, it["is_bid"], it["tick"], pg))
+                    pad += rest_keys(self.a.contract, self.a.market, it["is_bid"], it["tick"])
                 out = self.submit("pb-maker", "replace_batch", ["--owner", self.addr["pb-maker"], "--market", str(self.a.market), "--items", json.dumps(items)], pad)
                 if out == "ok":
                     settle_later.append((time.time(), [(it["nonce"], it["is_bid"], it["tick"]) for it in items]))
@@ -464,8 +480,7 @@ class Soak:
                 time.sleep(random.uniform(1, 3))
                 nt = max(1, bb - 20)
                 pad = token_keys(self.a.contract, [self.a.base, self.a.quote], self.addr["pb-spam"], self.a.issuer, self.a.codes.split(","))
-                for pg in (0, 1):
-                    pad.append(ck(self.a.contract, "LevelPage", self.a.market, True, nt, pg))
+                pad += rest_keys(self.a.contract, self.a.market, True, nt)
                 self.submit("pb-spam", "replace", ["--owner", self.addr["pb-spam"], "--market", str(self.a.market), "--nonce", str(nonce), "--is_bid", "true", "--tick", str(nt), "--qty_lots", "1", "--window", json.dumps({"consume": [], "append": {"first": 0, "last": 1}})], pad)
             time.sleep(random.uniform(3, 8))
 
