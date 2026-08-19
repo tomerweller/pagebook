@@ -125,17 +125,6 @@ These are the main limits and behaviors behind the design:
   transaction write bytes. A maximal 32-level take is estimated at about 85
   footprint entries plus padding, 72 writes, and about 27 KB of writes.
 
-The repository tests cover matching, settlement, routes, pages, size budgets,
-footprints, resource-fee gates, TTL behavior in the SDK test host, and
-conservation properties. A testnet deployment
-(`CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO`, market 0 on two test
-assets) has run real rests, takes, settles and a multi-account soak through the
-padding protocol (`tools/soak/`, ADR-025). A read-only status page for that
-market updates live at
-[blob.tomerweller.com/pagebook/dashboard](https://blob.tomerweller.com/pagebook/dashboard/).
-Live-host restore behavior for archived entries still needs its scheduled
-testnet check (ADR-025 runbook).
-
 ## Repository layout
 
 | Path | Contents |
