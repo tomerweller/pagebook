@@ -26,3 +26,12 @@ on a fallback the plan says is not done.
 
 Nothing in the architecture. M5's client crate is still shipped so padding
 and nonce helpers exist for whoever runs the soak.
+
+## Update (2026-08-18)
+
+ADR-024 closed the in-repo gates (worst-case matrix, write-byte and fee gates,
+no-rent tests). ADR-025 closed the testnet items: redeploy and real trades,
+and the 2,000-ledger soak with the spammer and rest storm active (4,573
+transactions, no footprint failure, no unexplained trap). What remains partial
+is the three restore-opt-in transactions, which wait on testnet's seven-day
+minimum TTL; ADR-025 carries the fixtures and the runbook.

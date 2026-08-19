@@ -133,9 +133,10 @@ on the Stellar testnet. Market 0 trades two test assets (`PBA`/`PBB`) with lot
 updates live at
 [blob.tomerweller.com/pagebook/dashboard](https://blob.tomerweller.com/pagebook/dashboard/).
 
-The market has run real rests, takes, and settles, plus a multi-account soak
-through the full padding protocol (simulate, pad, submit), driven by
-`tools/soak/soak.py` through the stellar CLI. What the network taught the
+The market has run real rests, takes, and settles, plus a 2,000-ledger
+multi-account soak through the full padding protocol (simulate, pad, submit),
+driven by `tools/soak/soak.py` through the stellar CLI: 4,573 transactions
+landed with no footprint failure. What the network taught the
 padding protocol beyond the SDK test host, and the soak results, are recorded
 in [ADR-025](docs/decisions/025-m4-testnet.md). Live-host restore behavior for
 archived entries still needs its scheduled testnet check (the runbook is in the

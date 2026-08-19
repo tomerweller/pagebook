@@ -94,12 +94,32 @@ Long-run attempts (each stopped for a tool fix, logs kept locally):
   Stopped to fix the soak's replace pad; the failure is a client-pad omission,
   not a design or contract defect.
 
-Definitive 2,000-ledger run: `tools/soak/soak-2000.log` (JSON lines; the last
-line is the summary). Result to be recorded here when it completes; the
-acceptance criterion (05) is no footprint failure other than a walk past
-`pad_end`, and every `RetryRest` re-simulated and landed. `LevelFull` at
-simulation is expected on this book (levels near mid hold orphaned orders from
-the earlier attempts, drained slowly by the taker) and costs nothing.
+**Definitive run** (2026-08-18, ledgers 4,215,102 to 4,217,104, 2,002 ledgers,
+about 3 h 10 min; `tools/soak/soak-2000.log`, JSON lines, last line the
+summary):
+
+| outcome | count | note |
+|---|---:|---|
+| ok | 4,573 | 3,124 place, 82 replace, 26 replace_batch, 1,341 settle |
+| typed `Crossed` at apply | 34 | post-only quotes crossed in flight; 33 place, 1 batch (reverted whole) |
+| typed `Crossed` at simulation | 96 | free rejections on a moving book |
+| typed `LevelFull` at simulation | 789 | free; levels near mid and the spammer's parking tick sit at `LEVEL_CAP` |
+| RPC 502 on submit | 1 | infrastructure |
+| **footprint** | **0** | |
+| unexplained trap | 0 | |
+| `RetryRest` | 0 | none occurred, so "re-simulated and landed" is vacuously true |
+
+By role: taker 1,263 landed / 0 rejected; storm 1,514 / 119; maker 1,206 /
+351; spam 590 / 450 (its `replace` parks 20 ticks below the best bid and
+never settles, so that level fills). The acceptance criterion in 05 (no trap
+other than a walk past `pad_end`, every `RetryRest` re-simulated and landed)
+holds. Every `Trapped` transaction in the run is a typed `Crossed`.
+
+What the run does not show: a walk past `pad_end` (the taker pads its band to
+its limit, so no window can be exceeded), and `RetryRest` (the storm's
+same-level rests never lost an append-window race in flight at testnet's
+inclusion latency; the race suite in `tests/padding.rs` covers it in the SDK
+host).
 
 ## Restore opt-in (item 6): runbook
 
@@ -131,6 +151,5 @@ If the host behaves otherwise, §14 / §15 / §17 need a decision note (05 M4).
 
 ## Status
 
-M4: items 1 to 5 done, item 7 tooling done with the long run recorded on
-completion, item 6 scheduled (runbook above). ADR-019's "partial" stands until
-6 and the 2,000-ledger result are in.
+M4: items 1 to 5 and 7 done; item 6 scheduled (runbook above, runnable from
+about ledger 4,333,990). ADR-019's "partial" narrows to that one item.
