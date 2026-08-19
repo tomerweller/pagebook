@@ -122,6 +122,16 @@ read-write-entries per-transaction cap. The pad now skips page keys for
 crossed levels simulation saw empty (§14 already says fresh or empty queues
 are inline), which also tightens the soak's `pad_keys` when asked to.
 
+**Declared instructions must budget the footprint itself.** A heal with 171
+read-write keys and a small simulated walk failed `ResourceLimitExceeded` by
+169 instructions: 24,794,729 used against 24,794,560 declared. The pad had
+declared simulation x1.2 plus 100k per padded key plus 300k, so the host's
+per-footprint-entry cost is right at 100k instructions whether or not the
+entry exists, and the margin must not scale with the simulated walk (which
+was a tenth of the total). The pad now declares 120k per padded key plus 1M
+flat (under 0.001 XLM per transaction at 7 stroops per 10k). §17's "per
+padded key" line should count instructions as well as the write-entry fee.
+
 The design-level observation stands: a maker that re-quotes a ladder
 manufactures phantom bests at the rate it moves, and under the lazy index
 someone has to walk them. A `replace` that clears the bit of the level it has

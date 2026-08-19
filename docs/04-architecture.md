@@ -811,8 +811,9 @@ else. Two rules the testnet soak made explicit (ADR-025): every band key is decl
 **read-write**, and a key simulation listed as read-only (an empty level, a word with
 no bit) is *promoted* to read-write, because the book may move it in flight and the
 walk would then write it; and the declared resources need headroom over the simulated
-ones (instructions for the extra keys, write bytes for band keys that exist, disk-read
-bytes for classic entries), since simulation budgets exactly what it touched. Band
+ones (about 100k instructions per padded key, existing or not, measured on testnet
+(ADR-026), write bytes for band keys that exist, disk-read bytes for classic
+entries), since simulation budgets exactly what it touched. Band
 padding is required because a new level can appear at *any* tick inside the walk
 range; window padding is required because a concurrent take can move a head into
 pages, and a concurrent rest can move a tail across a page boundary. The band need not
