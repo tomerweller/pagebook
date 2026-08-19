@@ -403,29 +403,25 @@
         <li class="item"><a href="#client">The client's process</a></li>
       </ol>
     </li>
-    <li class="group"><a href="#part3">Part III: what comes out</a>
-      <ol>
-        <li class="item"><a href="#budgets">Budgets and fees</a></li>
-      </ol>
-    </li>
+    <li class="item"><a href="#budgets">Budgets and fees</a></li>
   </ol>
 </nav>
 
 <main>
 
 <section id="why">
-  <h3>Why an order book is hard on Soroban <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/03-soroban-constraints.md">03</a></span></h3>
+  <h3>Why an order book is hard on Soroban <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/03-soroban-constraints.md">03</a>, <a href="https://github.com/tomerweller/pagebook/blob/main/docs/07-classic-dex-comparison.md">07</a></span></h3>
   <p>
-    An order book is a sorted structure that takers walk and makers insert into. On the chains where CLOBs already run, the walk goes wherever the next order happens to sit (a slab, a radix tree) and the book lives in whatever container is convenient, often one large account. Two rules of Soroban break both habits.
+    Stellar already runs an order book: the classic DEX is part of the protocol. An offer is a ledger entry the protocol itself manages, and matching runs inside transaction apply, reading whatever offers it needs; one operation can cross up to 1,000 of them without naming any in advance. Holding an offer locks a refundable reserve rather than paying rent. An order book built as a Soroban contract instead works under two rules the classic DEX does not face.
   </p>
   <p>
-    <strong>The footprint is declared before execution.</strong> A transaction lists every ledger entry it will read or write. Simulation computes that list, and the host rejects any access to an entry that is not on it. Declaring entries you never touch is legal; touching one you never declared fails the transaction. A matching engine that follows pointers to wherever the next order lives has a footprint nobody can name in advance, and the book keeps moving between simulation and inclusion, so a footprint that was right at simulation can be wrong a few seconds later.
+    <strong>The footprint is declared before execution.</strong> A transaction lists every ledger entry it will read or write; simulation computes the list, and the host rejects any access to an entry not on it. The classic DEX does not have this problem, because the protocol is the one doing the reading. A contract's matching walk has to name every entry it might touch before it runs, and the book keeps moving between simulation and inclusion. PageBook's answer is to make the footprint computable: every key is a pure function of identifiers the client already knows (market, side, tick, owner, nonce), and every loop bounds on a config constant, so a client can take one simulation, pad the key set against whatever the book does next, and submit a transaction that still fits.
   </p>
   <p>
-    <strong>Write bytes are the scarce shared resource.</strong> Each ledger, about five seconds, allows 286,720 bytes of writes across all Soroban traffic, and Soroban charges for every byte of every entry a transaction rewrites, whether or not that byte changed. If the book is one blob, every place and every settle rewrites the whole book, and a few of them can fill a ledger. Rent points the same way: a persistent entry prepays about 120 days at roughly 1,667 stroops per byte, so a bloated entry costs money as well as throughput. Going too small does not help either, because every entry carries 100 to 200 bytes of key and framing on top of its payload. A hot entry wants to be a few hundred bytes.
+    <strong>Write bytes are the scarce shared resource.</strong> Each ledger, about five seconds, allows 286,720 bytes of Soroban writes, and Soroban charges for every byte of every entry a transaction rewrites, whether or not that byte changed. A classic offer is one small entry the protocol rewrites; a contract book that stores more than it must rewrites the excess on every place and every settle. A persistent entry also prepays about 120 days of storage as rent, and going too small does not help either, because every entry carries 100 to 200 bytes of key and framing on top of its payload. PageBook's answer is to keep every hot entry at a few hundred bytes and to pay for it once: the bulk-rewritten queues and bitmaps are packed bytes with tested size budgets, the smaller named entries are readable <code>#[contracttype]</code> structs, and long-lived entries are reused in place rather than deleted and recreated, with archival as the garbage collector.
   </p>
   <p>
-    The design answers each in turn. Against the footprint: every key is a pure function of identifiers the client already knows (market, side, tick, owner, nonce), and every loop bounds on a config constant, so a client can compute the full key set from a simulation and pad it against whatever the book does before the transaction lands. Against the write budget: the bulk-rewritten queues and bitmaps use packed bytes with size budgets, while the smaller named entries use readable <code>#[contracttype]</code> structs. The test suite covers the entry sizes and the operation footprints. Everything below is those two answers worked out.
+    Most of what follows is those two answers worked out.
   </p>
 </section>
 
@@ -464,34 +460,11 @@
     </table>
   </div>
   <p>
-    Plus the vault: the contract's own SAC balance entries, one per token. PageBook does not define them, but every settling transaction has them in its read-write footprint, which makes them the point where transactions serialize (Part III).
+    Plus the vault: the contract's own SAC balance entries, one per token. PageBook does not define them, but every settling transaction has them in its read-write footprint, which makes them the point where transactions serialize (the concurrency note under Budgets and fees).
   </p>
-  <figure>
-    <div class="fig">
-      <svg viewBox="0 0 880 200" role="img" aria-label="Two groups side by side. The order store (Level, LevelPage, Order, FeeAccrual) is authoritative, funds-bearing, and never stale: the source of truth. The tick index (BestTick, TickSummary, TickWord) is derived and money-free, may run stale, and is healed lazily by the next place that walks through.">
-        <g font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12">
-          <rect x="30" y="34" width="360" height="130" rx="10" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
-          <text x="46" y="58" font-weight="650" fill="currentColor">ORDER STORE</text>
-          <text x="46" y="76" fill="var(--muted)">authoritative · funds-bearing · never stale</text>
-          <g font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">
-            <text x="46" y="106">Level</text><text x="120" y="106">LevelPage</text>
-            <text x="46" y="128">Order</text><text x="120" y="128">FeeAccrual</text>
-          </g>
-          <text x="46" y="152" fill="var(--muted)">source of truth</text>
-
-          <rect x="490" y="34" width="360" height="130" rx="10" fill="var(--surface)" stroke="var(--accent)" stroke-dasharray="6 4" stroke-width="1.5"/>
-          <text x="506" y="58" font-weight="650" fill="var(--accent)">TICK INDEX</text>
-          <text x="506" y="76" fill="var(--muted)">derived · money-free · may run stale</text>
-          <g font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">
-            <text x="506" y="106">BestTick</text><text x="600" y="106">TickSummary</text>
-            <text x="506" y="128">TickWord</text>
-          </g>
-          <text x="506" y="152" fill="var(--muted)">healed lazily by the next place that walks through</text>
-        </g>
-      </svg>
-    </div>
-    <figcaption>This asymmetry is what lets the index be sloppy. The order store carries the hard rules (a Level is never deleted; nothing past the tail is ever read). The index only has to satisfy a staleness contract: a bit may be set over an empty level, but never clear over a live one, and BestTick is never worse than the true best.</figcaption>
-  </figure>
+  <p>
+    The asymmetry between the two big groups is what lets the index be sloppy. The order store carries the hard rules (a Level is never deleted; nothing past the tail is ever read); the index only has to satisfy the one-directional staleness contract described with the tick index below, and is healed lazily by the next <code>place</code> that walks through.
+  </p>
 </section>
 
 <section id="level">
@@ -887,11 +860,11 @@
   </figure>
 </section>
 
-<h2 class="part" id="part3">Part III: what comes out</h2>
-<p class="lead">Small hot entries, capped loops, and a client-padded footprint give a router a transaction it can simulate once and trust, and one that parallelizes with anything outside its read-write set.</p>
-
 <section id="budgets">
   <h3>Budgets and fees <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#17-budgets-and-fees">04 §17</a></span></h3>
+  <p>
+    What comes out of all of the above: small hot entries, capped loops, and a client-padded footprint give a router a transaction it can simulate once and trust, and one that parallelizes with anything outside its read-write set. The numbers:
+  </p>
   <div class="tablewrap">
     <table>
       <thead><tr><th>Operation</th><th class="num">Footprint entries</th><th class="num">Write entries</th><th class="num">Write bytes</th><th class="num">Est. resource fee</th><th>Dominated by</th></tr></thead>
