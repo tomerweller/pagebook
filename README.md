@@ -129,8 +129,11 @@ These are the main limits and behaviors behind the design:
 
 Contract `CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO` is deployed
 on the Stellar testnet. Market 0 trades two test assets (`PBA`/`PBB`) with lot
-1, tick 1, and a 10 bps taker fee. A read-only status page for that market
-updates live at
+1, tick 1, and a 10 bps taker fee; market 1 trades native XLM against Circle's
+testnet USDC (10-XLM lots, 0.00001 USDC ticks, 5 bps), with a market maker
+quoting a 20-level ladder per side off the spot XLM-USD price
+([dashboard for market 1](https://blob.tomerweller.com/pagebook/dashboard/?market=1),
+ADR-026). A read-only status page for market 0 updates live at
 [blob.tomerweller.com/pagebook/dashboard](https://blob.tomerweller.com/pagebook/dashboard/).
 
 The market has run real rests, takes, and settles, plus a 2,000-ledger
@@ -150,6 +153,7 @@ same ADR).
 | `crates/pagebook-types/` | Shared contract types, packed encodings, constants, and key helpers |
 | `crates/pagebook-client/` | Client-side key and footprint helpers |
 | `tools/soak/` | Testnet soak driver: padded footprints through the stellar CLI, outcome classification (ADR-025) |
+| `tools/mm/` | XLM/USDC market maker for testnet market 1, quoted off the spot price, plus its external health check (ADR-026) |
 | `docs/04-architecture.md` | Full technical specification |
 | `docs/index.html` | Visual companion to the technical specification, rendered at [blob.tomerweller.com/pagebook](https://blob.tomerweller.com/pagebook/) |
 | `docs/dashboard/` | Read-only live market status page (RPC only, no build step), rendered at [blob.tomerweller.com/pagebook/dashboard](https://blob.tomerweller.com/pagebook/dashboard/) |
