@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PageBook market</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📒</text></svg>">
+<style>
+  :root {
+    --bg: #FAF8F3;
+    --surface: #FFFFFF;
+    --ink: #1C1B18;
+    --muted: #6B675E;
+    --line: #D8D3C6;
+    --accent: #2A5B8C;
+    --accent-soft: rgba(42, 91, 140, 0.10);
+    --bid: #1D7A4C;
+    --bid-soft: rgba(29, 122, 76, 0.13);
+    --ask: #B2413A;
+    --ask-soft: rgba(178, 65, 58, 0.11);
+    --warn: #A66F16;
+    --warn-soft: rgba(166, 111, 22, 0.13);
+    --err: #9B2C24;
+    --ok: #1D7A4C;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #171613;
+      --surface: #1F1E1A;
+      --ink: #E7E3D8;
+      --muted: #9C978A;
+      --line: #35332C;
+      --accent: #7EA9E0;
+      --accent-soft: rgba(126, 169, 224, 0.15);
+      --bid: #56C48A;
+      --bid-soft: rgba(86, 196, 138, 0.15);
+      --ask: #E8887E;
+      --ask-soft: rgba(232, 136, 126, 0.14);
+      --warn: #DDA64C;
+      --warn-soft: rgba(221, 166, 76, 0.15);
+      --err: #E8887E;
+      --ok: #56C48A;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: Charter, "Bitstream Charter", "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    font-size: 1rem;
+    line-height: 1.45;
+  }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 0.16em; }
+  .mono, code, .kpi .v, .row, .tape, .facts dd, .facts dt {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  .page { max-width: 1100px; margin: 0 auto; padding: 20px 22px 48px; }
+  header.top {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    align-items: baseline;
+    justify-content: space-between;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  header.top h1 { margin: 0; font-size: 1.45rem; letter-spacing: -0.01em; }
+  header.top .meta { color: var(--muted); font-size: 0.92rem; }
+  .fresh {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.88rem;
+    color: var(--muted);
+  }
+  .fresh .pill {
+    width: 0.55em; height: 0.55em; border-radius: 50%;
+    background: var(--ok);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent);
+  }
+  .fresh.stale .pill { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+  .fresh.err .pill { background: var(--err); box-shadow: 0 0 0 3px var(--ask-soft); }
+  .fresh .err-text { color: var(--err); }
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin: 16px 0;
+  }
+  .kpi { background: var(--surface); padding: 10px 12px; }
+  .kpi .l { display: block; color: var(--muted); font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase; }
+  .kpi .v { display: block; margin-top: 2px; font-size: 1.05rem; }
+  .kpi.bid .v { color: var(--bid); }
+  .kpi.ask .v { color: var(--ask); }
+  .badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 5px;
+    font-size: 0.7rem;
+    background: var(--warn-soft);
+    color: var(--warn);
+    vertical-align: middle;
+  }
+  section { margin: 18px 0; }
+  section h2 {
+    margin: 0 0 8px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .ladder {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .side { background: var(--surface); border: 1px solid var(--line); }
+  .side h3 {
+    margin: 0;
+    padding: 6px 10px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border-bottom: 1px solid var(--line);
+  }
+  .side.bids h3 { color: var(--bid); }
+  .side.asks h3 { color: var(--ask); }
+  .cols, .row {
+    display: grid;
+    grid-template-columns: 4.2rem 5.5rem 5.5rem 3.2rem 1fr;
+    gap: 8px;
+    align-items: center;
+  }
+  .cols {
+    padding: 4px 10px;
+    color: var(--muted);
+    font-size: 0.7rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+  .row { padding: 3px 10px; font-size: 0.82rem; font-variant-numeric: tabular-nums; }
+  .row .bar {
+    position: relative;
+    height: 0.7rem;
+    background: transparent;
+  }
+  .row .bar > i {
+    position: absolute; inset: 0 auto 0 0;
+    min-width: 2px;
+  }
+  .side.bids .row .bar > i { background: var(--bid-soft); }
+  .side.asks .row .bar > i { background: var(--ask-soft); }
+  .feeds {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    min-height: 8rem;
+    max-height: 22rem;
+    overflow: auto;
+  }
+  .tape { margin: 0; padding: 6px 0; list-style: none; font-size: 0.8rem; }
+  .tape li {
+    display: grid;
+    grid-template-columns: 4.6rem 2.4rem 1fr auto;
+    gap: 8px;
+    padding: 3px 10px;
+    font-variant-numeric: tabular-nums;
+  }
+  .tape.activity li { grid-template-columns: 4.6rem 7.4rem minmax(0, 1fr); }
+  .tape.activity li .detail { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .buy { color: var(--bid); }
+  .sell { color: var(--ask); }
+  .facts {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 10px 14px 12px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+    gap: 2px 24px;
+  }
+  .facts div { display: flex; justify-content: space-between; gap: 12px; font-size: 0.84rem; }
+  .facts dt { color: var(--muted); }
+  .facts dd { margin: 0; }
+  .empty { color: var(--muted); padding: 10px; font-size: 0.85rem; }
+  .note { color: var(--muted); font-size: 0.78rem; margin: 4px 0 0; }
+  .side .note { padding: 6px 10px 8px; margin: 0; }
+  @media (max-width: 800px) {
+    .kpis, .ladder, .feeds { grid-template-columns: 1fr; }
+    .cols, .row { grid-template-columns: 3.4rem 4.4rem 4.4rem 2.6rem 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <div>
+      <h1 id="pair">… / …</h1>
+      <div class="meta" id="meta"></div>
+    </div>
+    <div class="fresh" id="fresh"><span class="pill"></span><span id="fresh-text">loading…</span></div>
+  </header>
+  <div class="kpis" id="kpis"></div>
+  <section>
+    <h2>depth</h2>
+    <div class="ladder" id="ladder"></div>
+  </section>
+  <section>
+    <div class="feeds">
+      <div>
+        <h2>trades</h2>
+        <div class="panel"><ol class="tape" id="trades"></ol></div>
+        <p class="note" id="history-note"></p>
+      </div>
+      <div>
+        <h2>activity</h2>
+        <div class="panel"><ol class="tape activity" id="activity"></ol></div>
+      </div>
+    </div>
+  </section>
+  <section>
+    <h2>market</h2>
+    <dl class="facts" id="facts"></dl>
+  </section>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@16.2.0/dist/stellar-sdk.min.js"></script>
+<script type="module">
+import { formatInt, formatAtoms, ticksToPrice } from "./decode.mjs";
+import { createRpc, walkDepth, pollEvents, mockSnapshot, setSdk } from "./book.mjs";
+
+const DEFAULT_CONTRACT = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+const DEFAULT_RPC = "https://soroban-testnet.stellar.org";
+
+const q = new URLSearchParams(location.search);
+const contract = q.get("contract") || DEFAULT_CONTRACT;
+const market = Number(q.get("market") ?? 0);
+const rpcUrl = q.get("rpc") || DEFAULT_RPC;
+const depth = Number(q.get("depth") ?? 12);
+const mock = q.get("mock") === "1";
+const urlBaseSym = q.get("base_sym");
+const urlQuoteSym = q.get("quote_sym");
+const urlBaseDec = q.get("base_dec") != null ? Number(q.get("base_dec")) : null;
+const urlQuoteDec = q.get("quote_dec") != null ? Number(q.get("quote_dec")) : null;
+
+const $ = (id) => document.getElementById(id);
+
+function shortAddr(a) {
+  if (!a || a.length < 12) return a || "";
+  return `${a.slice(0, 4)}…${a.slice(-4)}`;
+}
+
+function tokenLabel(meta, urlSym, addr) {
+  return urlSym || meta?.symbol || shortAddr(addr) || "?";
+}
+
+function tokenDecimals(meta, urlDec) {
+  if (urlDec != null && !Number.isNaN(urlDec)) return urlDec;
+  if (meta?.decimals != null) return meta.decimals;
+  return 7;
+}
+
+function fmtTime(iso) {
+  if (!iso) return { text: "", title: "" };
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return { text: String(iso).slice(11, 19), title: String(iso) };
+  return {
+    text: d.toLocaleTimeString(undefined, { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+    title: d.toISOString(),
+  };
+}
+
+function rpcHost() {
+  try {
+    return new URL(rpcUrl).host;
+  } catch {
+    return rpcUrl;
+  }
+}
+
+function formatRpcError(e) {
+  return `RPC ${rpcHost()}: ${e && e.message ? e.message : String(e)}`;
+}
+
+function isTestnetRpc() {
+  try {
+    return new URL(rpcUrl).host.includes("testnet");
+  } catch {
+    return false;
+  }
+}
+
+function priceOf(tick, book) {
+  const m = book.market;
+  if (!m) return String(tick);
+  const bd = tokenDecimals(book.tokens?.base, urlBaseDec);
+  const qd = tokenDecimals(book.tokens?.quote, urlQuoteDec);
+  return ticksToPrice(tick, m.tick_size, m.lot_size, bd, qd);
+}
+
+function midSpread(bid, ask) {
+  if (bid.empty || ask.empty) return { spread: null, mid: null, pct: null };
+  const b = BigInt(bid.tick);
+  const a = BigInt(ask.tick);
+  const spread = a - b;
+  const sum = a + b;
+  const mid = sum % 2n === 0n ? formatInt(sum / 2n) : `${formatInt(sum / 2n)}.5`;
+  const tenths = sum === 0n ? 0n : (spread * 2000n) / sum;
+  const pct = `${formatInt(tenths / 10n)}.${(tenths % 10n).toString()}%`;
+  return { spread: formatInt(spread), mid, pct };
+}
+
+let lastGood = null;
+let lastOkAt = 0;
+let lastError = "";
+let eventState = { cursor: null, seen: new Set(), historyFrom: null, events: [] };
+let knownBase = null;
+let knownQuote = null;
+let eventsLoading = false;
+const MAX_EVENTS = 500;
+
+function setFresh() {
+  const el = $("fresh");
+  const text = $("fresh-text");
+  const now = Date.now();
+  if (!lastGood && !lastError) {
+    el.className = "fresh";
+    text.textContent = "loading…";
+    return;
+  }
+  if (lastError && !lastGood) {
+    el.className = "fresh err";
+    text.innerHTML = `<span class="err-text">${esc(lastError)}</span>`;
+    return;
+  }
+  const ago = lastOkAt ? Math.max(0, Math.round((now - lastOkAt) / 1000)) : 0;
+  const ledger = formatInt(lastGood.latestLedger);
+  let cls = "fresh";
+  if (lastError) cls += " err";
+  else if (ago > 15) cls += " stale";
+  el.className = cls;
+  const err = lastError ? ` <span class="err-text">${esc(lastError)}</span>` : "";
+  text.innerHTML = `ledger ${ledger} · ${ago} s ago${err}`;
+}
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function render(book) {
+  const baseSym = tokenLabel(book.tokens?.base, urlBaseSym, book.base);
+  const quoteSym = tokenLabel(book.tokens?.quote, urlQuoteSym, book.quote);
+  $("pair").textContent = `${baseSym} / ${quoteSym}`;
+  const short = shortAddr(contract);
+  $("meta").innerHTML = isTestnetRpc()
+    ? `market ${market} · <a href="https://stellar.expert/explorer/testnet/contract/${encodeURIComponent(contract)}">${esc(short)}</a>`
+    : `market ${market} · ${esc(short)}`;
+
+  const bid = book.bestBid;
+  const ask = book.bestAsk;
+  const { spread, mid, pct } = midSpread(bid, ask);
+  const last = (eventState.events || []).find((e) => e.name === "filled");
+  const staleBid = bid.stale ? `<span class="badge">stale best</span>` : "";
+  const staleAsk = ask.stale ? `<span class="badge">stale best</span>` : "";
+  $("kpis").innerHTML = `
+    <div class="kpi bid"><span class="l">best bid</span><span class="v">${bid.empty ? "—" : esc(priceOf(bid.tick, book))}${staleBid}</span></div>
+    <div class="kpi ask"><span class="l">best ask</span><span class="v">${ask.empty ? "—" : esc(priceOf(ask.tick, book))}${staleAsk}</span></div>
+    <div class="kpi"><span class="l">spread</span><span class="v">${spread == null ? "—" : `${esc(spread)} (${esc(pct)})`}</span></div>
+    <div class="kpi"><span class="l">mid</span><span class="v">${mid == null ? "—" : esc(mid)}</span></div>
+    <div class="kpi"><span class="l">last</span><span class="v">${last ? `${esc(priceOf(last.tick, book))} × ${esc(formatInt(last.lots))} lots` : "—"}</span></div>`;
+
+  $("ladder").innerHTML =
+    sideHtml("bids", book.bids, book, book.moreBids) + sideHtml("asks", book.asks, book, book.moreAsks);
+  $("trades").innerHTML = tradesHtml(book);
+  $("activity").innerHTML = activityHtml();
+  $("history-note").textContent = eventState.historyFrom
+    ? `history from ledger ${formatInt(eventState.historyFrom)}`
+    : "";
+  $("facts").innerHTML = factsHtml(book, baseSym, quoteSym);
+}
+
+function sideHtml(name, rows, book, more) {
+  let cum = 0n;
+  const withCum = rows.map((r) => {
+    cum += r.open_lots;
+    return { ...r, cum };
+  });
+  const max = cum;
+  const body = withCum.length
+    ? withCum
+        .map((r) => {
+          const w = max > 0n ? Number((r.cum * 1000n) / max) / 10 : 0;
+          return `<div class="row">
+            <span>${r.tick}</span>
+            <span>${esc(priceOf(r.tick, book))}</span>
+            <span>${esc(formatInt(r.open_lots))}</span>
+            <span>${r.queue}</span>
+            <span class="bar"><i style="width:${w}%"></i> ${esc(formatInt(r.cum))}</span>
+          </div>`;
+        })
+        .join("")
+    : `<div class="empty">empty</div>`;
+  return `<div class="side ${name}">
+    <h3>${name}</h3>
+    <div class="cols"><span>tick</span><span>price</span><span>lots</span><span>q</span><span>cum</span></div>
+    ${body}
+    ${more ? `<div class="note">more levels beyond the read window</div>` : ""}
+  </div>`;
+}
+
+function txLink(hash) {
+  if (!hash) return "";
+  const short = `${hash.slice(0, 6)}…`;
+  return `<a href="https://stellar.expert/explorer/testnet/tx/${encodeURIComponent(hash)}">${esc(short)}</a>`;
+}
+
+function tradesHtml(book) {
+  if (eventsLoading && !(eventState.events || []).length) {
+    return `<li class="empty">loading trades…</li>`;
+  }
+  const rows = (eventState.events || []).filter((e) => e.name === "filled").slice(0, 80);
+  if (!rows.length) return `<li class="empty">no trades in window</li>`;
+  const qdec = tokenDecimals(book.tokens?.quote, urlQuoteDec);
+  const qsym = tokenLabel(book.tokens?.quote, urlQuoteSym, book.quote);
+  return rows
+    .map((e) => {
+      const side = e.taker === "buy" ? "buy" : "sell";
+      const t = fmtTime(e.ledgerClosedAt);
+      return `<li>
+        <span title="${esc(t.title)}">${esc(t.text)}</span>
+        <span class="${side}">${side}</span>
+        <span title="${esc(formatInt(e.quote))} atoms">${e.tick} × ${esc(formatInt(e.lots))} · ${esc(formatAtoms(e.quote, qdec))} ${esc(qsym)}</span>
+        <span>${formatInt(e.ledger)} ${txLink(e.txHash)}</span>
+      </li>`;
+    })
+    .join("");
+}
+
+function activityHtml() {
+  if (eventsLoading && !(eventState.events || []).length) {
+    return `<li class="empty">loading trades…</li>`;
+  }
+  const names = new Set(["rested", "settled", "swept", "top_changed"]);
+  const rows = (eventState.events || []).filter((e) => names.has(e.name)).slice(0, 80);
+  if (!rows.length) return `<li class="empty">no activity in window</li>`;
+  return rows
+    .map((e) => {
+      let detail = "";
+      if (e.name === "rested") {
+        detail = `${shortAddr(e.owner)} #${e.nonce} · ${e.is_bid ? "bid" : "ask"} ${e.tick} · g${e.generation} s${e.seq}`;
+      } else if (e.name === "settled") {
+        detail = `${shortAddr(e.owner)} #${e.nonce} · filled ${formatInt(e.filled_lots)} · refunded ${formatInt(e.refunded_lots)}`;
+      } else if (e.name === "swept") {
+        detail = `${e.is_bid ? "bid" : "ask"} ${e.tick} g${e.generation}`;
+      } else if (e.name === "top_changed") {
+        detail = `${e.is_bid ? "bids" : "asks"} ${e.old} → ${e.newTick}`;
+      }
+      const t = fmtTime(e.ledgerClosedAt);
+      return `<li>
+        <span title="${esc(t.title)}">${esc(t.text)}</span>
+        <span>${esc(e.name)}</span>
+        <span class="detail" title="${esc(detail)}">${esc(detail)}</span>
+      </li>`;
+    })
+    .join("");
+}
+
+function fact(dt, dd) {
+  return `<div><dt>${esc(dt)}</dt><dd>${dd}</dd></div>`;
+}
+
+function factsHtml(book, baseSym, quoteSym) {
+  const m = book.market;
+  if (!m) return `<div class="empty">no Market entry</div>`;
+  const bd = tokenDecimals(book.tokens?.base, urlBaseDec);
+  const qd = tokenDecimals(book.tokens?.quote, urlQuoteDec);
+  const vaultB = book.vault.base == null ? "—" : `${formatAtoms(book.vault.base, bd)} ${baseSym}`;
+  const vaultQ = book.vault.quote == null ? "—" : `${formatAtoms(book.vault.quote, qd)} ${quoteSym}`;
+  const feeB = `${formatAtoms(book.fees.base, bd)} ${baseSym}`;
+  const feeQ = `${formatAtoms(book.fees.quote, qd)} ${quoteSym}`;
+  return [
+    fact("base", `${esc(baseSym)} ${esc(shortAddr(m.base))}`),
+    fact("quote", `${esc(quoteSym)} ${esc(shortAddr(m.quote))}`),
+    fact("lot_size", formatInt(m.lot_size)),
+    fact("tick_size", formatInt(m.tick_size)),
+    fact("tick band", `[${formatInt(m.tick_min)}, ${formatInt(m.tick_max)})`),
+    fact("taker fee", `${formatInt(m.taker_fee_bps)} bps`),
+    fact("order lots", `${formatInt(m.min_order_lots)} / ${formatInt(m.max_order_lots)}`),
+    fact("max levels crossed", formatInt(m.max_levels_crossed)),
+    fact("max slots scanned", formatInt(m.max_slots_scanned)),
+    fact("inline / page / max pages", `${m.inline_slots} / ${m.page_slots} / ${m.max_pages}`),
+    fact("paused", book.paused ? "yes" : "no"),
+    fact(
+      "vault",
+      `<span title="${esc(book.vault.base == null ? "" : `${formatInt(book.vault.base)} atoms`)}">${esc(vaultB)}</span> · <span title="${esc(book.vault.quote == null ? "" : `${formatInt(book.vault.quote)} atoms`)}">${esc(vaultQ)}</span>`,
+    ),
+    fact(
+      "fees accrued",
+      `<span title="${esc(formatInt(book.fees.base))} atoms">${esc(feeB)}</span> · <span title="${esc(formatInt(book.fees.quote))} atoms">${esc(feeQ)}</span>`,
+    ),
+  ].join("");
+}
+
+function mergeEvents(incoming) {
+  const byId = new Map(eventState.events.map((e) => [e.id, e]));
+  for (const e of incoming) byId.set(e.id, e);
+  eventState.events = [...byId.values()]
+    .sort((a, b) => {
+      const ld = (b.ledger || 0) - (a.ledger || 0);
+      if (ld) return ld;
+      return String(b.id).localeCompare(String(a.id));
+    })
+    .slice(0, MAX_EVENTS);
+  eventState.seen = new Set(eventState.events.map((e) => e.id).filter(Boolean));
+}
+
+async function refresh(rpc) {
+  const book = await walkDepth(rpc, {
+    contract,
+    market,
+    depth,
+    base: knownBase,
+    quote: knownQuote,
+  });
+  knownBase = book.base || knownBase;
+  knownQuote = book.quote || knownQuote;
+  lastGood = book;
+  lastOkAt = Date.now();
+  lastError = "";
+  if (!eventState.events.length && !eventState.cursor) eventsLoading = true;
+  render(book);
+  setFresh();
+  try {
+    const ev = await pollEvents(rpc, {
+      contract,
+      market,
+      latestLedger: book.latestLedger,
+      cursor: eventState.cursor,
+      seen: eventState.seen,
+      historyFrom: eventState.historyFrom,
+    });
+    eventState.cursor = ev.cursor;
+    if (ev.historyFrom != null) eventState.historyFrom = ev.historyFrom;
+    mergeEvents(ev.events);
+  } finally {
+    eventsLoading = false;
+  }
+  render(book);
+  setFresh();
+}
+
+if (mock) {
+  const snap = mockSnapshot();
+  eventState.events = snap.events;
+  eventState.historyFrom = snap.historyFrom;
+  lastGood = snap;
+  lastOkAt = Date.now();
+  render(snap);
+  setFresh();
+  setInterval(setFresh, 1000);
+} else {
+  if (typeof StellarSdk === "undefined") {
+    lastError = "stellar-sdk failed to load";
+    setFresh();
+  } else {
+    setSdk(StellarSdk);
+    const rpc = createRpc(rpcUrl);
+    let delay = 2000;
+    let lastSeq = 0;
+    let didFirst = false;
+    let tickTimer = null;
+    let inflight = false;
+
+    function schedule(ms) {
+      if (tickTimer != null) clearTimeout(tickTimer);
+      tickTimer = setTimeout(tick, ms);
+    }
+
+    async function tick() {
+      if (inflight) return;
+      inflight = true;
+      tickTimer = null;
+      try {
+        const latest = await rpc.getLatestLedger();
+        const seq = latest.sequence;
+        if (!didFirst || seq !== lastSeq) {
+          lastSeq = seq;
+          await refresh(rpc);
+          didFirst = true;
+        } else {
+          setFresh();
+        }
+        delay = 2000;
+      } catch (e) {
+        lastError = formatRpcError(e);
+        setFresh();
+        delay = Math.min(delay * 2, 10000);
+      } finally {
+        inflight = false;
+        schedule(document.hidden && didFirst ? 5000 : delay);
+      }
+    }
+
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) {
+        if (tickTimer != null) clearTimeout(tickTimer);
+        tickTimer = null;
+        tick();
+      }
+    });
+    setFresh();
+    setInterval(setFresh, 1000);
+    tick();
+  }
+}
+</script>
+</body>
+</html>
