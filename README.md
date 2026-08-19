@@ -130,8 +130,11 @@ footprints, resource-fee gates, TTL behavior in the SDK test host, and
 conservation properties. A testnet deployment
 (`CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO`, market 0 on two test
 assets) has run real rests, takes, settles and a multi-account soak through the
-padding protocol (`tools/soak/`, ADR-025). Live-host restore behavior for
-archived entries still needs its scheduled testnet check (ADR-025 runbook).
+padding protocol (`tools/soak/`, ADR-025). A read-only status page for that
+market updates live at
+[blob.tomerweller.com/pagebook/dashboard](https://blob.tomerweller.com/pagebook/dashboard/).
+Live-host restore behavior for archived entries still needs its scheduled
+testnet check (ADR-025 runbook).
 
 ## Repository layout
 
@@ -143,6 +146,7 @@ archived entries still needs its scheduled testnet check (ADR-025 runbook).
 | `tools/soak/` | Testnet soak driver: padded footprints through the stellar CLI, outcome classification (ADR-025) |
 | `docs/04-architecture.md` | Full technical specification |
 | `docs/index.html` | Visual companion to the technical specification, rendered at [blob.tomerweller.com/pagebook](https://blob.tomerweller.com/pagebook/) |
+| `docs/dashboard/` | Read-only live market status page (RPC only, no build step), rendered at [blob.tomerweller.com/pagebook/dashboard](https://blob.tomerweller.com/pagebook/dashboard/) |
 | `docs/03-soroban-constraints.md` | Soroban storage, footprint, and resource background |
 | `docs/07-classic-dex-comparison.md` | Comparison with the classic Stellar DEX |
 
@@ -164,6 +168,7 @@ make lint
 - [Architecture](docs/04-architecture.md): storage, matching, settlement,
   events, footprints, fees, and archival behavior
 - [Architecture explainer](https://blob.tomerweller.com/pagebook/): diagrams and worked examples (source: `docs/index.html`)
+- [Market dashboard](https://blob.tomerweller.com/pagebook/dashboard/): live state of the testnet market (source: `docs/dashboard/`)
 - [Soroban constraints](docs/03-soroban-constraints.md): the runtime limits
   behind the design
 - [Classic Stellar DEX comparison](docs/07-classic-dex-comparison.md): what

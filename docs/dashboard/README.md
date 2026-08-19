@@ -2,6 +2,8 @@
 
 A static page that reads one PageBook market from Soroban RPC and redraws when the ledger advances. There is no server, wallet, or build step.
 
+Published from this directory by GitHub Pages at [blob.tomerweller.com/pagebook/dashboard](https://blob.tomerweller.com/pagebook/dashboard/).
+
 ## Open it
 
 From the repository root:
@@ -10,7 +12,7 @@ From the repository root:
 python3 -m http.server 8765
 ```
 
-Then open `/tools/dashboard/`. Module scripts do not load from `file://`.
+Then open `/docs/dashboard/`. Module scripts do not load from `file://`.
 
 Defaults point at the current testnet deployment, contract `CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO`, market 0.
 
@@ -26,7 +28,7 @@ Defaults point at the current testnet deployment, contract `CDX3WVFY6GV53J3XT53M
 | `base_sym`, `quote_sym` | from SAC `METADATA`, else a short address | token labels |
 | `base_dec`, `quote_dec` | from SAC `METADATA`, else `7` | decimal places for amounts |
 
-Example: `/tools/dashboard/?market=0&depth=8&base_sym=PBA&quote_sym=PBB`.
+Example: `/docs/dashboard/?market=0&depth=8&base_sym=PBA&quote_sym=PBB`.
 
 ## What the panels are
 
@@ -60,6 +62,6 @@ u64 and i128 values stay `BigInt` until they are formatted. Packed `Level` and `
 ## Check the decoders
 
 ```
-node --test tools/dashboard/decode.test.mjs
+node --test docs/dashboard/decode.test.mjs
 cargo test -p pagebook-types js_fixtures
 ```

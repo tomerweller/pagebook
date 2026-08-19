@@ -7,7 +7,7 @@ market and refreshes itself every ledger. No server, no build step, no wallet.
 
 | Question | Answer |
 |---|---|
-| Stack | One static file, `tools/dashboard/index.html`: vanilla ES-module JS, `@stellar/stellar-sdk` from a CDN for XDR/ScVal/StrKey and the RPC client. Same shape and palette as `docs/index.html` (bid green, ask red, paper background). |
+| Stack | One static file, `docs/dashboard/index.html`: vanilla ES-module JS, `@stellar/stellar-sdk` from a CDN for XDR/ScVal/StrKey and the RPC client. Same shape and palette as `docs/index.html` (bid green, ask red, paper background). |
 | Content | Top of book (best bid/ask, spread, mid), depth ladder (N levels per side), trades tape (`filled` events), activity feed (`rested`/`settled`/`swept`/`top_changed`), market facts (Market config, vault balances, accrued fees, paused flag). |
 | Data path | Book state from ledger entries via `getLedgerEntries` (BestTick, TickSummary, TickWord, Level, Market, Config, SAC balances). Events via `getEvents`. JS port of the packed `Level` / `TickBitmap` decoders. |
 | Target | Defaults to testnet, contract `CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO`, market 0, RPC `https://soroban-testnet.stellar.org`. Overridable with `?contract=&market=&rpc=&depth=`. |
@@ -75,7 +75,7 @@ just triggers one more pass.
 ## File layout
 
 ```
-tools/dashboard/
+docs/dashboard/
   index.html        the page: markup, CSS, and one <script type="module">
   keys.mjs          DataKey → LedgerKey builders (ck, orderKey, sacBalanceKey, instanceKey)
   decode.mjs        Level / TickBitmap decoders, ScVal→native wrappers, formatting
@@ -114,7 +114,7 @@ Roughly a day of work; steps 1 and 2 are the bulk.
 - **Decoder parity.** Add a `#[test]` in `pagebook-types` (or a tiny example
   binary) that encodes a handful of `Level` and `TickBitmap` values at
   interesting occupancies and prints them as hex; check that output in as
-  `fixtures.json`. `node --test tools/dashboard/decode.test.mjs` decodes them
+  `fixtures.json`. `node --test docs/dashboard/decode.test.mjs` decodes them
   and asserts field-by-field. This is the one place a silent mismatch would
   make the dashboard confidently wrong.
 - **Key parity.** Same idea for keys: `soak.py::ck` and the JS `ck` must
