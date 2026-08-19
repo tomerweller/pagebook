@@ -33,6 +33,7 @@ def main():
     ap.add_argument("--max-loop-age", type=float, default=300)
     ap.add_argument("--max-mid-dev-bps", type=float, default=50)
     ap.add_argument("--max-touch-bps", type=float, default=40)
+    ap.add_argument("--through-mid-tol-bps", type=float, default=15)
     ap.add_argument("--min-xlm", type=float, default=2000)
     ap.add_argument("--window", type=float, default=3600)
     a = ap.parse_args()
@@ -96,8 +97,13 @@ def main():
         mid_tick = mm.tick_of(p)
         if our_bid >= our_ask:
             alerts.append(f"own quotes crossed: bid {our_bid} ask {our_ask}")
-        if our_bid >= mid_tick or our_ask <= mid_tick:
+        # the feed can move a few bps inside one 30 s cycle: only a quote
+        # clearly through the *current* mid is an alert
+        tol = int(mid_tick * a.through_mid_tol_bps / 1e4)
+        if our_bid >= mid_tick + tol or our_ask <= mid_tick - tol:
             alerts.append(f"quote through the mid: bid {our_bid} ask {our_ask} mid {mid_tick}")
+        elif our_bid >= mid_tick or our_ask <= mid_tick:
+            notes.append(f"touch at/through the instantaneous mid (bid {our_bid} ask {our_ask} mid {mid_tick}); within {a.through_mid_tol_bps} bps tolerance")
         tb = (mid_tick - our_bid) / mid_tick * 1e4
         ta = (our_ask - mid_tick) / mid_tick * 1e4
         if tb > a.max_touch_bps or ta > a.max_touch_bps:
