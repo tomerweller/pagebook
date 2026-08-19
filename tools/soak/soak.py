@@ -299,7 +299,11 @@ def apply_pad(sim_json, extra_keys):
     # Padded keys cost the host instructions to process (the simulated budget
     # is exact) and grow the tx: add instruction and fee headroom per key.
     res = sd["resources"]
-    res["instructions"] = int(res["instructions"] * 1.2) + 100_000 * added + 300_000
+    # Measured on testnet (ADR-026): a heal with 171 read-write keys and a
+    # small simulated walk used 24.79M instructions, 169 more than
+    # 1.2x + 100k/key + 300k declared, so the per-key cost is right at 100k
+    # and the headroom above it must not depend on the simulated amount.
+    res["instructions"] = int(res["instructions"] * 1.2) + 120_000 * added + 1_000_000
     # An EXISTING entry declared read-write must be covered by write_bytes even
     # if never touched (measured on testnet, ADR-025); nonexistent keys and
     # read-only keys are free. The client cannot know which padded Level /
@@ -312,7 +316,7 @@ def apply_pad(sim_json, extra_keys):
     # instructions at 7 per 10k, and tx size at ~406/KB (measured on testnet,
     # ADR-025); a fee below that minimum is TxSorobanInvalid.
     rf = int(sd["resource_fee"])
-    rf = int(rf * 1.3) + (2_500 + 600 * 875 // 1024 + 400 * 447 // 1024 + 1_563 + 100 * 7 + 100) * added + 200_000 * 7 // 10_000
+    rf = int(rf * 1.3) + (2_500 + 600 * 875 // 1024 + 400 * 447 // 1024 + 1_563 + 120 * 7 + 100) * added + 1_000_000 * 7 // 10_000
     sd["resource_fee"] = str(rf)
     tx["fee"] = rf + 1000
     return added
