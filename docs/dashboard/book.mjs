@@ -230,10 +230,15 @@ function parseTokenMeta(pairs) {
   const tokenName = pick(meta, "name", "Name");
   if (symbol == null && decimals == null) return null;
   return {
-    symbol: symbol != null ? String(symbol) : null,
+    symbol: symbol != null ? displaySymbol(String(symbol)) : null,
     decimals: decimals != null ? Number(decimals) : null,
     name: tokenName != null ? String(tokenName) : null,
   };
+}
+
+// The native-asset SAC reports its symbol as "native"; show it as XLM.
+export function displaySymbol(symbol) {
+  return symbol === "native" ? "XLM" : symbol;
 }
 
 function readNative(map, keyObj, sdk) {
@@ -517,6 +522,50 @@ export async function walkDepth(rpc, opts) {
   const first = await walkDepthOnce(rpc, opts);
   if (!first.mismatched) return first;
   return walkDepthOnce(rpc, { ...opts, base: first.base, quote: first.quote });
+}
+
+const MAX_MARKETS_LISTED = 64;
+
+/// Every market on the contract: `Config.market_counter` from the instance,
+/// then `Market(i)` for each id and the two SAC instances for symbols. Two
+/// round trips. Markets whose entry is missing (archived) are skipped.
+export async function listMarkets(rpc, opts) {
+  if (opts.sdk) setSdk(opts.sdk);
+  const sdk = resolveSdk(opts.sdk);
+  const contract = opts.contract;
+  const kInst = instanceKey(contract);
+  const r1 = await fetchEntries(rpc, [kInst]);
+  const instEntry = r1.entries[0];
+  const config = instEntry ? findStorage(instanceStorage(instEntry, sdk), "Config") : null;
+  const count = Math.min(Number(config?.market_counter ?? 0), MAX_MARKETS_LISTED);
+  if (!count) return { markets: [], latestLedger: r1.latestLedger };
+
+  const marketKeys = [];
+  for (let i = 0; i < count; i++) marketKeys.push(ck(contract, "Market", i));
+  const r2 = await fetchEntries(rpc, marketKeys);
+  const map2 = indexByKey(r2.entries);
+  const markets = [];
+  for (let i = 0; i < count; i++) {
+    const m = parseMarket(readNative(map2, marketKeys[i], sdk));
+    if (m) markets.push({ id: i, base: m.base, quote: m.quote, market: m });
+  }
+
+  const sacs = [...new Set(markets.flatMap((m) => [m.base, m.quote]))];
+  const sacKeys = sacs.map((s) => instanceKey(s));
+  const r3 = await fetchEntries(rpc, sacKeys);
+  const map3 = indexByKey(r3.entries);
+  const metaOf = new Map();
+  sacs.forEach((s, i) => {
+    const e = map3.get(sacKeys[i].base64);
+    metaOf.set(s, e ? parseTokenMeta(instanceStorage(e, sdk)) : null);
+  });
+  for (const m of markets) {
+    m.baseMeta = metaOf.get(m.base) || null;
+    m.quoteMeta = metaOf.get(m.quote) || null;
+    m.baseSym = m.baseMeta?.symbol || null;
+    m.quoteSym = m.quoteMeta?.symbol || null;
+  }
+  return { markets, latestLedger: r3.latestLedger || r2.latestLedger };
 }
 
 function eventCursor(res, fallback) {

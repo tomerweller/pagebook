@@ -14,14 +14,14 @@ python3 -m http.server 8765
 
 Then open `/docs/dashboard/`. Module scripts do not load from `file://`.
 
-Defaults point at the current testnet deployment, contract `CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO`, market 0.
+Defaults point at the current testnet deployment, contract `CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO`. With no `?market=`, the page shows the XLM/USDC market if the contract has one, else market 0. The selector in the header lists every market on the contract (`Config.market_counter`, then each `Market` entry and its SAC symbols) and switching updates `?market=` in the address bar.
 
 ## URL parameters
 
 | param | default | what it does |
 |---|---|---|
 | `contract` | `CDX3…U2RO` | PageBook contract id |
-| `market` | `0` | market id |
+| `market` | XLM/USDC if present, else `0` | market id; the header selector changes it |
 | `rpc` | `https://soroban-testnet.stellar.org` | Soroban RPC URL |
 | `depth` | `12` | levels kept per side after empty levels are dropped |
 | `mock` | off | `?mock=1` renders a canned snapshot and does not touch the network |
@@ -32,9 +32,9 @@ Example: `/docs/dashboard/?market=0&depth=8&base_sym=PBA&quote_sym=PBB`.
 
 ## What the panels are
 
-**Header.** Token pair, market id, contract short form, and the ledger sequence with how many seconds ago the last good read landed. The pill is green while that read is under 15 seconds old, amber after that, red on an RPC error. An error keeps the last good book on screen.
+**Header.** Token pair, market selector, contract short form (linked to stellar.expert on testnet), and the ledger sequence with how many seconds ago the last good read landed. The pill is green while that read is under 15 seconds old, amber after that, red on an RPC error. An error keeps the last good book on screen.
 
-**KPIs.** Best bid, best ask, spread in ticks and as a percent of mid, mid tick, and the newest `filled` event as price × lots. A "stale best" badge means `BestTick` points at a level whose `open_lots` is 0.
+**KPIs.** Best bid, best ask, spread, and mid in price units (quote per base), the spread as a percent of mid, and the newest `filled` event as price × lots. The spread cell's tooltip has the spread in ticks. A "stale best" badge means `BestTick` points at a level whose `open_lots` is 0.
 
 **Depth.** Bids on the left (best first, descending), asks on the right (best first, ascending). Each row is tick, human price, open lots, queue length (`tail_seq - head_seq`), and cumulative lots with a bar.
 
@@ -42,7 +42,7 @@ Example: `/docs/dashboard/?market=0&depth=8&base_sym=PBA&quote_sym=PBB`.
 
 **Activity.** `rested` (owner, nonce, side, tick, generation, seq), `settled` (owner, nonce, filled_lots, refunded_lots), `swept` (side, tick, generation), `top_changed` (side, old → new).
 
-**Market.** Fields from the `Market` entry, `Config.paused` from instance storage, vault SAC balances, and `FeeAccrual` per token.
+**Market.** Fields from the `Market` entry (token contract ids link to stellar.expert on testnet), `Config.paused` from instance storage, vault SAC balances, and `FeeAccrual` per token. The native-asset SAC reports its symbol as `native`; the page shows it as XLM.
 
 ## How it reads the book
 

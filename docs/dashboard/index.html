@@ -68,6 +68,14 @@
   }
   header.top h1 { margin: 0; font-size: 1.45rem; letter-spacing: -0.01em; }
   header.top .meta { color: var(--muted); font-size: 0.92rem; }
+  header.top .meta select {
+    font: inherit;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 1px 4px;
+  }
   .fresh {
     display: inline-flex;
     align-items: center;
@@ -190,6 +198,7 @@
   .facts dt { color: var(--muted); }
   .facts dd { margin: 0; }
   .empty { color: var(--muted); padding: 10px; font-size: 0.85rem; }
+  .tape li.empty { display: block; }
   .note { color: var(--muted); font-size: 0.78rem; margin: 4px 0 0; }
   .side .note { padding: 6px 10px 8px; margin: 0; }
   @media (max-width: 800px) {
@@ -232,15 +241,19 @@
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@16.2.0/dist/stellar-sdk.min.js"></script>
 <script type="module">
-import { formatInt, formatAtoms, ticksToPrice } from "./decode.mjs";
-import { createRpc, walkDepth, pollEvents, mockSnapshot, setSdk } from "./book.mjs";
+import { formatInt, formatAtoms, formatRatio, ticksToPrice } from "./decode.mjs";
+import { createRpc, walkDepth, pollEvents, listMarkets, mockSnapshot, setSdk } from "./book.mjs";
 
 const DEFAULT_CONTRACT = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
 const DEFAULT_RPC = "https://soroban-testnet.stellar.org";
 
 const q = new URLSearchParams(location.search);
 const contract = q.get("contract") || DEFAULT_CONTRACT;
-const market = Number(q.get("market") ?? 0);
+// With no ?market=, the page picks the XLM/USDC market once the market list
+// loads, else market 0.
+const DEFAULT_PAIR = ["XLM", "USDC"];
+let market = q.get("market") != null ? Number(q.get("market")) : null;
+let marketList = [];
 const rpcUrl = q.get("rpc") || DEFAULT_RPC;
 const depth = Number(q.get("depth") ?? 12);
 const mock = q.get("mock") === "1";
@@ -304,16 +317,27 @@ function priceOf(tick, book) {
   return ticksToPrice(tick, m.tick_size, m.lot_size, bd, qd);
 }
 
-function midSpread(bid, ask) {
-  if (bid.empty || ask.empty) return { spread: null, mid: null, pct: null };
+// Spread and mid in price units (ticks × tick_size / lot_size, decimals
+// adjusted), plus the spread in ticks and as a percent of mid to 2 places.
+function midSpread(bid, ask, book) {
+  if (bid.empty || ask.empty) return { spread: null, mid: null, pct: null, ticks: null };
   const b = BigInt(bid.tick);
   const a = BigInt(ask.tick);
-  const spread = a - b;
+  const spreadTicks = a - b;
   const sum = a + b;
-  const mid = sum % 2n === 0n ? formatInt(sum / 2n) : `${formatInt(sum / 2n)}.5`;
-  const tenths = sum === 0n ? 0n : (spread * 2000n) / sum;
-  const pct = `${formatInt(tenths / 10n)}.${(tenths % 10n).toString()}%`;
-  return { spread: formatInt(spread), mid, pct };
+  const m = book.market;
+  const ts = m ? BigInt(m.tick_size) : 1n;
+  const ls = m ? BigInt(m.lot_size) : 1n;
+  const bd = BigInt(m ? tokenDecimals(book.tokens?.base, urlBaseDec) : 0);
+  const qd = BigInt(m ? tokenDecimals(book.tokens?.quote, urlQuoteDec) : 0);
+  const num = ts * 10n ** bd;
+  const den = ls * 10n ** qd;
+  const spread = formatRatio(spreadTicks * num, den);
+  const mid = formatRatio(sum * num, 2n * den);
+  // percent of mid with two decimals: spread / (sum/2) * 100 = spread*200/sum
+  const hundredths = sum === 0n ? 0n : (spreadTicks * 20000n) / sum;
+  const pct = `${formatInt(hundredths / 100n)}.${(hundredths % 100n).toString().padStart(2, "0")}%`;
+  return { spread, mid, pct, ticks: formatInt(spreadTicks) };
 }
 
 let lastGood = null;
@@ -357,25 +381,44 @@ function esc(s) {
     .replace(/"/g, "&quot;");
 }
 
+function contractLink(id) {
+  const short = esc(shortAddr(id));
+  if (!isTestnetRpc()) return short;
+  return `<a href="https://stellar.expert/explorer/testnet/contract/${encodeURIComponent(id)}" title="${esc(id)}">${short}</a>`;
+}
+
+function marketLabel(m) {
+  const b = m.baseSym || shortAddr(m.base);
+  const qs = m.quoteSym || shortAddr(m.quote);
+  return `${b} / ${qs}`;
+}
+
+function renderMeta() {
+  const opts = marketList.length
+    ? marketList
+        .map((m) => `<option value="${m.id}"${m.id === market ? " selected" : ""}>${esc(marketLabel(m))} · ${m.id}</option>`)
+        .join("")
+    : `<option value="${market ?? 0}" selected>market ${market ?? 0}</option>`;
+  $("meta").innerHTML = `<label>market <select id="market-select" aria-label="market">${opts}</select></label> · ${contractLink(contract)}`;
+  $("market-select").addEventListener("change", (e) => switchMarket(Number(e.target.value)));
+}
+
 function render(book) {
   const baseSym = tokenLabel(book.tokens?.base, urlBaseSym, book.base);
   const quoteSym = tokenLabel(book.tokens?.quote, urlQuoteSym, book.quote);
   $("pair").textContent = `${baseSym} / ${quoteSym}`;
-  const short = shortAddr(contract);
-  $("meta").innerHTML = isTestnetRpc()
-    ? `market ${market} · <a href="https://stellar.expert/explorer/testnet/contract/${encodeURIComponent(contract)}">${esc(short)}</a>`
-    : `market ${market} · ${esc(short)}`;
+  renderMeta();
 
   const bid = book.bestBid;
   const ask = book.bestAsk;
-  const { spread, mid, pct } = midSpread(bid, ask);
+  const { spread, mid, pct, ticks } = midSpread(bid, ask, book);
   const last = (eventState.events || []).find((e) => e.name === "filled");
   const staleBid = bid.stale ? `<span class="badge">stale best</span>` : "";
   const staleAsk = ask.stale ? `<span class="badge">stale best</span>` : "";
   $("kpis").innerHTML = `
     <div class="kpi bid"><span class="l">best bid</span><span class="v">${bid.empty ? "—" : esc(priceOf(bid.tick, book))}${staleBid}</span></div>
     <div class="kpi ask"><span class="l">best ask</span><span class="v">${ask.empty ? "—" : esc(priceOf(ask.tick, book))}${staleAsk}</span></div>
-    <div class="kpi"><span class="l">spread</span><span class="v">${spread == null ? "—" : `${esc(spread)} (${esc(pct)})`}</span></div>
+    <div class="kpi"><span class="l">spread</span><span class="v" title="${ticks == null ? "" : `${esc(ticks)} ticks`}">${spread == null ? "—" : `${esc(spread)} (${esc(pct)})`}</span></div>
     <div class="kpi"><span class="l">mid</span><span class="v">${mid == null ? "—" : esc(mid)}</span></div>
     <div class="kpi"><span class="l">last</span><span class="v">${last ? `${esc(priceOf(last.tick, book))} × ${esc(formatInt(last.lots))} lots` : "—"}</span></div>`;
 
@@ -489,8 +532,8 @@ function factsHtml(book, baseSym, quoteSym) {
   const feeB = `${formatAtoms(book.fees.base, bd)} ${baseSym}`;
   const feeQ = `${formatAtoms(book.fees.quote, qd)} ${quoteSym}`;
   return [
-    fact("base", `${esc(baseSym)} ${esc(shortAddr(m.base))}`),
-    fact("quote", `${esc(quoteSym)} ${esc(shortAddr(m.quote))}`),
+    fact("base", `${esc(baseSym)} ${contractLink(m.base)}`),
+    fact("quote", `${esc(quoteSym)} ${contractLink(m.quote)}`),
     fact("lot_size", formatInt(m.lot_size)),
     fact("tick_size", formatInt(m.tick_size)),
     fact("tick band", `[${formatInt(m.tick_min)}, ${formatInt(m.tick_max)})`),
@@ -524,7 +567,59 @@ function mergeEvents(incoming) {
   eventState.seen = new Set(eventState.events.map((e) => e.id).filter(Boolean));
 }
 
+let marketsLoadedAt = 0;
+const MARKETS_TTL_MS = 120000;
+
+// Pick the market to show when the URL does not name one: the DEFAULT_PAIR
+// market if the contract has one, else the lowest id.
+function pickDefaultMarket(list) {
+  const hit = list.find((m) => m.baseSym === DEFAULT_PAIR[0] && m.quoteSym === DEFAULT_PAIR[1]);
+  if (hit) return hit.id;
+  return list.length ? list[0].id : 0;
+}
+
+async function ensureMarkets(rpc) {
+  if (marketList.length && Date.now() - marketsLoadedAt < MARKETS_TTL_MS) return;
+  const res = await listMarkets(rpc, { contract });
+  marketList = res.markets;
+  marketsLoadedAt = Date.now();
+  if (market == null) market = pickDefaultMarket(marketList);
+  renderMeta();
+}
+
+let requestRefresh = () => {};
+
+function resetMarketState() {
+  eventState = { cursor: null, seen: new Set(), historyFrom: null, events: [] };
+  eventsLoading = false;
+  knownBase = null;
+  knownQuote = null;
+  lastGood = null;
+  lastOkAt = 0;
+  lastError = "";
+}
+
+function switchMarket(id) {
+  if (id === market) return;
+  market = id;
+  const url = new URL(location.href);
+  url.searchParams.set("market", String(id));
+  history.replaceState(null, "", url);
+  resetMarketState();
+  $("kpis").innerHTML = "";
+  $("ladder").innerHTML = "";
+  $("trades").innerHTML = "";
+  $("activity").innerHTML = "";
+  $("facts").innerHTML = "";
+  $("history-note").textContent = "";
+  renderMeta();
+  setFresh();
+  requestRefresh();
+}
+
 async function refresh(rpc) {
+  await ensureMarkets(rpc);
+  const forMarket = market;
   const book = await walkDepth(rpc, {
     contract,
     market,
@@ -532,6 +627,7 @@ async function refresh(rpc) {
     base: knownBase,
     quote: knownQuote,
   });
+  if (market !== forMarket) return; // switched while in flight
   knownBase = book.base || knownBase;
   knownQuote = book.quote || knownQuote;
   lastGood = book;
@@ -549,11 +645,12 @@ async function refresh(rpc) {
       seen: eventState.seen,
       historyFrom: eventState.historyFrom,
     });
+    if (market !== forMarket) return;
     eventState.cursor = ev.cursor;
     if (ev.historyFrom != null) eventState.historyFrom = ev.historyFrom;
     mergeEvents(ev.events);
   } finally {
-    eventsLoading = false;
+    if (market === forMarket) eventsLoading = false;
   }
   render(book);
   setFresh();
@@ -561,6 +658,8 @@ async function refresh(rpc) {
 
 if (mock) {
   const snap = mockSnapshot();
+  market = 0;
+  marketList = [{ id: 0, base: snap.base, quote: snap.quote, baseSym: "PBA", quoteSym: "PBB" }];
   eventState.events = snap.events;
   eventState.historyFrom = snap.historyFrom;
   lastGood = snap;
@@ -580,6 +679,14 @@ if (mock) {
     let didFirst = false;
     let tickTimer = null;
     let inflight = false;
+    let forced = false;
+
+    requestRefresh = () => {
+      forced = true;
+      if (tickTimer != null) clearTimeout(tickTimer);
+      tickTimer = null;
+      tick();
+    };
 
     function schedule(ms) {
       if (tickTimer != null) clearTimeout(tickTimer);
@@ -593,7 +700,8 @@ if (mock) {
       try {
         const latest = await rpc.getLatestLedger();
         const seq = latest.sequence;
-        if (!didFirst || seq !== lastSeq) {
+        if (!didFirst || seq !== lastSeq || forced) {
+          forced = false;
           lastSeq = seq;
           await refresh(rpc);
           didFirst = true;
@@ -607,7 +715,7 @@ if (mock) {
         delay = Math.min(delay * 2, 10000);
       } finally {
         inflight = false;
-        schedule(document.hidden && didFirst ? 5000 : delay);
+        schedule(forced ? 0 : document.hidden && didFirst ? 5000 : delay);
       }
     }
 
