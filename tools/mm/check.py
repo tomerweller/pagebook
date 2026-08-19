@@ -36,6 +36,8 @@ def main():
     ap.add_argument("--through-mid-tol-bps", type=float, default=15)
     ap.add_argument("--min-xlm", type=float, default=2000)
     ap.add_argument("--window", type=float, default=3600)
+    ap.add_argument("--trader-log", default="tools/mm/trader.log")
+    ap.add_argument("--max-trader-age", type=float, default=600)
     a = ap.parse_args()
 
     alerts, notes = [], []
@@ -131,6 +133,32 @@ def main():
         except Exception as e:
             notes.append(f"level view error: {str(e)[-80:]}")
 
+    # 4b. the trader (if one is running): traffic in the window, no bad outcomes, alive
+    trader = None
+    if os.path.exists(a.trader_log):
+        tc = collections.Counter()
+        lots = 0
+        last_t = 0
+        with open(a.trader_log) as f:
+            for line in f:
+                try:
+                    d = json.loads(line)
+                except Exception:
+                    continue
+                last_t = max(last_t, d.get("t", 0))
+                if now - d.get("t", 0) > a.window or d.get("action") in ("stats",):
+                    continue
+                tc[(d.get("action"), d.get("outcome"))] += 1
+                if d.get("action") == "take" and d.get("outcome") == "ok" and d.get("ret"):
+                    lots += int(d["ret"].get("filled_lots", 0))
+        tbad = {f"{k[0]}/{k[1]}": v for k, v in tc.items() if k[1] in ("footprint", "trapped:unknown", "build_error", "sign_error", "resource_limit", "soroban_invalid", "error") or (k[1].startswith("typed:") and "Crossed" not in k[1])}
+        if tbad:
+            alerts.append("trader bad outcomes in window: " + json.dumps(tbad))
+        if last_t and now - last_t > a.max_trader_age:
+            alerts.append(f"trader stale: last line {int(now - last_t)}s ago")
+        trader = {"takes_ok": tc[("take", "ok")], "lots_taken": lots, "rests_ok": tc[("rest", "ok")], "settles_ok": tc[("settle", "ok")],
+                  "sim_rejected": sum(v for k, v in tc.items() if k[1].startswith("sim:")), "apply_rejected": sum(v for k, v in tc.items() if k[1].startswith("typed:"))}
+
     # 5. reserve
     xlm = last_loop.get("xlm") if last_loop else None
     if xlm is not None and xlm < a.min_xlm:
@@ -142,6 +170,7 @@ def main():
         "fills_total": last_loop.get("fills_total") if last_loop else None, "volume_lots": last_loop.get("volume_lots") if last_loop else None,
         "xlm": xlm, "usdc": last_loop.get("usdc") if last_loop else None,
         "last_hour": {"ok": ok_n, "sim_rejected": sim_rej, "apply_rejected": apply_rej, "heals": heals},
+        "trader_last_hour": trader,
     }
     if alerts:
         print("MM ALERT " + "; ".join(alerts) + " | " + json.dumps(summary) + (" | " + "; ".join(notes) if notes else ""))

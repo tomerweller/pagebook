@@ -153,7 +153,7 @@ same ADR).
 | `crates/pagebook-types/` | Shared contract types, packed encodings, constants, and key helpers |
 | `crates/pagebook-client/` | Client-side key and footprint helpers |
 | `tools/soak/` | Testnet soak driver: padded footprints through the stellar CLI, outcome classification (ADR-025) |
-| `tools/mm/` | XLM/USDC market maker for testnet market 1, quoted off the spot price, plus its external health check (ADR-026) |
+| `tools/mm/` | XLM/USDC market maker for testnet market 1, quoted off the spot price, a trader that generates traffic against it, and their external health check (ADR-026) |
 | `docs/04-architecture.md` | Full technical specification |
 | `docs/index.html` | Visual companion to the technical specification, rendered at [blob.tomerweller.com/pagebook](https://blob.tomerweller.com/pagebook/) |
 | `docs/dashboard/` | Read-only live market status page (RPC only, no build step), rendered at [blob.tomerweller.com/pagebook/dashboard](https://blob.tomerweller.com/pagebook/dashboard/) |

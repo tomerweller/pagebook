@@ -11,3 +11,4 @@ tools/mm/state.json
 tools/mm/state.json.tmp
 tools/mm/*.log
 tools/mm/mm.out
+tools/mm/trader.out

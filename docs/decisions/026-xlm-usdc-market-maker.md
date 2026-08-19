@@ -78,8 +78,29 @@ The live book is at
 `https://blob.tomerweller.com/pagebook/dashboard/?market=1` (the dashboard
 labels a phantom recorded best "stale best").
 
+## The trader (`tools/mm/trader.py`)
+
+Traffic against the maker from a second identity, `pb-trader`
+(`GCLDONZH4JYF2OF7LXZDM3YANP6SG2SUDPHDOEYRZLVX6NSSG2LSWTEF`, 29,980 XLM and
+17,594 USDC, funded the same way). Every 20 to 75 s, at random: an
+immediate take (`no_rest`) at the touch (1 to 12 lots, 60%), through about
+two levels (20 to 80 lots, 30%), or a deeper sweep of four to six levels (100
+to 260 lots, 10%); or, 15% of the time, a small resting order inside the
+spread that it settles two to six minutes later. Each take goes through
+`quote_place` and the full §14 band pad (`tools/soak` `pad_keys`), so the
+taker side of the padding protocol now runs continuously against a moving,
+re-quoting book. Fills are read from the transaction's `return_value` in
+`TransactionMeta` (`tx send` and RPC 23's `getTransaction` do not surface
+it). `check.py` reports the trader's last-hour traffic next to the maker's and
+alerts on any footprint, unknown-trap or tool error on either side.
+
+A take that lands on a phantom recorded best fills nothing and heals it (the
+walk clears the bit and advances `BestTick`), so the organic flow now does
+some of the index housekeeping the maker was doing with its 1-lot heals.
+
 ## Status
 
-Bot started 2026-08-19 09:34 local (pid logged in `tools/mm/mm.out`); its
+Maker started 2026-08-19 09:34 local, trader 10:19; both run detached, their
 behaviour over time is tracked by the monitor and recorded in `tools/mm/mm.log`
-(git-ignored). Findings from the longer run go in a follow-up note.
+and `tools/mm/trader.log` (git-ignored). Findings from the longer run go in a
+follow-up note.
