@@ -98,6 +98,38 @@ A take that lands on a phantom recorded best fills nothing and heals it (the
 walk clears the bit and advances `BestTick`), so the organic flow now does
 some of the index housekeeping the maker was doing with its 1-lot heals.
 
+## Findings from the first hours
+
+**A trend turns the phantom cost from a nuisance into a lag.** With the price
+up 40 bps in a few minutes the maker's bid ladder fell 100 bps behind the
+mid. Every re-quoted ask leaves its old level empty with the bit set; in a
+trend the old ask ladder is a trail of up to 20 phantom levels between the
+bids' new targets and the recorded best ask, and the one-level-per-take heal
+could not clear it as fast as the quotes needed to move (189 heals and 241
+`Crossed` simulation rejections in the hour). Two changes to the bot:
+
+- heal with **one walk to the target tick**: a 1-lot no-rest take whose limit
+  is the tick the post-only wants; the walk clears every phantom level up to
+  it (at most `MAX_LEVELS_CROSSED` = 32 per take, chunked at 150 ticks of band)
+  and advances `BestTick` past them in one transaction (the first such heal
+  cleared 30 levels at once);
+- heal **proactively**, before the re-quotes of a cycle, whenever a side's
+  target touch crosses the recorded opposite best.
+
+One such heal was rejected `TxSorobanInvalid`: its pad had ~120 band `Level`
+keys plus three page keys for each of 31 phantom levels, over the 200
+read-write-entries per-transaction cap. The pad now skips page keys for
+crossed levels simulation saw empty (§14 already says fresh or empty queues
+are inline), which also tightens the soak's `pad_keys` when asked to.
+
+The design-level observation stands: a maker that re-quotes a ladder
+manufactures phantom bests at the rate it moves, and under the lazy index
+someone has to walk them. A `replace` that clears the bit of the level it has
+just emptied (it knows: its own order was the last, `open_lots` hit zero)
+would remove the whole class for the common case at the cost of one word
+write per such replace. Worth a decision note before any mainnet thought;
+not changed here.
+
 ## Status
 
 Maker started 2026-08-19 09:34 local, trader 10:19; both run detached, their
