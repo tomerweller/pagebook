@@ -799,7 +799,11 @@ slot windows: for each *set* level in the band, pages
 none, their queues are inline). On the taker's **own** side, for its possible rest:
 `Level(own_side, limit_tick)` (set or not, the rest rewrites or creates it),
 `TickWord(own_side, word(limit_tick))`, own-side `TickSummary` and `BestTick`,
-`Order(taker, nonce)`, and append pages `{page(tail_sim), +1, 0}`. For **both** tokens
+`Order(taker, nonce)`, and append pages `{page(tail_sim), +1, 0}`. The own-side word
+is on the list even though a rest onto a live level never reads it (§9 sets the bit
+only when the level was empty): if that level empties in flight, the rest must set the
+bit at apply, and simulation had no reason to declare the word (ADR-025). The same
+own-side set applies to every rest, a `replace` item included. For **both** tokens
 (not only the one simulation happened to move): the SAC contract instance, the vault's
 SAC balance, and the caller's own balance entry (a trustline for a classic asset), plus
 both `FeeAccrual`s. That list is exhaustive: a take-plus-rest place touches nothing

@@ -51,29 +51,55 @@ encode`, `tx sign`, `tx send`. Four things the SDK test host could not show:
    the missing ones. And the declared instructions need headroom: simulation
    budgets exactly what it touched, and each extra footprint key costs the host
    a little to process.
+5. **The own-side word is never optional.** A rest onto a level with open lots
+   does not read its `TickWord` (§9 sets the bit only when the level was
+   empty), so simulation does not declare it. Twice in the long run a
+   `replace_batch` item's level was swept empty in flight and the re-rest
+   trapped on `TickWord(own_side)`. The client crate's `keys_for_replace` had
+   the word all along; the soak's hand-rolled replace pad did not. §14 now
+   says why the word is on the own-side list and that every rest, replace
+   items included, declares that set.
 
 ## The soak (item 7)
 
 `tools/soak/soak.py` (stellar CLI + RPC, no SDK): four threads, one identity
 each. Taker: crosses at the best ± 3 ticks, padded band to its limit. Maker:
-post-only quotes around mid 100, `replace_batch` every six. Spam: post-only
-rest one tick inside the spread, then `replace` 20 ticks away (stale bits and
-phantom bests). Storm: bursts of 3 to 8 same-level post-only rests at the best
-ask. Every outcome is classified from the send result and, for `Trapped`
-transactions, from the diagnostic events (`getTransaction`): `ok`, `typed:X`
-(a PageBook error, at simulation or apply), `footprint` (a key outside the
-declared set), or other.
+post-only quotes around mid 100, `replace_batch` every six, settles the
+replaced quotes 40 s later. Spam: post-only rest one tick inside the spread,
+then `replace` 20 ticks away (stale bits and phantom bests). Storm: bursts of
+3 to 8 same-level post-only rests at the best ask, stepping out a tick on
+`LevelFull`, settling each burst 45 s later. Every outcome is classified from
+the send result and, for `Trapped` transactions, from the diagnostic events
+(`getTransaction`): `ok`, `typed:X` (a PageBook error, at simulation or
+apply), `footprint` (a key outside the declared set), `rpc_timeout`, or other.
 
-Shakedown runs on 2026-08-18: 20 ledgers, 45 ok / 3 traps (all four findings
-above); 30 ledgers after fixes 1 to 4, 69 ok / 1 footprint on an unpadded
+Shakedown runs on 2026-08-18: 20 ledgers, 45 ok / 3 traps (findings 1 to 4
+above); 30 ledgers after those fixes, 69 ok / 1 footprint on an unpadded
 `replace` (fixed: replaces carry the token keys and append pages) / 1 typed
 `Crossed` at apply (a post-only that got crossed in flight, correct) / 7 typed
 `Crossed` at simulation (storm posts on a moving book).
 
-2,000-ledger run: `tools/soak/soak-2000.log` (JSON lines; the last line is the
-summary). Result to be recorded here when it completes; the acceptance
-criterion (05) is no footprint failure other than a walk past `pad_end`, and
-every `RetryRest` re-simulated and landed.
+Long-run attempts (each stopped for a tool fix, logs kept locally):
+
+- ~200 ledgers: 215 ok, 0 footprint. Stopped because the log kept only the
+  tail of simulation errors, which for a 6-item batch is all arguments and no
+  error code (fixed).
+- ~500 ledgers: 413 ok, 0 footprint, 2 `Crossed` at apply. Stopped because no
+  role settled, so the levels at the best filled to `LEVEL_CAP` and the storm
+  degenerated into simulation-time `LevelFull` rejections (maker and storm now
+  settle).
+- ~1,400 ledgers: 3,242 ok (1,344 places, 144 replaces, 5 batches, 569
+  settles), 25 `Crossed` at apply, 2 **footprint** failures, both
+  `replace_batch` re-rests trapping on the own-side `TickWord` (finding 5).
+  Stopped to fix the soak's replace pad; the failure is a client-pad omission,
+  not a design or contract defect.
+
+Definitive 2,000-ledger run: `tools/soak/soak-2000.log` (JSON lines; the last
+line is the summary). Result to be recorded here when it completes; the
+acceptance criterion (05) is no footprint failure other than a walk past
+`pad_end`, and every `RetryRest` re-simulated and landed. `LevelFull` at
+simulation is expected on this book (levels near mid hold orphaned orders from
+the earlier attempts, drained slowly by the taker) and costs nothing.
 
 ## Restore opt-in (item 6): runbook
 
