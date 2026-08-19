@@ -201,9 +201,13 @@ def order_key(contract, market, owner, nonce):
     }
 
 
-def pad_keys(contract, market, is_bid, limit, q, pad_end, owner, nonce, base, quote):
+def pad_keys(contract, market, is_bid, limit, q, pad_end, owner, nonce, base, quote, pages_for_empty=True):
     """The client pad of architecture §14 for a place, mirroring
-    crates/pagebook-client pad(); returned as ledger-key JSON objects."""
+    crates/pagebook-client pad(); returned as ledger-key JSON objects.
+    `pages_for_empty=False` skips the consume-window pages of crossed levels
+    that simulation saw empty (stale bits): their queues are inline even if a
+    rest lands there in flight (§14), and a heal walk over a long phantom trail
+    would otherwise blow the 200 read-write-entry cap."""
     opp = not is_bid
     keys = []
     start = q["start_tick"]
@@ -216,6 +220,8 @@ def pad_keys(contract, market, is_bid, limit, q, pad_end, owner, nonce, base, qu
     keys.append(ck(contract, "TickSummary", market, opp))
     keys.append(ck(contract, "BestTick", market, opp))
     for c in q["crossed"]:
+        if not pages_for_empty and c.get("open_lots", 0) == 0:
+            continue
         p = page(c["head_seq"])
         for pg in {0, p, p + CONSUME_WIDTH}:
             keys.append(ck(contract, "LevelPage", market, opp, c["tick"], pg))

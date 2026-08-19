@@ -35,6 +35,10 @@ TICK_MIN, TICK_MAX = 1, 4_194_304
 NATIVE_ACCOUNT_KEY = "account"
 
 
+def crosses(taker_is_bid, opp_tick, limit_tick):
+    return opp_tick <= limit_tick if taker_is_bid else opp_tick >= limit_tick
+
+
 def tick_of(price):
     return int(round(price / TICK_USD_PER_XLM))
 
@@ -224,7 +228,7 @@ class MM:
         elif out == "sim:typed:LevelFull":
             self.bad_ticks[(is_bid, tick)] = time.time() + 600
         elif out == "sim:typed:Crossed":
-            self.heal_phantom(is_bid)
+            self.heal_to(is_bid, tick)
         return out
 
     def replace_items(self, items):
@@ -246,7 +250,7 @@ class MM:
             elif out == "sim:typed:LevelFull":
                 self.bad_ticks[(is_bid, tick)] = time.time() + 600
             elif out == "sim:typed:Crossed":
-                self.heal_phantom(is_bid)
+                self.heal_to(is_bid, tick)
             elif out in ("sim:typed:UnknownOrder", "typed:UnknownOrder"):
                 self.state["quotes"].pop(str(n), None)
                 self.save()
@@ -266,15 +270,18 @@ class MM:
             self.replace_items([it])
         return out
 
-    def heal_phantom(self, is_bid):
-        """A post-only on side `is_bid` failed Crossed against the recorded
-        opposite best. If that level is actually empty (stale-better bit, §9),
-        send a 1-lot no-rest take at it: the walk clears the bit and advances
-        BestTick; nothing fills unless someone really rests there."""
+    def heal_to(self, is_bid, target):
+        """Our post-only on side `is_bid` at `target` would fail Crossed against
+        the recorded opposite best. If that best is a phantom (an empty level
+        whose bit is still set, §9: typically a level our own re-quotes vacated),
+        send a 1-lot no-rest take with limit `target`: one walk clears every
+        phantom level up to the target (at most MAX_LEVELS_CROSSED of them) and
+        advances BestTick past them. A real resting order at the best means a
+        real cross: leave it alone."""
         a = self.a
         b = self.best(not is_bid)
-        if b is None:
-            return "no_best"
+        if b is None or not crosses(is_bid, b, target):
+            return "clear"
         try:
             lv = self.cli.invoke_readonly(a.identity, "level", ["--market", str(a.market), "--is_bid", str(not is_bid).lower(), "--tick", str(b)])
         except Exception:
@@ -284,15 +291,24 @@ class MM:
         key = (is_bid, b)
         if self.healed.get(key, 0) > time.time():
             return "recent"
-        self.healed[key] = time.time() + 120
-        q = self.cli.invoke_readonly(a.identity, "quote_place", ["--market", str(a.market), "--is_bid", str(is_bid).lower(), "--limit_tick", str(b), "--qty", "1"])
+        self.healed[key] = time.time() + 60
+        # one walk clears at most MAX_LEVELS_CROSSED phantoms, and the band
+        # pad is one Level key per tick: chunk a long trail (the next cycle
+        # continues from the new recorded best)
+        if crosses(is_bid, b, target) and abs(target - b) > a.heal_band:
+            target = b + a.heal_band if is_bid else b - a.heal_band
+        q = self.cli.invoke_readonly(a.identity, "quote_place", ["--market", str(a.market), "--is_bid", str(is_bid).lower(), "--limit_tick", str(target), "--qty", "1"])
+        crossed = q.get("crossed", [])
+        if len(crossed) >= 32:
+            target = crossed[-1]["tick"]
         nonce = self.next_nonce()
         window = soak.window_json(q, None)
         flags = json.dumps({"post_only": False, "fill_or_kill": False, "no_rest": True})
-        args = ["--taker", self.addr, "--market", str(a.market), "--is_bid", str(is_bid).lower(), "--limit_tick", str(b), "--qty_lots", "1",
+        args = ["--taker", self.addr, "--market", str(a.market), "--is_bid", str(is_bid).lower(), "--limit_tick", str(target), "--qty_lots", "1",
                 "--start_tick", str(q["start_tick"]), "--nonce", str(nonce), "--window", window, "--flags", flags]
-        pad = soak.pad_keys(a.contract, a.market, is_bid, b, q, b, self.addr, nonce, a.base_sac, a.quote_sac) + self.token_keys()
-        return self.submit("place", args, pad, label="heal", side="bid" if is_bid else "ask", phantom_tick=b)
+        pad = soak.pad_keys(a.contract, a.market, is_bid, target, q, target, self.addr, nonce, a.base_sac, a.quote_sac, pages_for_empty=False) + self.token_keys()
+        return self.submit("place", args, pad, label="heal", side="bid" if is_bid else "ask", phantom_tick=b, target=target,
+                           phantoms=len(q.get("crossed", [])))
 
     def settle(self, nonce, is_bid, tick):
         a = self.a
@@ -400,9 +416,14 @@ class MM:
                 if was_filled or moved >= thresh or q["lots"] != lots:
                     to_replace.append((n, is_bid, tick, lots, slot))
 
-        # never quote across our own opposite best (post-only would fail anyway)
-        our_best_bid = max([q["tick"] for q in quotes.values() if q["side"] == "bid"], default=None)
-        our_best_ask = min([q["tick"] for q in quotes.values() if q["side"] == "ask"], default=None)
+        # proactive heal: if a side's target touch crosses the recorded opposite
+        # best (a phantom trail left by our own re-quotes in a trend), clear it
+        # with one walk before the re-quotes, instead of failing them one by one
+        book_bb, book_ba = self.best(True), self.best(False)
+        if book_ba is not None and bids and book_ba <= bids[0][0]:
+            self.heal_to(True, bids[0][0])
+        if book_bb is not None and asks and book_bb >= asks[0][0]:
+            self.heal_to(False, asks[0][0])
 
         # act: replaces in batches, places one by one (bounded per cycle)
         for i in range(0, len(to_replace), a.batch):
@@ -449,6 +470,7 @@ def main():
     ap.add_argument("--max-places-per-cycle", type=int, default=6)
     ap.add_argument("--interval", type=float, default=30.0)
     ap.add_argument("--max-feed-age", type=float, default=240.0)
+    ap.add_argument("--heal-band", type=int, default=150, help="max ticks one heal walk spans (band pad keys)")
     ap.add_argument("--state", default="tools/mm/state.json")
     ap.add_argument("--log", default="tools/mm/mm.log")
     ap.add_argument("--cancel-all", action="store_true")
