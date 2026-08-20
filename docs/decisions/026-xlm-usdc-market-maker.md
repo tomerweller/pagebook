@@ -144,5 +144,15 @@ not changed here.
 
 Maker started 2026-08-19 09:34 local, trader 10:19; both run detached, their
 behaviour over time is tracked by the monitor and recorded in `tools/mm/mm.log`
-and `tools/mm/trader.log` (git-ignored). Findings from the longer run go in a
-follow-up note.
+and `tools/mm/trader.log` (git-ignored).
+
+Steady state after ten hours (through two 2%-range trends and the fixes
+above): 40 quotes always live, touch 5 to 12 bps around the spot mid; 547
+maker fills for 13,586 lots (about 136,000 XLM traded); heals settled at 30
+to 55 per hour, about one per re-quoting cycle; trader landing 60 to 70
+takes per hour with zero rejections. Since the two headroom fixes, zero
+footprint failures, zero unexplained traps, zero apply-time rejections other
+than in-flight `Crossed` on post-onlys, and the only tool-level failures are
+isolated RPC hiccups (a submission timeout, a 502, a captive-core 404). The
+maker's inventory oscillates with the trader's random flow and the 3 bps skew
+pulls it back; fee accrual stays in the vault (`collect_fees` is manual).
