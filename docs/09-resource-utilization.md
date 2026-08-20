@@ -388,3 +388,23 @@ recovered a third), trimming the band to quoted depth, and the candidate
 design change in ADR-026 (replace clearing the bit of the level it emptied,
 which removes the walk-over-empties categories) all recover ledger capacity
 without an SLP.
+
+## Saturation, measured
+
+The ranking above was then tested directly (ADR-027, `tools/stress/`): eight
+accounts each firing a near-cap `replace_batch` (40 word-dispersed quotes,
+191 declared read-write entries, 93,100 declared write bytes) about once per
+ledger for 253 ledgers, an oversubscription of 2.6x on ledger write bytes.
+The chain admitted at most **3 such transactions per ledger: 279,300
+declared write bytes, 97.4 percent of the cap**, while the same ledgers sat
+at 57 percent of write entries and 55 percent of instructions. The excess
+queued (inclusion delay median 2 ledgers, max 6) and then fell to surge
+pricing (`TxInsufficientFee` at the default inclusion fee); the charged
+resource fee never moved. Small transactions (the market 1 maker and
+trader) kept landing in the gaps throughout.
+
+So the ranking holds under saturation, with one addition: a batch declares
+93 KB but meters ~12 KB, so pad conservatism costs about 7.7x in admitted
+throughput. Tightening the pad's per-key byte and instruction estimates is
+worth more capacity than any plausible single SLP raise, and both levers
+compound.
