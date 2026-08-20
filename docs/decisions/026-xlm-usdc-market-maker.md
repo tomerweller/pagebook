@@ -132,6 +132,13 @@ was a tenth of the total). The pad now declares 120k per padded key plus 1M
 flat (under 0.001 XLM per transaction at 7 stroops per 10k). §17's "per
 padded key" line should count instructions as well as the write-entry fee.
 
+A second rally (2% in ~20 min) showed one heal per cycle is not enough
+either: each walk clears at most 32 phantom levels while a fast trend
+manufactures more than that per 30 s cycle, and the bid ladder pinned until
+the trail cleared. The proactive heal now loops (up to 6 walks per cycle,
+each from the new recorded best) before the cycle's re-quotes; the pinned
+ladder caught up 190 ticks in two cycles when deployed mid-rally.
+
 The design-level observation stands: a maker that re-quotes a ladder
 manufactures phantom bests at the rate it moves, and under the lazy index
 someone has to walk them. A `replace` that clears the bit of the level it has
