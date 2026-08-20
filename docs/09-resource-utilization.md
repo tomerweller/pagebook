@@ -356,6 +356,17 @@ Ranked by how soon each cap binds this workload:
    take reserves a quarter of a ledger, so four of them saturate the network
    while using 5 percent of its instruction budget. Doubling this cap
    doubles the whole book's throughput and nothing else comes close.
+   (A natural question: since protocol 23, does cached contract data even
+   count toward write limits? Reads no, writes yes. CAP-0066 exempts
+   in-memory entries from read fees and disk-read limits, live reads being
+   bounded only by the 400-entry footprint cap, but writes have no in-memory
+   exemption: every write of live soroban state counts toward all four write
+   limits, per transaction and per ledger. The live settings show the same
+   split in their names: `ledger_max_disk_read_entries` against a plain
+   `ledger_max_write_ledger_entries`. ADR-025 finding 2 measured the write
+   side directly: a read-write key on live contract data consumes
+   write-entry capacity and its 2,500-stroop fee whether or not it is
+   written.)
 2. **Ledger write entries (1,000).** The second binder: eight deep takes or
    thirteen batch refreshes fill it. It travels with write bytes (SLP-0004
    raised both); any write-byte increase should keep them proportional.
