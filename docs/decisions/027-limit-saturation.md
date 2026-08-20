@@ -15,7 +15,8 @@ declares:
 
 - 191 read-write entries (95.5 percent of the 200 per-transaction cap)
 - 93,100 write bytes (70 percent of the 132,096 per-transaction cap)
-- 107M instructions (27 percent of 400M; mostly pad headroom, metered is ~12M)
+- 107M instructions (27 percent of 400M; metered 82M, the word dispersal is
+  compute-heavy)
 - resource fee about 1.33M stroops declared, 0.091 XLM charged
 
 Eight of those per ledger demands about 1,530 read-write entries and 745 KB
