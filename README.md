@@ -155,6 +155,7 @@ same ADR).
 | `tools/soak/` | Testnet soak driver: padded footprints through the stellar CLI, outcome classification (ADR-025) |
 | `tools/mm/` | XLM/USDC market maker for testnet market 1, quoted off the spot price, a trader that generates traffic against it, and their external health check (ADR-026) |
 | `docs/04-architecture.md` | Full technical specification |
+| `docs/09-resource-utilization.md` | Measured declared-vs-metered resource ranges per invocation, from live testnet traffic |
 | `docs/index.html` | Visual companion to the technical specification, rendered at [blob.tomerweller.com/pagebook](https://blob.tomerweller.com/pagebook/) |
 | `docs/dashboard/` | Read-only live market status page (RPC only, no build step), rendered at [blob.tomerweller.com/pagebook/dashboard](https://blob.tomerweller.com/pagebook/dashboard/) |
 | `docs/03-soroban-constraints.md` | Soroban storage, footprint, and resource background |
