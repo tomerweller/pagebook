@@ -303,3 +303,77 @@ Deletes the order, credits proceeds and refund; the cheapest write path.
   declared in every category: the declared fee buys the reserved capacity,
   the refund returns the unused part, and overpadding therefore costs
   capacity, not money (section 17).
+
+## Utilization against the transaction and ledger limits
+
+Two caps matter for every resource: the per-transaction limit (can this
+invocation fit at all) and the per-ledger limit (how many can the network
+apply per 5 seconds). Ledger admission goes by **declared** resources, so
+declared utilization is what sets throughput; metered utilization shows what
+the same traffic would cost under a perfectly tight footprint. Limits are the
+August 2026 values in docs/03: per transaction 400 footprint entries, 200
+read-write entries, 400M instructions, 132,096 write bytes; per ledger 1,000
+write entries, 286,720 write bytes, 580M instructions.
+
+Declared, worst sample per category (percent of the transaction cap, percent
+of the ledger cap, and how many such transactions one ledger admits on write
+bytes):
+
+| invocation | RW entries, tx / ledger | footprint entries, tx | instructions, tx / ledger | write bytes, tx / ledger | fit per ledger |
+|---|---:|---:|---:|---:|---:|
+| place, post-only rest | 8% / 1.6% | 5% | 1.2% / 0.9% | 6% / 2.8% | 35 |
+| place, rest inside the spread | 10% / 1.9% | 6% | 1.5% / 1.1% | 7% / 3.3% | 30 |
+| take, 0 to 1 levels | 16% / 3.3% | 9% | 2.0% / 1.4% | 13% / 6.1% | 16 |
+| take, 2 to 3 levels | 32% / 6.5% | 17% | 3.2% / 2.2% | 27% / 12.4% | 8 |
+| take, 4 to 6 levels | 62% / 12.3% | 32% | 7.7% / 5.3% | 53% / 24.6% | 4 |
+| walk over 1 to 8 empty levels | 38% / 7.6% | 20% | 3.8% / 2.6% | 32% / 14.9% | 6 |
+| walk over 9 to 32 empty levels | 42% / 8.4% | 22% | 6.2% / 4.2% | 36% / 16.5% | 6 |
+| replace, one quote | 8% / 1.7% | 5% | 1.6% / 1.1% | 7% / 3.0% | 33 |
+| replace_batch, 6 to 8 quotes | 27% / 5.4% | 14% | 4.8% / 3.3% | 19% / 8.6% | 11 |
+| settle | 6% / 1.2% | 4% | 1.2% / 0.9% | 4% / 1.9% | 51 |
+
+Metered, worst sample per category (percent of the ledger cap; fit per
+ledger if footprints were exact):
+
+| invocation | RW entries | write bytes | instructions | fit per ledger |
+|---|---:|---:|---:|---:|
+| place, post-only rest | 1.2% | 1.1% | 0.6% | 90 |
+| place, rest inside the spread | 1.7% | 1.6% | 0.6% | 61 |
+| take, 0 to 1 levels | 2.8% | 3.2% | 0.8% | 30 |
+| take, 2 to 3 levels | 5.6% | 7.2% | 1.5% | 13 |
+| take, 4 to 6 levels | 5.6% | 7.2% | 3.6% | 13 |
+| walk over 1 to 8 empty levels | 7.1% | 9.3% | 1.8% | 10 |
+| walk over 9 to 32 empty levels | 7.9% | 10.4% | 2.7% | 9 |
+| replace, one quote | 1.5% | 1.4% | 0.6% | 72 |
+| replace_batch, 6 to 8 quotes | 3.8% | 4.3% | 2.2% | 23 |
+| settle | 0.9% | 0.8% | 0.5% | 130 |
+
+### Which limits are worth raising
+
+Ranked by how soon each cap binds this workload:
+
+1. **Ledger write bytes (286,720).** The ceiling for every category: a deep
+   take reserves a quarter of a ledger, so four of them saturate the network
+   while using 5 percent of its instruction budget. Doubling this cap
+   doubles the whole book's throughput and nothing else comes close.
+2. **Ledger write entries (1,000).** The second binder: eight deep takes or
+   thirteen batch refreshes fill it. It travels with write bytes (SLP-0004
+   raised both); any write-byte increase should keep them proportional.
+3. **Per-transaction write bytes (132,096).** The deepest sampled take
+   declares 53 percent. This is what caps how deep a single sweep or heal
+   chunk can go at fine-tick geometry; a 2x raise would let `MAX_LEVELS_CROSSED`
+   sweeps carry full pads at sub-bps ticks without chunking.
+4. **Not worth raising for this workload:** instructions (the worst declared
+   sample uses 7.7 percent of the transaction cap and 5.3 percent of a
+   ledger; SLP-0004's 400M is already generous), disk reads (metered is a
+   constant 260 bytes, the caller's trustline), footprint entry count (the
+   worst sample declares 32 percent of 400), events (two small events per
+   fill against a 16 KB cap).
+
+The other lever is on our side, not the network's: declared write bytes run
+2 to 3.4 times metered because the pad covers every set band level at full
+entry size. Tightening the pad (skipping page keys for empty levels already
+recovered a third), trimming the band to quoted depth, and the candidate
+design change in ADR-026 (replace clearing the bit of the level it emptied,
+which removes the walk-over-empties categories) all recover ledger capacity
+without an SLP.
