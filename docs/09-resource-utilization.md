@@ -378,8 +378,12 @@ Ranked by how soon each cap binds this workload:
    sample uses 7.7 percent of the transaction cap and 5.3 percent of a
    ledger; SLP-0004's 400M is already generous), disk reads (metered is a
    constant 260 bytes, the caller's trustline), footprint entry count (the
-   worst sample declares 32 percent of 400), events (two small events per
-   fill against a 16 KB cap).
+   worst sample declares 32 percent of 400).
+5. **One transaction cap is genuinely tight: contract events size.** The
+   word-dispersed batch40 metered 16,332 of 16,384 event bytes (99.7
+   percent), and a worst-case batch that improves the best on every item
+   would exceed the cap and fail at apply. That is a contract-side sizing
+   gap (issue #6), not a limit the network should raise for us.
 
 The other lever is on our side, not the network's: declared write bytes run
 2 to 3.4 times metered because the pad covers every set band level at full
