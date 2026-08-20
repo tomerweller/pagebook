@@ -403,8 +403,11 @@ pricing (`TxInsufficientFee` at the default inclusion fee); the charged
 resource fee never moved. Small transactions (the market 1 maker and
 trader) kept landing in the gaps throughout.
 
-So the ranking holds under saturation, with one addition: a batch declares
-93 KB but meters ~12 KB, so pad conservatism costs about 7.7x in admitted
-throughput. Tightening the pad's per-key byte and instruction estimates is
-worth more capacity than any plausible single SLP raise, and both levers
-compound.
+So the ranking holds under saturation, with one correction found by
+metering the stress shape itself: the word-dispersed batch meters 151
+written entries, 53 KB and 82M instructions (the same-tick batches in the
+tables above are far lighter), so the pad gap on this shape is 1.74x, not
+the larger multiples the light shapes show. Metered-exact footprints would
+fit ~5 such batches per ledger instead of 3. How the declared bytes
+decompose (protocol-mandated coverage of existing entries versus the pad's
+flat 600-byte estimate) is tracked as a research issue in the repo.

@@ -57,15 +57,17 @@ biggest declarers first.
    move with it for this workload until about 2x (at ~5 batches per ledger,
    write entries at 955 and instructions at 536M start to bind, so a 2x+
    write-byte raise should bring `ledgerMaxWriteLedgerEntries` along).
-2. **The declared-vs-metered gap is ours to close, and it is large.** A
-   batch declares 93 KB but meters ~12 KB; the 7.7x is pad conservatism (600
-   bytes per padded key at full entry size, plus instruction headroom).
-   Admission necessarily runs on declared resources, so every byte of pad
-   slack is ledger capacity spent. With metered-exact footprints the same
-   ledger would fit ~23 batches. Tightening the pad (per-key-type byte
-   estimates instead of a flat 600; smaller instruction margin now that the
-   per-key cost is measured at ~100k) is worth 2 to 3x admitted throughput,
-   no SLP required.
+2. **The declared-vs-metered gap is ours to close, but measure the right
+   shape first.** The dispersed batch meters 151 written entries, 53,380
+   write bytes and 82M instructions (a same-tick batch meters ~12 KB: word
+   dispersal is what makes this the heaviest legal transaction). Against
+   93,100 declared, the pad costs 1.74x on bytes for this shape; with
+   metered-exact footprints the ledger would fit ~5 such batches instead of
+   3. Where the remaining declared bytes go, how much of the gap is
+   protocol-mandated (an existing read-write entry must be covered at its
+   full size even if never written, ADR-025) versus client flat-rate
+   over-estimation, is an open question tracked in the repo issue on the
+   declared/metered gap.
 3. **The per-transaction caps are adequate.** The biggest legal PageBook
    transaction fits with room (95 percent of RW entries only because we
    padded it there deliberately; 70 percent of write bytes). Raising per-tx
