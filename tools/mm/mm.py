@@ -291,7 +291,7 @@ class MM:
         key = (is_bid, b)
         if self.healed.get(key, 0) > time.time():
             return "recent"
-        self.healed[key] = time.time() + 60
+        self.healed[key] = time.time() + 20
         # one walk clears at most MAX_LEVELS_CROSSED phantoms, and the band
         # pad is one Level key per tick: chunk a long trail (the next cycle
         # continues from the new recorded best)
@@ -419,11 +419,18 @@ class MM:
         # proactive heal: if a side's target touch crosses the recorded opposite
         # best (a phantom trail left by our own re-quotes in a trend), clear it
         # with one walk before the re-quotes, instead of failing them one by one
-        book_bb, book_ba = self.best(True), self.best(False)
-        if book_ba is not None and bids and book_ba <= bids[0][0]:
-            self.heal_to(True, bids[0][0])
-        if book_bb is not None and asks and book_bb >= asks[0][0]:
-            self.heal_to(False, asks[0][0])
+        for _ in range(a.max_heals_per_cycle):
+            book_ba = self.best(False)
+            if book_ba is None or not bids or book_ba > bids[0][0]:
+                break
+            if self.heal_to(True, bids[0][0]) != "ok":
+                break
+        for _ in range(a.max_heals_per_cycle):
+            book_bb = self.best(True)
+            if book_bb is None or not asks or book_bb < asks[0][0]:
+                break
+            if self.heal_to(False, asks[0][0]) != "ok":
+                break
 
         # act: replaces in batches, places one by one (bounded per cycle)
         for i in range(0, len(to_replace), a.batch):
@@ -471,6 +478,7 @@ def main():
     ap.add_argument("--interval", type=float, default=30.0)
     ap.add_argument("--max-feed-age", type=float, default=240.0)
     ap.add_argument("--heal-band", type=int, default=150, help="max ticks one heal walk spans (band pad keys)")
+    ap.add_argument("--max-heals-per-cycle", type=int, default=6)
     ap.add_argument("--state", default="tools/mm/state.json")
     ap.add_argument("--log", default="tools/mm/mm.log")
     ap.add_argument("--cancel-all", action="store_true")
