@@ -434,4 +434,156 @@ mod tests {
         assert_eq!(n.take(), 1);
         assert_eq!(n.take(), 2);
     }
+
+    fn hex32(b: &[u8; 32]) -> String {
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+
+    fn key_str(k: &ClientKey) -> String {
+        match k {
+            ClientKey::Config => "Config".into(),
+            ClientKey::Market(m) => format!("Market({m})"),
+            ClientKey::Level(m, bid, t) => format!("Level({m},{bid},{t})"),
+            ClientKey::LevelPage(m, bid, t, p) => format!("LevelPage({m},{bid},{t},{p})"),
+            ClientKey::Order(m, owner, n) => format!("Order({m},{},{n})", hex32(owner)),
+            ClientKey::FeeAccrual(m, tok) => format!("FeeAccrual({m},{})", hex32(tok)),
+            ClientKey::BestTick(m, bid) => format!("BestTick({m},{bid})"),
+            ClientKey::TickSummary(m, bid) => format!("TickSummary({m},{bid})"),
+            ClientKey::TickWord(m, bid, w) => format!("TickWord({m},{bid},{w})"),
+            ClientKey::VaultBalance(tok) => format!("VaultBalance({})", hex32(tok)),
+            ClientKey::UserBalance(tok) => format!("UserBalance({})", hex32(tok)),
+        }
+    }
+
+    fn sorted_keys(keys: &[ClientKey]) -> Vec<String> {
+        let mut s: Vec<String> = keys.iter().map(key_str).collect();
+        s.sort();
+        s
+    }
+
+    fn fixture_quoted() -> Quoted {
+        Quoted {
+            market: 0,
+            own_side: true,
+            limit_tick: 20,
+            start_tick: 10,
+            crossed: vec![
+                CrossedLevel {
+                    tick: 10,
+                    head_seq: 3,
+                    open_lots: 5,
+                },
+                CrossedLevel {
+                    tick: 11,
+                    head_seq: 0,
+                    open_lots: 2,
+                },
+                CrossedLevel {
+                    tick: 12,
+                    head_seq: 70,
+                    open_lots: 1,
+                },
+            ],
+            tail_seq: 0,
+            taker: [1; 32],
+            nonce: 7,
+            base: [2; 32],
+            quote: [3; 32],
+        }
+    }
+
+    const PLACE_3CROSS: &[&str] = &[
+        "BestTick(0,false)",
+        "BestTick(0,true)",
+        "Config",
+        "FeeAccrual(0,0202020202020202020202020202020202020202020202020202020202020202)",
+        "FeeAccrual(0,0303030303030303030303030303030303030303030303030303030303030303)",
+        "Level(0,false,10)",
+        "Level(0,false,11)",
+        "Level(0,false,12)",
+        "Level(0,true,20)",
+        "LevelPage(0,false,10,0)",
+        "LevelPage(0,false,10,1)",
+        "LevelPage(0,false,11,0)",
+        "LevelPage(0,false,11,1)",
+        "LevelPage(0,false,12,0)",
+        "LevelPage(0,false,12,1)",
+        "LevelPage(0,false,12,2)",
+        "LevelPage(0,true,20,0)",
+        "LevelPage(0,true,20,1)",
+        "Market(0)",
+        "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
+        "TickSummary(0,false)",
+        "TickSummary(0,true)",
+        "TickWord(0,false,0)",
+        "TickWord(0,true,0)",
+        "UserBalance(0202020202020202020202020202020202020202020202020202020202020202)",
+        "UserBalance(0303030303030303030303030303030303030303030303030303030303030303)",
+        "VaultBalance(0202020202020202020202020202020202020202020202020202020202020202)",
+        "VaultBalance(0303030303030303030303030303030303030303030303030303030303030303)",
+    ];
+
+    const SETTLE: &[&str] = &[
+        "Level(0,true,20)",
+        "LevelPage(0,true,20,0)",
+        "Market(0)",
+        "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
+        "UserBalance(0202020202020202020202020202020202020202020202020202020202020202)",
+        "UserBalance(0303030303030303030303030303030303030303030303030303030303030303)",
+        "VaultBalance(0202020202020202020202020202020202020202020202020202020202020202)",
+        "VaultBalance(0303030303030303030303030303030303030303030303030303030303030303)",
+    ];
+
+    const REPLACE_CROSS_SIDE: &[&str] = &[
+        "BestTick(0,false)",
+        "BestTick(0,true)",
+        "Config",
+        "Level(0,false,22)",
+        "Level(0,true,20)",
+        "LevelPage(0,false,22,0)",
+        "LevelPage(0,false,22,1)",
+        "LevelPage(0,true,20,0)",
+        "Market(0)",
+        "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
+        "TickSummary(0,false)",
+        "TickWord(0,false,0)",
+        "UserBalance(0202020202020202020202020202020202020202020202020202020202020202)",
+        "UserBalance(0303030303030303030303030303030303030303030303030303030303030303)",
+        "VaultBalance(0202020202020202020202020202020202020202020202020202020202020202)",
+        "VaultBalance(0303030303030303030303030303030303030303030303030303030303030303)",
+    ];
+
+    const RESTORE: &[&str] = &["Level(0,false,10)", "Level(0,false,11)", "Level(0,true,20)"];
+
+    #[test]
+    fn js_fixtures() {
+        let q = fixture_quoted();
+        let out = pad(&q, 12);
+        assert_eq!(sorted_keys(&out.keys), PLACE_3CROSS);
+        assert_eq!(
+            out.window.consume,
+            vec![
+                (10, PageRange { first: 0, last: 1 }),
+                (11, PageRange { first: 0, last: 1 }),
+                (12, PageRange { first: 1, last: 2 }),
+            ]
+        );
+        assert_eq!(out.window.append, PageRange { first: 0, last: 1 });
+
+        let settle = keys_for_settle(0, [1; 32], 7, true, 20, 5, [2; 32], [3; 32]);
+        assert_eq!(sorted_keys(&settle), SETTLE);
+
+        let (rep, append) =
+            keys_for_replace(0, [1; 32], 7, true, 20, 5, false, 22, 0, [2; 32], [3; 32]);
+        assert_eq!(sorted_keys(&rep), REPLACE_CROSS_SIDE);
+        assert_eq!(append, PageRange { first: 0, last: 1 });
+
+        let archived = vec![
+            ClientKey::Level(0, false, 10),
+            ClientKey::Level(0, false, 11),
+            ClientKey::Level(0, false, 99),
+            ClientKey::Level(0, true, 20),
+        ];
+        assert_eq!(sorted_keys(&restore_marks(&q, &out, &archived)), RESTORE);
+    }
 }

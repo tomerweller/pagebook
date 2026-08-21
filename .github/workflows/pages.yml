@@ -1,0 +1,43 @@
+name: pages
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: clients/web/package-lock.json
+      - name: Build web client
+        run: npm ci && npm run build
+        working-directory: clients/web
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp -a docs/. _site/
+          rm -rf _site/client
+          mkdir -p _site/client
+          cp -a clients/web/dist/. _site/client/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

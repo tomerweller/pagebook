@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PageBook client</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📒</text></svg>">
+</head>
+<body>
+<div class="shell">
+  <div class="page">
+    <header class="top">
+      <div>
+        <h1 id="pair">… / …</h1>
+        <div class="meta" id="meta"></div>
+      </div>
+      <div class="fresh" id="fresh"><span class="pill"></span><span id="fresh-text">loading…</span></div>
+    </header>
+    <div class="kpis" id="kpis"></div>
+    <section>
+      <h2>depth</h2>
+      <div class="ladder" id="ladder"></div>
+    </section>
+    <section>
+      <div class="feeds">
+        <div>
+          <h2>trades</h2>
+          <div class="panel"><ol class="tape" id="trades"></ol></div>
+          <p class="note" id="history-note"></p>
+        </div>
+        <div>
+          <h2>activity</h2>
+          <div class="panel"><ol class="tape activity" id="activity"></ol></div>
+        </div>
+      </div>
+    </section>
+    <section>
+      <h2>market</h2>
+      <dl class="facts" id="facts"></dl>
+    </section>
+  </div>
+  <aside class="wallet" id="wallet"></aside>
+</div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

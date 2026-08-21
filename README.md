@@ -134,9 +134,14 @@ on the Stellar testnet. Market 0 trades two test assets (`PBA`/`PBB`) with lot
 1, tick 1, and a 10 bps taker fee; market 1 trades native XLM against Circle's
 testnet USDC (10-XLM lots, 0.00001 USDC ticks, 5 bps), with a market maker
 quoting a 20-level ladder per side off the spot XLM-USD price
-([dashboard for market 1](https://blob.tomerweller.com/pagebook/dashboard/?market=1),
-ADR-026). A read-only status page for market 0 updates live at
-[blob.tomerweller.com/pagebook/dashboard](https://blob.tomerweller.com/pagebook/dashboard/).
+([client view of market 1](https://blob.tomerweller.com/pagebook/client/?market=1),
+ADR-026).
+
+That page is now a trading client (`clients/web/`): the market view plus
+an in-page testnet wallet that can fund, add a trustline, place, settle, and
+replace. Keys stay in the browser. A Node soak of the TypeScript padding
+engine on market 0 recorded 217 submissions and no footprint failure
+(ADR-027).
 
 The market has run real rests, takes, and settles, plus a 2,000-ledger
 multi-account soak through the full padding protocol (simulate, pad, submit),
@@ -161,7 +166,7 @@ same ADR).
 | `docs/09-resource-utilization.md` | Measured declared-vs-metered resource ranges per invocation, from live testnet traffic |
 | `docs/index.html` | Executive explainer, the site's front page, rendered at [blob.tomerweller.com/pagebook](https://blob.tomerweller.com/pagebook/) |
 | `docs/design.html` | Visual companion to the technical specification, rendered at [blob.tomerweller.com/pagebook/design.html](https://blob.tomerweller.com/pagebook/design.html) |
-| `docs/dashboard/` | Read-only live market status page (RPC only, no build step), rendered at [blob.tomerweller.com/pagebook/dashboard](https://blob.tomerweller.com/pagebook/dashboard/) |
+| `clients/web/` | TypeScript trading client (Vite): market view plus in-page testnet wallet, published at [blob.tomerweller.com/pagebook/client](https://blob.tomerweller.com/pagebook/client/) |
 | `docs/03-soroban-constraints.md` | Soroban storage, footprint, and resource background |
 | `docs/07-classic-dex-comparison.md` | Comparison with the classic Stellar DEX |
 
@@ -184,7 +189,8 @@ make lint
   events, footprints, fees, and archival behavior
 - [Executive explainer](https://blob.tomerweller.com/pagebook/): the design and its measured costs in brief (source: `docs/index.html`)
 - [Architecture explainer](https://blob.tomerweller.com/pagebook/design.html): diagrams and worked examples (source: `docs/design.html`)
-- [Market dashboard](https://blob.tomerweller.com/pagebook/dashboard/): live state of the testnet market (source: `docs/dashboard/`)
+- [Market client](https://blob.tomerweller.com/pagebook/client/): live book and in-page testnet wallet (source: `clients/web/`)
+- [Web client decision](docs/decisions/029-web-client.md): embedded wallet, fixture ports, Pages workflow, soak tally
 - [Soroban constraints](docs/03-soroban-constraints.md): the runtime limits
   behind the design
 - [Classic Stellar DEX comparison](docs/07-classic-dex-comparison.md): what

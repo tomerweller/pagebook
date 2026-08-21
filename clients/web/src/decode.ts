@@ -5,7 +5,22 @@ export const WORD_TICKS = 2048;
 export const SUMMARY_WORDS = 2048;
 export const PACKED_VERSION = 1;
 
-export function hexToBytes(hex) {
+export type LevelDecoded = {
+  generation: number;
+  head_seq: number;
+  tail_seq: number;
+  head_consumed_lots: bigint;
+  open_lots: bigint;
+  slots: bigint[];
+};
+
+export type Bitmap = {
+  bits: Uint8Array;
+  bit(i: number): boolean;
+  setBits(descending?: boolean): Generator<number>;
+};
+
+export function hexToBytes(hex: string): Uint8Array {
   const h = hex.startsWith("0x") ? hex.slice(2) : hex;
   if (h.length % 2 !== 0) throw new Error("odd hex length");
   const out = new Uint8Array(h.length / 2);
@@ -15,20 +30,20 @@ export function hexToBytes(hex) {
   return out;
 }
 
-export function bytesToHex(bytes) {
+export function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function asBytes(bytes) {
+function asBytes(bytes: Uint8Array | ArrayLike<number>): Uint8Array {
   if (bytes instanceof Uint8Array) return bytes;
   return new Uint8Array(bytes);
 }
 
-export function decodeLevel(bytes) {
+export function decodeLevel(bytes: Uint8Array | ArrayLike<number>): LevelDecoded | null {
   const buf = asBytes(bytes);
   if (buf.length !== LEVEL_BYTES || buf[0] !== PACKED_VERSION) return null;
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-  const slots = new Array(INLINE_SLOTS);
+  const slots = new Array<bigint>(INLINE_SLOTS);
   for (let i = 0; i < INLINE_SLOTS; i++) {
     slots[i] = view.getBigUint64(29 + i * 8, true);
   }
@@ -42,11 +57,11 @@ export function decodeLevel(bytes) {
   };
 }
 
-export function decodeBitmap(bytes) {
+export function decodeBitmap(bytes: Uint8Array | ArrayLike<number>): Bitmap | null {
   const buf = asBytes(bytes);
   if (buf.length !== BITMAP_BYTES || buf[0] !== PACKED_VERSION) return null;
   const bits = buf.subarray(1);
-  const bm = {
+  const bm: Bitmap = {
     bits,
     bit(i) {
       return (bits[i >> 3] & (1 << (i & 7))) !== 0;
@@ -66,7 +81,7 @@ export function decodeBitmap(bytes) {
   return bm;
 }
 
-export function toBigInt(n) {
+export function toBigInt(n: unknown): bigint {
   if (typeof n === "bigint") return n;
   if (typeof n === "number") {
     if (!Number.isFinite(n) || !Number.isInteger(n)) {
@@ -76,11 +91,13 @@ export function toBigInt(n) {
   }
   if (typeof n === "string") return BigInt(n);
   if (n == null) return 0n;
-  if (typeof n === "object" && typeof n.toString === "function") return BigInt(n.toString());
+  if (typeof n === "object" && typeof (n as { toString?: unknown }).toString === "function") {
+    return BigInt((n as { toString: () => string }).toString());
+  }
   throw new Error("not an integer");
 }
 
-export function formatInt(n) {
+export function formatInt(n: unknown): string {
   const v = toBigInt(n);
   const neg = v < 0n;
   const digits = (neg ? -v : v).toString();
@@ -88,7 +105,7 @@ export function formatInt(n) {
   return neg ? `-${grouped}` : grouped;
 }
 
-export function formatAtoms(atoms, decimals) {
+export function formatAtoms(atoms: unknown, decimals: unknown): string {
   const n = toBigInt(atoms);
   const d = Number(decimals);
   const neg = n < 0n;
@@ -104,7 +121,7 @@ export function formatAtoms(atoms, decimals) {
   return `${neg ? "-" : ""}${formatInt(whole)}.${fracStr}`;
 }
 
-export function formatRatio(num, den, maxFrac = 12) {
+export function formatRatio(num: unknown, den: unknown, maxFrac = 12): string {
   let n = toBigInt(num);
   let d = toBigInt(den);
   if (d === 0n) return "?";
@@ -124,7 +141,13 @@ export function formatRatio(num, den, maxFrac = 12) {
   return `${neg ? "-" : ""}${formatInt(whole)}.${frac}`;
 }
 
-export function ticksToPrice(tick, tickSize, lotSize, baseDecimals, quoteDecimals) {
+export function ticksToPrice(
+  tick: unknown,
+  tickSize: unknown,
+  lotSize: unknown,
+  baseDecimals: unknown,
+  quoteDecimals: unknown,
+): string {
   const t = toBigInt(tick);
   const ts = toBigInt(tickSize);
   const ls = toBigInt(lotSize);
@@ -135,6 +158,6 @@ export function ticksToPrice(tick, tickSize, lotSize, baseDecimals, quoteDecimal
   return formatRatio(num, den);
 }
 
-export function wordOf(tick) {
+export function wordOf(tick: number | bigint): number {
   return Math.floor(Number(tick) / WORD_TICKS);
 }

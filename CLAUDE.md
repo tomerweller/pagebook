@@ -57,4 +57,5 @@ property tests green, footprint-budget tests green, entry-size tests green, and 
 - Contract crate in `contracts/pagebook/`; shared types in `crates/pagebook-types/` if
   a client SDK needs them; keep the workspace root `Cargo.toml` minimal.
 - `make build|test|fmt|lint` wrappers once the workspace exists.
+- `clients/web/` is the TypeScript client (Vite, vitest, `make web-build` / `make web-test`). Node tooling stays inside that directory.
 - Do not commit `target/`, `.stellar/`, or test snapshots that aren't asserted against.
