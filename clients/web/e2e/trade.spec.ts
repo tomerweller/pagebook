@@ -58,6 +58,6 @@ test("fund, trustline, take, rest, settle on XLM/USDC", async ({ page }) => {
 
   await page.locator("button[data-act=settle-ask]").first().click();
   await page.locator("button[data-act=settle-go]").click();
-  await expect(page.locator(".orders")).toContainText("none", { timeout: 90_000 });
+  await expect(page.locator(".orders")).toContainText("no open orders", { timeout: 90_000 });
   expect(errs, errs.join("\n")).toEqual([]);
 });

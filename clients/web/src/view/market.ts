@@ -2,6 +2,7 @@ import { formatInt, formatAtoms } from "../decode";
 import type { BookEvent, BookSnapshot, FilledEvent, ListedMarket, RestedEvent, SettledEvent, SweptEvent, TopChangedEvent } from "../book";
 import {
   contractLink,
+  countLabel,
   esc,
   fmtTime,
   midSpread,
@@ -68,12 +69,13 @@ export function render(book: BookSnapshot, state: MarketViewState): void {
   const last = (state.eventState.events || []).find((e): e is FilledEvent => e.name === "filled");
   const staleBid = bid.stale ? `<span class="badge">stale best</span>` : "";
   const staleAsk = ask.stale ? `<span class="badge">stale best</span>` : "";
+  const lastSide = last ? (last.taker === "buy" ? "bid" : "ask") : "";
   $("kpis").innerHTML = `
     <div class="kpi bid"><span class="l">best bid</span><span class="v">${bid.empty ? "—" : esc(priceOf(bid.tick, book, state.overrides))}${staleBid}</span></div>
     <div class="kpi ask"><span class="l">best ask</span><span class="v">${ask.empty ? "—" : esc(priceOf(ask.tick, book, state.overrides))}${staleAsk}</span></div>
-    <div class="kpi"><span class="l">spread</span><span class="v" title="${ticks == null ? "" : `${esc(ticks)} ticks`}">${spread == null ? "—" : `${esc(spread)} (${esc(pct)})`}</span></div>
+    <div class="kpi"><span class="l">spread</span><span class="v" title="${ticks == null ? "" : `${esc(ticks)} ticks`}">${spread == null ? "—" : esc(spread)}</span>${pct ? `<span class="sub">(${esc(pct)})</span>` : ""}</div>
     <div class="kpi"><span class="l">mid</span><span class="v">${mid == null ? "—" : esc(mid)}</span></div>
-    <div class="kpi"><span class="l">last</span><span class="v">${last ? `${esc(priceOf(last.tick, book, state.overrides))} × ${esc(formatInt(last.lots))} lots` : "—"}</span></div>`;
+    <div class="kpi ${lastSide}"><span class="l">last</span><span class="v">${last ? `${esc(priceOf(last.tick, book, state.overrides))} × ${esc(countLabel(last.lots, "lot"))}` : "—"}</span></div>`;
 
   $("ladder").innerHTML =
     sideHtml("bids", book.bids, book, book.moreBids, state.overrides, state.ownTicks) +
@@ -107,18 +109,17 @@ function sideHtml(
           const side = name === "bids" ? "bid" : "ask";
           const mine = own && (side === "bid" ? own.bid.has(r.tick) : own.ask.has(r.tick));
           return `<div class="row${mine ? " own" : ""}" data-tick="${r.tick}" data-side="${side}">
-            <span>${r.tick}${mine ? `<i class="own-dot ${side}"></i>` : ""}</span>
-            <span>${esc(priceOf(r.tick, book, overrides))}</span>
-            <span>${esc(formatInt(r.open_lots))}</span>
-            <span>${r.queue}</span>
+            <span>${esc(priceOf(r.tick, book, overrides))}${mine ? `<i class="own-dot ${side}"></i>` : ""}</span>
+            <span>${esc(formatInt(r.open_lots))} ×${r.queue}</span>
+            <span class="tick">${r.tick}</span>
             <span class="bar"><i style="width:${w}%"></i> ${esc(formatInt(r.cum))}</span>
           </div>`;
         })
         .join("")
-    : `<div class="empty">empty</div>`;
+    : `<div class="empty">— no ${name} in window</div>`;
   return `<div class="side ${name}">
     <h3>${name}</h3>
-    <div class="cols"><span>tick</span><span>price</span><span>lots</span><span>q</span><span>cum</span></div>
+    <div class="cols"><span>price</span><span>lots</span><span class="tick">tick</span><span>cum</span></div>
     ${body}
     ${more ? `<div class="note">more levels beyond the read window</div>` : ""}
   </div>`;
@@ -135,7 +136,7 @@ function tradesHtml(book: BookSnapshot, state: MarketViewState): string {
     return `<li class="empty">loading trades…</li>`;
   }
   const rows = (state.eventState.events || []).filter((e): e is FilledEvent => e.name === "filled").slice(0, 80);
-  if (!rows.length) return `<li class="empty">no trades in window</li>`;
+  if (!rows.length) return `<li class="empty">— no trades yet</li>`;
   const qdec = tokenDecimals(book.tokens?.quote, state.overrides.quoteDec);
   const qsym = tokenLabel(book.tokens?.quote, state.overrides.quoteSym, book.quote);
   return rows
@@ -146,48 +147,70 @@ function tradesHtml(book: BookSnapshot, state: MarketViewState): string {
       return `<li${mine ? ` class="own"` : ""}>
         <span title="${esc(t.title)}">${esc(t.text)}</span>
         <span class="${side}">${side}${mine ? `<i class="own-dot ${e.is_bid ? "bid" : "ask"}"></i>` : ""}</span>
-        <span title="${esc(formatInt(e.quote))} atoms">${e.tick} × ${esc(formatInt(e.lots))} · ${esc(formatAtoms(e.quote, qdec))} ${esc(qsym)}</span>
-        <span>${formatInt(e.ledger)} ${txLink(e.txHash)}</span>
+        <span class="detail ${side}" title="${esc(formatInt(e.quote))} atoms">${e.tick} × ${esc(formatInt(e.lots))} · ${esc(formatAtoms(e.quote, qdec))} ${esc(qsym)}</span>
+        <span title="ledger ${formatInt(e.ledger)}">${txLink(e.txHash)}</span>
       </li>`;
     })
     .join("");
+}
+
+function shortNonce(n: string | number | bigint): string {
+  const s = String(n);
+  return s.length <= 4 ? s : `…${s.slice(-4)}`;
+}
+
+function evClass(name: string, isBid?: boolean): string {
+  if (name === "rested") return `ev-rested ${isBid ? "bid" : "ask"}`;
+  if (name === "settled") return "ev-settled";
+  if (name === "swept") return "ev-swept";
+  if (name === "top_changed") return "ev-top_changed";
+  return "";
 }
 
 function activityHtml(state: MarketViewState): string {
   if (state.eventsLoading && !(state.eventState.events || []).length) {
-    return `<li class="empty">loading trades…</li>`;
+    return `<li class="empty">loading activity…</li>`;
   }
   const names = new Set(["rested", "settled", "swept", "top_changed"]);
   const rows = (state.eventState.events || []).filter((e) => names.has(e.name)).slice(0, 80);
-  if (!rows.length) return `<li class="empty">no activity in window</li>`;
+  if (!rows.length) return `<li class="empty">— no activity yet</li>`;
+  let prevTime = "";
   return rows
     .map((e) => {
       let detail = "";
+      let side: boolean | undefined;
       if (e.name === "rested") {
         const ev = e as RestedEvent;
-        detail = `${shortAddr(ev.owner)} #${ev.nonce} · ${ev.is_bid ? "bid" : "ask"} ${ev.tick} · g${ev.generation} s${ev.seq}`;
+        side = ev.is_bid;
+        detail = `${ev.is_bid ? "bid" : "ask"} ${ev.tick} · ${shortAddr(ev.owner)} #${shortNonce(ev.nonce)}`;
       } else if (e.name === "settled") {
         const ev = e as SettledEvent;
-        detail = `${shortAddr(ev.owner)} #${ev.nonce} · filled ${formatInt(ev.filled_lots)} · refunded ${formatInt(ev.refunded_lots)}`;
+        detail = `filled ${formatInt(ev.filled_lots)} · refunded ${formatInt(ev.refunded_lots)} · ${shortAddr(ev.owner)} #${shortNonce(ev.nonce)}`;
       } else if (e.name === "swept") {
         const ev = e as SweptEvent;
+        side = ev.is_bid;
         detail = `${ev.is_bid ? "bid" : "ask"} ${ev.tick} g${ev.generation}`;
       } else if (e.name === "top_changed") {
         const ev = e as TopChangedEvent;
+        side = ev.is_bid;
         detail = `${ev.is_bid ? "bids" : "asks"} ${ev.old} → ${ev.newTick}`;
       }
       const t = fmtTime(e.ledgerClosedAt);
+      const timeText = t.text === prevTime ? "" : t.text;
+      prevTime = t.text;
+      const fullNonce =
+        e.name === "rested" || e.name === "settled" ? String((e as RestedEvent | SettledEvent).nonce) : "";
       return `<li>
-        <span title="${esc(t.title)}">${esc(t.text)}</span>
-        <span>${esc(e.name)}</span>
-        <span class="detail" title="${esc(detail)}">${esc(detail)}</span>
+        <span title="${esc(t.title)}">${esc(timeText)}</span>
+        <span class="${evClass(e.name, side)}">${esc(e.name)}</span>
+        <span class="detail" title="${esc(fullNonce ? `${detail} · #${fullNonce}` : detail)}">${esc(detail)}</span>
       </li>`;
     })
     .join("");
 }
 
-function fact(dt: string, dd: string): string {
-  return `<div><dt>${esc(dt)}</dt><dd>${dd}</dd></div>`;
+function fact(dt: string, dd: string, wide = false): string {
+  return `<div${wide ? ` class="wide"` : ""}><dt>${esc(dt)}</dt><dd>${dd}</dd></div>`;
 }
 
 function factsHtml(book: BookSnapshot, baseSym: string, quoteSym: string, state: MarketViewState): string {
@@ -204,21 +227,17 @@ function factsHtml(book: BookSnapshot, baseSym: string, quoteSym: string, state:
     fact("quote", `${esc(quoteSym)} ${contractLink(m.quote, state.isTestnet)}`),
     fact("lot_size", formatInt(m.lot_size)),
     fact("tick_size", formatInt(m.tick_size)),
-    fact("tick band", `[${formatInt(m.tick_min)}, ${formatInt(m.tick_max)})`),
-    fact("taker fee", `${formatInt(m.taker_fee_bps)} bps`),
-    fact("order lots", `${formatInt(m.min_order_lots)} / ${formatInt(m.max_order_lots)}`),
-    fact("max levels crossed", formatInt(m.max_levels_crossed)),
-    fact("max slots scanned", formatInt(m.max_slots_scanned)),
-    fact("inline / page / max pages", `${m.inline_slots} / ${m.page_slots} / ${m.max_pages}`),
+    fact("tick_band", `[${formatInt(m.tick_min)}, ${formatInt(m.tick_max)})`),
+    fact("taker_fee_bps", formatInt(m.taker_fee_bps)),
+    fact("order_lots", `${formatInt(m.min_order_lots)} / ${formatInt(m.max_order_lots)}`),
+    fact("max_levels_crossed", formatInt(m.max_levels_crossed)),
+    fact("max_slots_scanned", formatInt(m.max_slots_scanned)),
+    fact("inline_slots / page_slots / max_pages", `${m.inline_slots} / ${m.page_slots} / ${m.max_pages}`),
     fact("paused", book.paused ? "yes" : "no"),
-    fact(
-      "vault",
-      `<span title="${esc(book.vault.base == null ? "" : `${formatInt(book.vault.base)} atoms`)}">${esc(vaultB)}</span> · <span title="${esc(book.vault.quote == null ? "" : `${formatInt(book.vault.quote)} atoms`)}">${esc(vaultQ)}</span>`,
-    ),
-    fact(
-      "fees accrued",
-      `<span title="${esc(formatInt(book.fees.base))} atoms">${esc(feeB)}</span> · <span title="${esc(formatInt(book.fees.quote))} atoms">${esc(feeQ)}</span>`,
-    ),
+    fact("vault_base", `<span title="${esc(book.vault.base == null ? "" : `${formatInt(book.vault.base)} atoms`)}">${esc(vaultB)}</span>`),
+    fact("vault_quote", `<span title="${esc(book.vault.quote == null ? "" : `${formatInt(book.vault.quote)} atoms`)}">${esc(vaultQ)}</span>`),
+    fact("fees_base", `<span title="${esc(formatInt(book.fees.base))} atoms">${esc(feeB)}</span>`),
+    fact("fees_quote", `<span title="${esc(formatInt(book.fees.quote))} atoms">${esc(feeQ)}</span>`),
   ].join("");
 }
 

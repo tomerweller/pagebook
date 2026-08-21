@@ -399,7 +399,11 @@ export function createTicket(opts: {
     const why = rootEl.querySelector("[data-role=why]");
     if (why) why.textContent = v.ok ? "" : v.reason;
     const btn = rootEl.querySelector<HTMLButtonElement>("[data-act=place]");
-    if (btn) btn.disabled = !v.ok || phase === "simulating" || phase === "signing" || phase === "sending" || (preview.kind === "typed" && preview.name === "Crossed");
+    if (btn) {
+      btn.disabled = !v.ok || phase === "simulating" || phase === "signing" || phase === "sending" || (preview.kind === "typed" && preview.name === "Crossed");
+      btn.textContent = `${isBid ? "BUY" : "SELL"} ${balances().baseSymbol}`;
+      btn.className = `ticket-cta ${isBid ? "bid" : "ask"}`;
+    }
     const prev = rootEl.querySelector("[data-role=preview]");
     if (prev) prev.innerHTML = previewHtml();
     const strip = rootEl.querySelector("[data-role=strip]");
@@ -452,21 +456,27 @@ export function createTicket(opts: {
       m && book
         ? `${priceOf(tick, book, overrides)} · ${formatAtoms(lots * m.lot_size, tokenDecimals(book.tokens.base, overrides.baseDec))} ${balances().baseSymbol}`
         : "";
+    const sym = balances().baseSymbol;
+    const busy = submitting || phase === "simulating" || phase === "signing" || phase === "sending";
     return `<section class="ticket">
       <h3>place order</h3>
       <div class="ticket-side">
-        <button type="button" data-act="buy" class="${isBid ? "on bid" : ""}">buy base</button>
-        <button type="button" data-act="sell" class="${!isBid ? "on ask" : ""}">sell base</button>
+        <button type="button" data-act="buy" class="${isBid ? "on bid" : ""}">BUY ${esc(sym)}</button>
+        <button type="button" data-act="sell" class="${!isBid ? "on ask" : ""}">SELL ${esc(sym)}</button>
       </div>
-      <label>tick <input class="wallet-input" data-field="tick" inputmode="numeric" value="${esc(tick)}" /></label>
-      <label>lots <input class="wallet-input" data-field="lots" inputmode="numeric" value="${esc(lots.toString())}" /></label>
+      <div class="ticket-fields">
+        <label>tick <input class="wallet-input" data-field="tick" inputmode="numeric" value="${esc(tick)}" /></label>
+        <label>lots <input class="wallet-input" data-field="lots" inputmode="numeric" value="${esc(lots.toString())}" /></label>
+      </div>
       <p class="wallet-muted" data-role="human">${esc(human)}</p>
-      <label class="ticket-flag" title="rest only; reject if the order would take"><input type="checkbox" data-flag="post_only" ${flags.post_only ? "checked" : ""} /> post-only</label>
-      <label class="ticket-flag" title="fill completely or revert; nothing rests"><input type="checkbox" data-flag="fill_or_kill" ${flags.fill_or_kill ? "checked" : ""} /> fill-or-kill</label>
-      <label class="ticket-flag" title="take what is there and refund the rest; do not rest"><input type="checkbox" data-flag="no_rest" ${flags.no_rest ? "checked" : ""} /> no-rest</label>
+      <div class="ticket-flags">
+        <label class="ticket-flag" title="rest only; reject if the order would take"><input type="checkbox" data-flag="post_only" ${flags.post_only ? "checked" : ""} /> post-only</label>
+        <label class="ticket-flag" title="fill completely or revert; nothing rests"><input type="checkbox" data-flag="fill_or_kill" ${flags.fill_or_kill ? "checked" : ""} /> fill-or-kill</label>
+        <label class="ticket-flag" title="take what is there and refund the rest; do not rest"><input type="checkbox" data-flag="no_rest" ${flags.no_rest ? "checked" : ""} /> no-rest</label>
+      </div>
       <p class="wallet-muted" data-role="why">${v.ok ? "" : esc(v.reason)}</p>
       <div data-role="preview">${previewHtml()}</div>
-      <button type="button" data-act="place" ${!v.ok || submitting || phase === "simulating" || phase === "signing" || phase === "sending" ? "disabled" : ""}>place order</button>
+      <button type="button" data-act="place" class="ticket-cta ${isBid ? "bid" : "ask"}" ${!v.ok || busy ? "disabled" : ""}>${isBid ? "BUY" : "SELL"} ${esc(sym)}</button>
       <div data-role="strip">${stripHtml()}</div>
     </section>`;
   }

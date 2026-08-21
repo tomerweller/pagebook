@@ -230,7 +230,7 @@ export function ownTicksOf(rows: OpenOrder[]): { bid: Set<number>; ask: Set<numb
 }
 
 export function ordersHtml(rows: OpenOrder[]): string {
-  if (!rows.length) return `<section class="orders"><h3>open orders</h3><p class="wallet-muted">none</p></section>`;
+  if (!rows.length) return `<section class="orders"><h3>open orders</h3><p class="wallet-muted">— no open orders</p></section>`;
   const body = rows
     .map((r) => {
       const side = r.isBid ? "bid" : "ask";
@@ -350,7 +350,7 @@ export function createOrders(opts: {
   }
 
   function html(): string {
-    if (!rows.length) return `<section class="orders"><h3>open orders</h3><p class="wallet-muted">none</p></section>`;
+    if (!rows.length) return `<section class="orders"><h3>open orders</h3><p class="wallet-muted">— no open orders</p></section>`;
     const m = market();
     const latest = book?.latestLedger ?? 0;
     const body = rows

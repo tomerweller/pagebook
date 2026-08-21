@@ -117,6 +117,7 @@ export function mountWallet(opts: {
   let confirmDelete = false;
   let confirmTrust: CreditAsset | null = null;
   let importOpen = false;
+  let keysOpen = false;
   let justCreated = false;
   let collapsed = window.matchMedia("(max-width: 800px)").matches;
   const log: LogItem[] = [];
@@ -223,7 +224,7 @@ export function mountWallet(opts: {
     const id = active();
     const ids = store.list();
     const body = !booted
-      ? `<p class="wallet-copy">checking network…</p>`
+      ? `<p class="wallet-copy">— checking network</p>`
       : !enabled
         ? `<p class="wallet-copy">${esc(status || "wallet disabled: not testnet")}</p>`
         : !id
@@ -342,10 +343,17 @@ export function mountWallet(opts: {
           .join("")}</ol>`
       : "";
 
+    const keysShown = keysOpen || reveal || justCreated || confirmDelete || importOpen;
+    const importForm = importOpen
+      ? `<form class="wallet-import" data-act="import-submit">
+          <input name="secret" class="wallet-input" spellcheck="false" autocomplete="off" placeholder="S…" />
+          <button type="submit">import</button>
+        </form>`
+      : "";
+
     return `
       <div class="wallet-id">
         <select data-act="switch" aria-label="identity">${optsHtml}</select>
-        ${saveSeed}
       </div>
       <div class="wallet-pub">
         ${accountLink(id.publicKey)}
@@ -355,12 +363,18 @@ export function mountWallet(opts: {
       ${friendbot}
       ${rows.length ? `<ul class="wallet-assets">${assetHtml}</ul>` : ""}
       ${trustAsk}
-      <div class="wallet-actions">
-        ${secretBlock}
-        ${deleteBlock}
-      </div>
       <div id="ticket-root"></div>
       <div id="orders-root"></div>
+      <details class="wallet-keys"${keysShown ? " open" : ""}>
+        <summary>keys</summary>
+        <div class="wallet-actions">
+          ${saveSeed}
+          <button type="button" data-act="import-open">import</button>
+          ${secretBlock}
+          ${deleteBlock}
+        </div>
+        ${importForm}
+      </details>
       ${status ? `<p class="wallet-status">${esc(status)}</p>` : ""}
       ${logHtml}`;
   }
@@ -369,6 +383,9 @@ export function mountWallet(opts: {
     el.querySelector("[data-act=toggle]")?.addEventListener("click", () => {
       collapsed = !collapsed;
       render();
+    });
+    el.querySelector(".wallet-keys")?.addEventListener("toggle", (e) => {
+      keysOpen = (e.target as HTMLDetailsElement).open;
     });
     el.querySelector("[data-act=generate]")?.addEventListener("click", () => {
       try {
