@@ -110,6 +110,39 @@
     max-width: 68ch;
   }
 
+  nav.contents {
+    font-size: 0.92rem;
+    line-height: 1.45;
+    padding-bottom: 1.5rem;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid var(--line);
+  }
+  nav.contents .toc-title {
+    margin: 0 0 0.6rem;
+    font-style: italic;
+    color: var(--muted);
+  }
+  nav.contents ol { list-style: none; margin: 0; padding: 0; counter-reset: toc; max-width: none; }
+  nav.contents li {
+    counter-increment: toc;
+    display: grid;
+    grid-template-columns: 1.6em 1fr;
+    column-gap: 0.25em;
+    padding: 0.14rem 0;
+    margin: 0;
+    break-inside: avoid;
+  }
+  nav.contents li::before {
+    content: counter(toc);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  nav.contents a { color: var(--ink); text-decoration: none; }
+  nav.contents a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 0.16em; }
+  @media (min-width: 600px) {
+    nav.contents ol { columns: 2; column-gap: 2.5rem; }
+  }
+
   main { counter-reset: sec; }
   section { margin-top: 2.75rem; scroll-margin-top: 1.25rem; }
   section > h2 {
@@ -231,6 +264,21 @@
   <p class="sub">PageBook is a good-enough order book for Soroban: a contract that stores, matches, and settles limit orders on-chain while keeping every transaction's footprint predictable.</p>
   <p class="assume">This page assumes familiarity with order books, SDEX, and basic Soroban concepts. Examples use the USDC/XLM market, with prices in USDC per XLM.</p>
 </header>
+
+<nav class="contents" aria-label="Contents">
+  <p class="toc-title">Contents</p>
+  <ol>
+    <li><a href="#why">Why does Soroban need an order book?</a></li>
+    <li><a href="#hard">Why is it not trivial?</a></li>
+    <li><a href="#concessions">"Good enough" concessions</a></li>
+    <li><a href="#design">The design</a></li>
+    <li><a href="#tick-index">Tick index</a></li>
+    <li><a href="#level-queue">Level queue</a></li>
+    <li><a href="#order-record">Order record</a></li>
+    <li><a href="#taker-walk">The taker walk</a></li>
+    <li><a href="#results">Results</a></li>
+  </ol>
+</nav>
 
 <main>
 
