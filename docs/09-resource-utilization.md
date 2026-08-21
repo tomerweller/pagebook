@@ -48,6 +48,37 @@ Fees are in stroops (1 XLM = 10,000,000 stroops); at these numbers the whole
 range is 0.005 to 0.051 XLM per transaction, rent excluded (these
 transactions create at most one new entry; ADR-024 measures rent).
 
+## Executive summary: one real transaction per invocation, XLM/USDC market
+
+One representative landed transaction per invocation on the live XLM/USDC
+market (market 1: 10 XLM lots, 0.00001 USDC ticks, 5 bps taker fee; the
+median-fee sample of each category below, except the maximum take, which is
+a single constructed transaction). The maximum take was executed against a
+32-level ask book (the maker's 20-level ladder plus 12 filler quotes): it
+crossed exactly `MAX_LEVELS_CROSSED` = 32 levels in one transaction, filling
+1,576 lots (15,760 XLM, about 3,000 USDC), with a sparse pad (the §14 full
+band does not fit the footprint caps at this span; see "Saturation,
+measured").
+
+| invocation | RW entries | instructions (metered) | writes declared | writes metered | fee charged |
+|---|---:|---:|---:|---:|---:|
+| Rest a maker quote (post-only) | 16 | 3.0M | 7.8 KB | 3.1 KB | 0.0142 XLM |
+| Rest inside the spread | 19 | 3.3M | 9.1 KB | 4.6 KB | 0.0112 XLM |
+| Replace one quote | 17 | 3.4M | 8.4 KB | 3.9 KB | 0.0077 XLM |
+| Replace 8 quotes in one batch | 52 | 11.8M | 24.1 KB | 11.3 KB | 0.0234 XLM |
+| Settle a maker order | 11 | 2.5M | 5.0 KB | 1.8 KB | 0.0051 XLM |
+| Take at the touch (1 level) | 21 | 3.3M | 10.8 KB | 4.3 KB | 0.0092 XLM |
+| Take across 2 to 3 levels | 37 | 5.1M | 18.6 KB | 9.0 KB | 0.0153 XLM |
+| Take across 4 to 6 levels | 57 | 8.7M | 30.5 KB | 9.0 KB | 0.0241 XLM |
+| Maximum take (32 levels, the budget cap) | 77 | 18.7M | 38.6 KB | 15.4 KB | 0.0357 XLM |
+
+RW entries are declared (what admission charges); the maximum take also
+metered 44 entries written, 5,804 event bytes, a 15.6 KB envelope, and 18.7M
+of a 400M instruction cap. Reading down the fee column: quoting costs about
+a cent-fraction of an XLM, and the heaviest legal taker transaction on this
+market costs 0.036 XLM while using under a third of every per-transaction
+cap.
+
 ## Summary: the range per invocation (min to max over 30 samples)
 
 
