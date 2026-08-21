@@ -325,13 +325,13 @@
 
 <section id="concessions">
   <h2>"Good enough" concessions</h2>
-  <p>PageBook does not reproduce SDEX behavior exactly. It accepts three tradeoffs:</p>
+  <p>PageBook does not reproduce SDEX behavior exactly. It accepts four concessions:</p>
   <ul class="concessions">
-    <li>SDEX matches rational prices with no market configuration. PageBook quantizes each market with an admin-configured lot size, tick size, and tick range. The example market sets the lot to 10&nbsp;XLM, the tick to <code>0.00001 USDC/XLM</code>, and the range to the whole index. One lot at tick <code>15,800</code> (<code>0.15800 USDC/XLM</code>) costs <code>1.58 USDC</code>.</li>
-    <li>SDEX credits both sides during execution. In PageBook, the taker settles during execution and makers claim later.</li>
-    <li>SDEX matches against the best offer at apply time. PageBook starts from the best price seen during simulation, so better offers added before inclusion are not visible to that transaction.</li>
+    <li><b>Price Quantization.</b> SDEX matches rational prices with no market configuration. PageBook quantizes each market with an admin-configured lot size, tick size, and tick range. The example market sets the lot to 10&nbsp;XLM, the tick to <code>0.00001 USDC/XLM</code>, and the range to the whole index. One lot at tick <code>15,800</code> (<code>0.15800 USDC/XLM</code>) costs <code>1.58 USDC</code>.</li>
+    <li><b>Async Maker Settlement.</b> SDEX credits both sides during execution. In PageBook, the taker settles during execution and makers claim later.</li>
+    <li><b>(Slightly) Stale Best Prices.</b> SDEX matches against the best offer at apply time. PageBook starts from the best price seen during simulation, so better offers added before inclusion are not visible to that transaction.</li>
+    <li><b>Footprint Padding.</b> This one is against Soroban convention rather than SDEX. A typical invocation submits the footprint returned by simulation as-is; PageBook clients pad the simulated footprint with a tick band and queue page windows.</li>
   </ul>
-  <p>A fourth concession is against Soroban convention rather than SDEX. A typical invocation submits the footprint returned by simulation as-is; PageBook clients pad the simulated footprint with a tick band and queue page windows.</p>
 </section>
 
 <section id="design">
