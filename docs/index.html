@@ -1,56 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PageBook</title>
+<meta name="description" content="An executive explainer of PageBook, a Soroban-native order book: the concessions it accepts, the data structures behind it, and measured costs on testnet.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📗</text></svg>">
 <style>
   :root {
     --bg: #FAF8F3;
-    --surface: #FFFFFF;
     --ink: #1C1B18;
     --muted: #6B675E;
     --line: #D8D3C6;
     --accent: #2A5B8C;
     --accent-soft: rgba(42, 91, 140, 0.10);
-    --bid: #1D7A4C;
-    --bid-soft: rgba(29, 122, 76, 0.13);
     --ask: #B2413A;
     --ask-soft: rgba(178, 65, 58, 0.11);
     --warn: #A66F16;
     --warn-soft: rgba(166, 111, 22, 0.13);
-    --code-bg: #EEEBE2;
     --dead: #CBC5B7;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #171613;
-      --surface: #1F1E1A;
       --ink: #E7E3D8;
       --muted: #9C978A;
       --line: #35332C;
       --accent: #7EA9E0;
       --accent-soft: rgba(126, 169, 224, 0.15);
-      --bid: #56C48A;
-      --bid-soft: rgba(86, 196, 138, 0.15);
       --ask: #E8887E;
       --ask-soft: rgba(232, 136, 126, 0.14);
       --warn: #DDA64C;
       --warn-soft: rgba(221, 166, 76, 0.15);
-      --code-bg: #26241F;
       --dead: #46433B;
     }
   }
   :root[data-theme="dark"] {
     --bg: #171613;
-    --surface: #1F1E1A;
     --ink: #E7E3D8;
     --muted: #9C978A;
     --line: #35332C;
     --accent: #7EA9E0;
     --accent-soft: rgba(126, 169, 224, 0.15);
-    --bid: #56C48A;
-    --bid-soft: rgba(86, 196, 138, 0.15);
     --ask: #E8887E;
     --ask-soft: rgba(232, 136, 126, 0.14);
     --warn: #DDA64C;
     --warn-soft: rgba(221, 166, 76, 0.15);
-    --code-bg: #26241F;
     --dead: #46433B;
   }
 
@@ -74,7 +69,7 @@
     text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
   }
   a:hover { text-decoration-color: currentColor; }
-  code, .mono, td.k {
+  code {
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
     font-size: 0.86em;
   }
@@ -255,10 +250,10 @@
     padding-top: 0.55rem;
     padding-bottom: 0.55rem;
   }
-  td.k { white-space: nowrap; font-size: 0.82rem; padding-right: 1.25rem; }
-  td.rowhead { font-weight: 700; white-space: nowrap; padding-right: 1.25rem; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   table.results td, table.results th { font-variant-numeric: tabular-nums; }
+
+  p.tablenote { font-size: 0.88rem; color: var(--muted); }
 
   aside.note {
     margin: 1.5rem 0;
@@ -283,13 +278,15 @@
   }
   footer p { margin: 0 0 0.4rem; max-width: none; }
 </style>
+</head>
+<body>
 
 <div class="page">
 
 <header class="masthead">
   <h1>PageBook</h1>
   <p class="sub">PageBook is a good-enough order book for Soroban: a contract that stores, matches, and settles limit orders on-chain while keeping every transaction's footprint predictable.</p>
-  <p class="assume">This page assumes familiarity with order books, SDEX, and basic Soroban concepts. Examples use the USDC/XLM market, with prices in USDC per XLM.</p>
+  <p class="assume">This page assumes familiarity with order books, SDEX, and basic Soroban concepts. Examples use the XLM/USDC market, with prices in USDC per XLM.</p>
   <p class="assume">Little here is novel: the design leans heavily on on-chain CLOBs built elsewhere, including Serum, Phoenix, Manifest, DeepBook, Econia, and the LFJ Liquidity Book, surveyed in the <a href="https://github.com/tomerweller/pagebook/blob/main/docs/01-prior-art.md">prior-art notes</a>.</p>
 </header>
 
@@ -348,6 +345,7 @@
 <section id="tick-index">
   <h2>Tick index</h2>
   <p>Each market side has a bitmap of active price levels. Bit <code>T[i]&nbsp;=&nbsp;1</code> means tick <code>i</code> may have resting supply. Matching uses it to find the next candidate tick without scanning every price.</p>
+  <h3>Implementation</h3>
   <p>The index is stored in two levels: a summary identifies non-empty tick words, and each tick word identifies active ticks in its range. With 2,048-bit words under a 2,048-bit summary, one side covers <code>2^22</code>, or 4,194,304, ticks. Each bitmap has a 257-byte packed payload.</p>
   <p>The index is derived state. A live level must have its bit set, but a set bit may point to an empty level. Matching verifies the level and clears stale bits lazily.</p>
 
@@ -418,7 +416,7 @@
         </g>
 
         <!-- tick labels under the marked bits -->
-        <text x="256" y="234" text-anchor="middle" font-size="11" fill="var(--muted)">15,796</text>
+        <text x="256" y="234" text-anchor="middle" font-size="11" fill="var(--muted)">15,795</text>
         <text x="366" y="234" text-anchor="middle" font-size="11" fill="var(--muted)">15,800</text>
         <text x="476" y="234" text-anchor="middle" font-size="11" fill="var(--muted)">15,805</text>
 
@@ -623,7 +621,7 @@
 <section id="taker-walk">
   <h2>The taker walk</h2>
   <p>A taker walks the opposite side of the book from the best available tick toward its limit. A bid walks asks upward; an ask walks bids downward.</p>
-  <p>Suppose the USDC/XLM ask side contains 20 lots at tick <code>15,800</code> and 30 lots at tick <code>15,805</code>, and a taker bids for 35 lots with a limit of tick <code>15,805</code>:</p>
+  <p>Suppose that, at some later moment, the XLM/USDC ask side contains 20 lots at tick <code>15,800</code> and 30 lots at tick <code>15,805</code>, and a taker bids for 35 lots with a limit of tick <code>15,805</code>:</p>
   <ol class="walk">
     <li>The tick index points to tick <code>15,800</code>.</li>
     <li>The level has 20 open lots, less than the taker's remaining quantity. PageBook sweeps the whole level for <code>31.60 USDC</code>, resets its queue generation, and clears its tick bit.</li>
@@ -691,7 +689,7 @@
         <circle cx="180" cy="170" r="9" fill="var(--bg)" stroke="var(--accent)"/>
         <text x="180" y="174" text-anchor="middle" font-size="10" fill="var(--accent)">2</text>
         <text x="196" y="196" font-weight="700">Level 15,800</text>
-        <text x="196" y="218" fill="var(--muted)" font-size="11">gen 3 &#183; open_lots 20</text>
+        <text x="196" y="218" fill="var(--muted)" font-size="11">gen 5 &#183; open_lots 20</text>
         <rect x="310" y="230" width="106" height="34" fill="var(--dead)" stroke="var(--line)"/>
         <text x="363" y="251" text-anchor="middle" font-size="10" fill="var(--muted)">not read</text>
         <text x="180" y="312" fill="var(--muted)" font-size="11">swept whole by counters: one Level write,</text>
@@ -826,7 +824,7 @@
       </tbody>
     </table>
   </div>
-  <p style="font-size:0.88rem; color:var(--muted);">R/W entries are declared, which is what admission charges. Settlement cost does not grow with queue depth.</p>
+  <p class="tablenote">R/W entries are declared, which is what admission charges. Settlement cost does not grow with queue depth.</p>
   <aside class="note">
     <p><span class="lbl">Rent.</span> Creating a persistent <code>Order</code> adds about 0.046&nbsp;XLM of rent for the 120-day minimum TTL, and a new price level may also create or restore level and bitmap entries. <code>replace</code> reuses the existing order record, so normal quote updates do not pay that order rent again.</p>
   </aside>
@@ -879,3 +877,6 @@
   }
 })();
 </script>
+
+</body>
+</html>
