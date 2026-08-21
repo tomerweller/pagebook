@@ -328,7 +328,10 @@ def apply_pad(sim_json, extra_keys, sizes=None):
     # small simulated walk used 24.79M instructions, 169 more than
     # 1.2x + 100k/key + 300k declared, so the per-key cost is right at 100k
     # and the headroom above it must not depend on the simulated amount.
-    res["instructions"] = int(res["instructions"] * 1.2) + 120_000 * added + 1_000_000
+    # x1.25 + 3M flat: a walk can do more work at apply than simulation saw
+    # (levels appear in flight during a trend); measured shortfalls of 146-169
+    # instructions at 1.2x+1M during fast rallies (ADR-026, ADR-028 era logs).
+    res["instructions"] = int(res["instructions"] * 1.25) + 120_000 * added + 3_000_000
     # An EXISTING entry declared read-write must be covered by write_bytes even
     # if never touched (measured on testnet, ADR-025); nonexistent keys and
     # read-only keys are free. Without existence knowledge (`sizes` is None)
@@ -348,7 +351,7 @@ def apply_pad(sim_json, extra_keys, sizes=None):
     # instructions at 7 per 10k, and tx size at ~406/KB (measured on testnet,
     # ADR-025); a fee below that minimum is TxSorobanInvalid.
     rf = int(sd["resource_fee"])
-    rf = int(rf * 1.3) + (2_500 + 600 * 875 // 1024 + 400 * 447 // 1024 + 1_563 + 120 * 7 + 100) * added + 1_000_000 * 7 // 10_000
+    rf = int(rf * 1.3) + (2_500 + 600 * 875 // 1024 + 400 * 447 // 1024 + 1_563 + 120 * 7 + 100) * added + 3_000_000 * 7 // 10_000
     sd["resource_fee"] = str(rf)
     tx["fee"] = rf + 1000
     return added
