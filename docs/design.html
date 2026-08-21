@@ -1,0 +1,952 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PageBook</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📒</text></svg>">
+<style>
+  :root {
+    --bg: #FAF8F3;
+    --surface: #FFFFFF;
+    --ink: #1C1B18;
+    --muted: #6B675E;
+    --line: #D8D3C6;
+    --accent: #2A5B8C;
+    --accent-soft: rgba(42, 91, 140, 0.10);
+    --bid: #1D7A4C;
+    --bid-soft: rgba(29, 122, 76, 0.13);
+    --ask: #B2413A;
+    --ask-soft: rgba(178, 65, 58, 0.11);
+    --warn: #A66F16;
+    --warn-soft: rgba(166, 111, 22, 0.13);
+    --code-bg: #EEEBE2;
+    --dead: #CBC5B7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #171613;
+      --surface: #1F1E1A;
+      --ink: #E7E3D8;
+      --muted: #9C978A;
+      --line: #35332C;
+      --accent: #7EA9E0;
+      --accent-soft: rgba(126, 169, 224, 0.15);
+      --bid: #56C48A;
+      --bid-soft: rgba(86, 196, 138, 0.15);
+      --ask: #E8887E;
+      --ask-soft: rgba(232, 136, 126, 0.14);
+      --warn: #DDA64C;
+      --warn-soft: rgba(221, 166, 76, 0.15);
+      --code-bg: #26241F;
+      --dead: #46433B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #171613;
+    --surface: #1F1E1A;
+    --ink: #E7E3D8;
+    --muted: #9C978A;
+    --line: #35332C;
+    --accent: #7EA9E0;
+    --accent-soft: rgba(126, 169, 224, 0.15);
+    --bid: #56C48A;
+    --bid-soft: rgba(86, 196, 138, 0.15);
+    --ask: #E8887E;
+    --ask-soft: rgba(232, 136, 126, 0.14);
+    --warn: #DDA64C;
+    --warn-soft: rgba(221, 166, 76, 0.15);
+    --code-bg: #26241F;
+    --dead: #46433B;
+  }
+
+  /* ---- base ---- */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: Charter, "Bitstream Charter", "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Times New Roman", serif;
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    font-kerning: normal;
+    text-rendering: optimizeLegibility;
+  }
+  a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.16em;
+    text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+  a:hover { text-decoration-color: currentColor; }
+  code, .mono, td.k, dd .v {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 0.86em;
+  }
+  code { color: var(--ink); }
+  pre { overflow-x: auto; line-height: 1.45; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 0.75rem 0; }
+  pre code { font-size: 0.85rem; }
+  strong, b { font-weight: 700; }
+  ::selection { background: var(--accent-soft); }
+
+  /* ---- page frame ---- */
+  .page { max-width: 1160px; margin: 0 auto; padding: 0 28px; }
+
+  header.masthead {
+    padding: 3.5rem 0 1.75rem;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 1.75rem;
+  }
+  header.masthead h1 {
+    margin: 0 0 0.75rem;
+    font-size: 2.6rem;
+    line-height: 1.1;
+    font-weight: 700;
+    letter-spacing: -0.012em;
+  }
+  header.masthead p.sub {
+    margin: 0;
+    font-size: 1.15rem;
+    line-height: 1.5;
+    max-width: 62ch;
+  }
+
+  /* ---- contents ---- */
+  nav.contents { font-size: 0.92rem; line-height: 1.45; }
+  nav.contents .toc-title {
+    margin: 0 0 0.6rem;
+    font-style: italic;
+    color: var(--muted);
+  }
+  nav.contents ol { list-style: none; margin: 0; padding: 0; }
+  nav.contents > ol { counter-reset: toc; }
+  nav.contents li { margin: 0; break-inside: avoid; }
+  nav.contents li.item {
+    counter-increment: toc;
+    display: grid;
+    grid-template-columns: 1.6em 1fr;
+    column-gap: 0.25em;
+    padding: 0.14rem 0;
+  }
+  nav.contents li.item::before {
+    content: counter(toc);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  nav.contents li.group > a {
+    display: block;
+    margin: 0.85rem 0 0.15rem;
+    font-style: italic;
+    color: var(--muted);
+  }
+  nav.contents a { color: var(--ink); text-decoration: none; }
+  nav.contents a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 0.16em; }
+  nav.contents a[aria-current="true"] { color: var(--accent); font-weight: 700; }
+  nav.contents li.group > a[aria-current="true"] { color: var(--accent); }
+
+  /* narrow / medium: contents inline under the masthead */
+  nav.contents {
+    padding-bottom: 1.5rem;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid var(--line);
+  }
+  @media (min-width: 600px) {
+    nav.contents > ol { columns: 2; column-gap: 2.5rem; }
+    nav.contents li.item:first-child { break-after: avoid; }
+  }
+
+  /* ---- article ---- */
+  main { counter-reset: sec; }
+  section { margin-top: 2.75rem; scroll-margin-top: 1.25rem; }
+  section > h3 {
+    position: relative;
+    margin: 0 0 0.75rem;
+    font-size: 1.45rem;
+    line-height: 1.25;
+    font-weight: 700;
+    letter-spacing: -0.006em;
+  }
+  section > h3::before {
+    counter-increment: sec;
+    content: counter(sec);
+    color: var(--muted);
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    margin-right: 0.55em;
+  }
+  section h3 .ref {
+    font-size: 0.82rem;
+    font-weight: 400;
+    color: var(--muted);
+    margin-left: 0.6em;
+    white-space: nowrap;
+    letter-spacing: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  section h3 .ref a { color: var(--muted); text-decoration-color: var(--line); }
+  section h3 .ref a:hover { color: var(--accent); text-decoration-color: currentColor; }
+
+  h2.part {
+    margin: 4rem 0 0.75rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--line);
+    font-size: 1.15rem;
+    line-height: 1.3;
+    font-weight: 700;
+    letter-spacing: 0;
+    scroll-margin-top: 1.25rem;
+  }
+  h2.part + p.lead { margin-top: 0; font-size: 1.05rem; }
+
+  p { margin: 0 0 1rem; max-width: 68ch; }
+  p.lead { color: var(--ink); }
+
+  /* figures: hairline rules, no boxes */
+  figure { margin: 1.75rem 0 2rem; }
+  .fig {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 1rem 0;
+  }
+  .fig svg { display: block; width: 100%; min-width: 760px; height: auto; }
+  figcaption {
+    margin-top: 0.75rem;
+    font-size: 0.92rem;
+    line-height: 1.5;
+    color: var(--muted);
+    max-width: 68ch;
+  }
+  figcaption b { color: var(--ink); font-weight: 700; }
+  figcaption code { color: inherit; }
+
+  /* tables: booktabs style */
+  .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 1.25rem 0 1.5rem; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.92rem;
+    line-height: 1.4;
+    border-top: 1px solid var(--ink);
+    border-bottom: 1px solid var(--ink);
+  }
+  th, td {
+    text-align: left;
+    padding: 0.5rem 1rem 0.5rem 0;
+    vertical-align: top;
+    border-top: 1px solid var(--line);
+  }
+  th:last-child, td:last-child { padding-right: 0; }
+  thead th {
+    border-top: none;
+    border-bottom: 1px solid var(--ink);
+    font-weight: 700;
+    font-size: 0.88rem;
+    padding-top: 0.55rem;
+    padding-bottom: 0.55rem;
+  }
+  tr.band td {
+    font-style: italic;
+    color: var(--muted);
+    padding-top: 0.75rem;
+  }
+  td.k { white-space: nowrap; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* the note */
+  aside.note {
+    margin: 1.5rem 0;
+    padding: 0.1rem 0 0.1rem 1.25rem;
+    border-left: 1px solid var(--ink);
+    font-size: 0.95rem;
+    line-height: 1.55;
+    max-width: 68ch;
+  }
+  aside.note p { margin: 0; max-width: none; }
+  aside.note .lbl { font-variant-caps: small-caps; letter-spacing: 0.02em; font-weight: 700; }
+
+  /* key/value list (replaces the stat tiles) */
+  dl.kv {
+    margin: 1.25rem 0 1.5rem;
+    max-width: 68ch;
+    border-top: 1px solid var(--line);
+    font-size: 0.95rem;
+    line-height: 1.5;
+  }
+  dl.kv > div {
+    display: grid;
+    grid-template-columns: 12rem 1fr;
+    column-gap: 1.25rem;
+    padding: 0.7rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  dl.kv dt { font-weight: 700; margin: 0; }
+  dl.kv dd { margin: 0; }
+  dl.kv dd .v { display: block; margin-bottom: 0.15rem; }
+  dl.kv dd .d { display: block; color: var(--muted); }
+  @media (max-width: 560px) {
+    dl.kv > div { grid-template-columns: 1fr; row-gap: 0.2rem; }
+  }
+
+
+  footer {
+    margin-top: 3.5rem;
+    padding: 1.25rem 0 5rem;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 0.92rem;
+    line-height: 1.55;
+    max-width: 68ch;
+  }
+
+  /* back-to-contents affordance (narrow screens only) */
+  .totop {
+    display: none;
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 5;
+    padding: 0.3rem 0.65rem;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    text-decoration: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .totop:hover { border-color: var(--ink); text-decoration: none; }
+  .totop.show { display: inline-block; }
+
+  /* ---- gutter numbers on wider screens ---- */
+  @media (min-width: 900px) {
+    main { padding-left: 3rem; }
+    footer { margin-left: 3rem; }
+    section > h3::before {
+      position: absolute;
+      right: 100%;
+      width: 3rem;
+      margin-right: 0;
+      text-align: left;
+    }
+    h2.part { margin-left: -3rem; padding-left: 3rem; }
+  }
+
+  /* ---- wide screens: sidebar contents ---- */
+  @media (min-width: 1160px) {
+    .page {
+      display: grid;
+      grid-template-columns: 200px minmax(0, 840px);
+      column-gap: 60px;
+      align-items: start;
+    }
+    header.masthead { grid-column: 1 / -1; }
+    nav.contents {
+      grid-column: 1;
+      position: sticky;
+      top: 1.75rem;
+      max-height: calc(100vh - 3.5rem);
+      overflow-y: auto;
+      padding: 0 0 1rem;
+      margin: 0.35rem 0 0;
+      border-bottom: none;
+      font-size: 0.86rem;
+    }
+    nav.contents > ol { columns: 1; }
+    main { grid-column: 2; }
+    footer { grid-column: 2; }
+    .totop { display: none !important; }
+  }
+
+  @media (max-width: 600px) {
+    body { font-size: 1rem; }
+    .page { padding: 0 18px; }
+    header.masthead { padding-top: 2.25rem; }
+    header.masthead h1 { font-size: 2.1rem; }
+    header.masthead p.sub { font-size: 1.05rem; }
+    section > h3 { font-size: 1.3rem; }
+    section h3 .ref { white-space: normal; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+<header class="masthead">
+  <h1>PageBook</h1>
+  <p class="sub">A central limit order book for Soroban with deterministic footprints: every ledger key an operation touches is computable at simulation time. This page is the short version of the <a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md">architecture doc</a>: the same data structures and processes, with pictures and worked numbers.</p>
+  <p class="sub">Implementation status: the Rust contract, shared types, client padding helpers, and tests are in the repository. M0 through M3 are implemented, M4 resource hardening is partial, and the M5 client SDK sketch is present. A <a href="dashboard/">live status page</a> reads the testnet market straight from RPC.</p>
+</header>
+
+<nav class="contents" id="contents" aria-label="Contents">
+  <p class="toc-title">Contents</p>
+  <ol>
+    <li class="item"><a href="#why">Why an order book is hard on Soroban</a></li>
+    <li class="item"><a href="#model">The model in one paragraph</a></li>
+    <li class="group"><a href="#part1">Part I: data structures</a>
+      <ol>
+        <li class="item"><a href="#storage">Storage map</a></li>
+        <li class="item"><a href="#level">The level queue</a></li>
+        <li class="item"><a href="#order">Order: the maker's claim</a></li>
+        <li class="item"><a href="#index">The tick index</a></li>
+      </ol>
+    </li>
+    <li class="group"><a href="#part2">Part II: processes</a>
+      <ol>
+        <li class="item"><a href="#settle">Settlement</a></li>
+        <li class="item"><a href="#walk">The matching walk</a></li>
+        <li class="item"><a href="#rest">Rest, and replace</a></li>
+        <li class="item"><a href="#client">The client's process</a></li>
+      </ol>
+    </li>
+    <li class="item"><a href="#budgets">Budgets and fees</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section id="why">
+  <h3>Why an order book is hard on Soroban <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/03-soroban-constraints.md">03</a>, <a href="https://github.com/tomerweller/pagebook/blob/main/docs/07-classic-dex-comparison.md">07</a></span></h3>
+  <p>
+    Stellar already runs an order book: the classic DEX is part of the protocol. An offer is a ledger entry the protocol itself manages, and matching runs inside transaction apply, reading whatever offers it needs; one operation can cross up to 1,000 of them without naming any in advance. Holding an offer locks a refundable reserve rather than paying rent. An order book built as a Soroban contract instead works under two rules the classic DEX does not face.
+  </p>
+  <p>
+    <strong>The footprint is declared before execution.</strong> A transaction lists every ledger entry it will read or write; simulation computes the list, and the host rejects any access to an entry not on it. The classic DEX does not have this problem, because the protocol is the one doing the reading. A contract's matching walk has to name every entry it might touch before it runs, and the book keeps moving between simulation and inclusion. PageBook's answer is to make the footprint computable: every key is a pure function of identifiers the client already knows (market, side, tick, owner, nonce), and every loop bounds on a config constant, so a client can take one simulation, pad the key set against whatever the book does next, and submit a transaction that still fits.
+  </p>
+  <p>
+    <strong>Write bytes are the scarce shared resource.</strong> Each ledger, about five seconds, allows 286,720 bytes of Soroban writes, and Soroban charges for every byte of every entry a transaction rewrites, whether or not that byte changed. A classic offer is one small entry the protocol rewrites; a contract book that stores more than it must rewrites the excess on every place and every settle. A persistent entry also prepays about 120 days of storage as rent, and going too small does not help either, because every entry carries 100 to 200 bytes of key and framing on top of its payload. PageBook's answer is to keep every hot entry at a few hundred bytes and to pay for it once: the bulk-rewritten queues and bitmaps are packed bytes with tested size budgets, the smaller named entries are readable <code>#[contracttype]</code> structs, and long-lived entries are reused in place rather than deleted and recreated, with archival as the garbage collector.
+  </p>
+  <p>
+    Most of what follows is those two answers worked out.
+  </p>
+</section>
+
+<section id="model">
+  <h3>The model in one paragraph <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#01-model-and-vocabulary">04 §0</a></span></h3>
+  <p>
+    One contract hosts many markets. A market is a pair of SAC addresses plus two numbers, <code>lot_size</code> and <code>tick_size</code>, that turn every quantity into an integer count of lots and every price into an integer tick. Each side of a market (bids, asks) is a set of price levels; each level is a FIFO queue of maker orders at exactly one price. A taker calls <code>place</code>, which crosses the book and settles in the same transaction. A maker's order rests, and later the maker calls <code>settle</code>, the one exit: it pays whatever happened, proceeds if the order filled, a refund if it did not, both if it partly filled. There is no rounding anywhere in matching, because <code>lots × tick × tick_size</code> is exact; the taker fee is the only place the contract rounds, and it rounds up.
+  </p>
+</section>
+
+<h2 class="part" id="part1">Part I: data structures</h2>
+<p class="lead">There are nine PageBook entry types in three groups, plus the token contracts' vault balances. Two principles govern all of them: every key is a pure function of client-known identifiers, and the order store is authoritative while the tick index is derived.</p>
+
+<section id="storage">
+  <h3>Storage map <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#part-i-data-structures">04 Part I</a></span></h3>
+  <p>
+    Keys are one <code>#[contracttype]</code> <code>DataKey</code> enum: the variant name is the type, the fields are coordinates. Nothing that execution assigns (a generation, a queue position, a page index) may appear in a key the client has to put in the footprint. All entries are persistent except <code>Config</code>. Sizes are XDR-serialized budgets at max occupancy, enforced by tests. <code>Level</code> and <code>LevelPage</code> use packed <code>Bytes</code>, as do the 2,048-bit <code>TickWord</code> and <code>TickSummary</code> bitmaps. <code>Config</code>, <code>Market</code>, <code>BestTick</code>, <code>Order</code>, and <code>FeeAccrual</code> use named <code>#[contracttype]</code> structs.
+  </p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Entry</th><th>Key</th><th>What is inside</th><th class="num">Budget</th></tr></thead>
+      <tbody>
+        <tr class="band"><td colspan="4">Configuration: money-free, admin-governed</td></tr>
+        <tr><td class="k">Config</td><td class="k">Config</td><td>admin, fee recipient, paused flag, market counter (instance storage)</td><td class="num">~190 B</td></tr>
+        <tr><td class="k">Market</td><td class="k">Market(market_id)</td><td>token pair, lot_size, tick_size, tick band, fee bps, order-size bounds, loop caps, queue geometry</td><td class="num">≤ 500 B</td></tr>
+        <tr class="band"><td colspan="4">Order store: authoritative, funds-bearing, never stale</td></tr>
+        <tr><td class="k">Level</td><td class="k">Level(market, side, tick)</td><td>packed bytes: five counters + <code>INLINE_SLOTS</code> quantity slots</td><td class="num">≤ 384 B</td></tr>
+        <tr><td class="k">LevelPage</td><td class="k">LevelPage(market, side, tick, page)</td><td>packed bytes: <code>PAGE_SLOTS</code> more quantity slots (overflow)</td><td class="num">≤ 320 B</td></tr>
+        <tr><td class="k">Order</td><td class="k">Order(market, owner, nonce)</td><td>side, tick, generation, seq, qty</td><td class="num">≤ 160 B</td></tr>
+        <tr><td class="k">FeeAccrual</td><td class="k">FeeAccrual(market, token)</td><td>fees collected, not yet paid out</td><td class="num">~50 B</td></tr>
+        <tr class="band"><td colspan="4">Tick index: derived, money-free, may run stale</td></tr>
+        <tr><td class="k">BestTick</td><td class="k">BestTick(market, side)</td><td>best tick, empty flag</td><td class="num">~60 B</td></tr>
+        <tr><td class="k">TickSummary</td><td class="k">TickSummary(market, side)</td><td>2,048 bits: which <code>TickWord</code>s have any bit set</td><td class="num">268 B</td></tr>
+        <tr><td class="k">TickWord</td><td class="k">TickWord(market, side, word)</td><td>2,048 bits: which ticks in this word have liquidity</td><td class="num">268 B</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    Plus the vault: the contract's own SAC balance entries, one per token. PageBook does not define them, but every settling transaction has them in its read-write footprint, which makes them the point where transactions serialize (the concurrency note under Budgets and fees).
+  </p>
+  <p>
+    The asymmetry between the two big groups is what lets the index be sloppy. The order store carries the hard rules (a Level is never deleted; nothing past the tail is ever read); the index only has to satisfy the one-directional staleness contract described with the tick index below, and is healed lazily by the next <code>place</code> that walks through.
+  </p>
+</section>
+
+<section id="level">
+  <h3>The level queue <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#2-the-level-queue-level-and-levelpage">04 §2</a></span></h3>
+  <p>
+    A <code>Level</code> is one price's queue: five counters and a run of quantity slots. Queue position is by seq, and seq is implicit in slot position, so a slot stores only a quantity. Seqs beyond the inline slots spill into <code>LevelPage</code> entries. Nothing is ever moved or compacted; "remove the head" means a counter advanced.
+  </p>
+  <figure>
+    <div class="fig">
+      <svg viewBox="0 0 880 290" role="img" aria-label="One ask level at tick 101 drawn with 8 inline slots and one overflow page of 4. Counters: generation 2, head_seq 3, head_consumed_lots 4, tail_seq 10, open_lots 36. Slots 0 to 2 are filled history, slot 3 is the head with 4 of 10 consumed, slot 4 is a tombstone, slots 5 to 9 are open, seqs 8 and 9 sit in page 0, and slots 10 and 11 are beyond the tail.">
+        <g font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12">
+          <text x="30" y="26" font-family="ui-monospace, Menlo, monospace" font-size="13" font-weight="600" fill="currentColor">Level(market, ask, 101)</text>
+          <text x="30" y="44" fill="var(--muted)">drawn with INLINE_SLOTS = 8, PAGE_SLOTS = 4 (real target: 32 and 32)</text>
+
+          <!-- counters -->
+          <g font-family="ui-monospace, Menlo, monospace" font-size="12">
+            <rect x="30" y="58" width="130" height="30" rx="6" fill="var(--code-bg)"/><text x="95" y="78" text-anchor="middle" fill="currentColor">generation 2</text>
+            <rect x="168" y="58" width="120" height="30" rx="6" fill="var(--code-bg)"/><text x="228" y="78" text-anchor="middle" fill="currentColor">head_seq 3</text>
+            <rect x="296" y="58" width="196" height="30" rx="6" fill="var(--code-bg)"/><text x="394" y="78" text-anchor="middle" fill="currentColor">head_consumed_lots 4</text>
+            <rect x="500" y="58" width="120" height="30" rx="6" fill="var(--code-bg)"/><text x="560" y="78" text-anchor="middle" fill="currentColor">tail_seq 10</text>
+            <rect x="628" y="58" width="130" height="30" rx="6" fill="var(--code-bg)"/><text x="693" y="78" text-anchor="middle" fill="currentColor">open_lots 36</text>
+          </g>
+
+          <!-- inline slots: x = 30 + i*62, width 56, y 118..172 -->
+          <g font-family="ui-monospace, Menlo, monospace" font-size="14" text-anchor="middle">
+            <!-- filled history 0..2 -->
+            <rect x="30" y="118" width="56" height="54" rx="6" fill="var(--code-bg)" stroke="var(--dead)"/><text x="58" y="150" fill="var(--muted)">5</text>
+            <rect x="92" y="118" width="56" height="54" rx="6" fill="var(--code-bg)" stroke="var(--dead)"/><text x="120" y="150" fill="var(--muted)">8</text>
+            <rect x="154" y="118" width="56" height="54" rx="6" fill="var(--code-bg)" stroke="var(--dead)"/><text x="182" y="150" fill="var(--muted)">6</text>
+            <!-- head 3 -->
+            <rect x="216" y="118" width="56" height="54" rx="6" fill="var(--ask-soft)" stroke="var(--ask)" stroke-width="2"/><text x="244" y="144" fill="currentColor">10</text><text x="244" y="162" font-size="10.5" fill="var(--ask)">4 taken</text>
+            <!-- tombstone 4 -->
+            <rect x="278" y="118" width="56" height="54" rx="6" fill="none" stroke="var(--dead)" stroke-dasharray="4 3"/><text x="306" y="150" fill="var(--muted)">0</text>
+            <!-- open 5..7 -->
+            <rect x="340" y="118" width="56" height="54" rx="6" fill="var(--surface)" stroke="currentColor"/><text x="368" y="150" fill="currentColor">7</text>
+            <rect x="402" y="118" width="56" height="54" rx="6" fill="var(--surface)" stroke="currentColor"/><text x="430" y="150" fill="currentColor">9</text>
+            <rect x="464" y="118" width="56" height="54" rx="6" fill="var(--surface)" stroke="currentColor"/><text x="492" y="150" fill="currentColor">4</text>
+          </g>
+          <!-- seq labels -->
+          <g font-family="ui-monospace, Menlo, monospace" font-size="11" text-anchor="middle" fill="var(--muted)">
+            <text x="58" y="188">0</text><text x="120" y="188">1</text><text x="182" y="188">2</text><text x="244" y="188">3</text><text x="306" y="188">4</text><text x="368" y="188">5</text><text x="430" y="188">6</text><text x="492" y="188">7</text>
+          </g>
+          <text x="275" y="208" text-anchor="middle" fill="var(--muted)">inline slots (inside Level)</text>
+
+          <!-- page 0: x = 570 + i*62 -->
+          <rect x="562" y="106" width="292" height="112" rx="10" fill="none" stroke="currentColor" stroke-dasharray="6 4"/>
+          <g font-family="ui-monospace, Menlo, monospace" font-size="14" text-anchor="middle">
+            <rect x="574" y="118" width="56" height="54" rx="6" fill="var(--surface)" stroke="currentColor"/><text x="602" y="150" fill="currentColor">6</text>
+            <rect x="636" y="118" width="56" height="54" rx="6" fill="var(--surface)" stroke="currentColor"/><text x="664" y="150" fill="currentColor">4</text>
+            <rect x="698" y="118" width="56" height="54" rx="6" fill="none" stroke="var(--dead)" stroke-dasharray="4 3"/><text x="726" y="150" fill="var(--dead)">?</text>
+            <rect x="760" y="118" width="56" height="54" rx="6" fill="none" stroke="var(--dead)" stroke-dasharray="4 3"/><text x="788" y="150" fill="var(--dead)">?</text>
+          </g>
+          <g font-family="ui-monospace, Menlo, monospace" font-size="11" text-anchor="middle" fill="var(--muted)">
+            <text x="602" y="188">8</text><text x="664" y="188">9</text><text x="726" y="188">10</text><text x="788" y="188">11</text>
+          </g>
+          <text x="708" y="208" text-anchor="middle" fill="var(--muted)">LevelPage(…, 101, 0)</text>
+
+          <!-- markers -->
+          <line x1="244" y1="98" x2="244" y2="114" stroke="var(--ask)" stroke-width="1.5"/>
+          <text x="244" y="95" text-anchor="middle" font-size="10.5" fill="var(--ask)">head</text>
+          <line x1="695" y1="98" x2="695" y2="114" stroke="currentColor" stroke-width="1.5"/>
+          <text x="695" y="95" text-anchor="middle" font-size="10.5" fill="currentColor">tail</text>
+
+          <!-- legend -->
+          <g font-size="11.5" fill="var(--muted)">
+            <rect x="30" y="238" width="14" height="14" rx="3" fill="var(--code-bg)" stroke="var(--dead)"/><text x="50" y="250">filled, behind head</text>
+            <rect x="180" y="238" width="14" height="14" rx="3" fill="var(--ask-soft)" stroke="var(--ask)"/><text x="200" y="250">head, partly consumed</text>
+            <rect x="350" y="238" width="14" height="14" rx="3" fill="none" stroke="var(--dead)" stroke-dasharray="3 2"/><text x="370" y="250">tombstone (cancelled)</text>
+            <rect x="520" y="238" width="14" height="14" rx="3" fill="var(--surface)" stroke="currentColor"/><text x="540" y="250">open</text>
+            <text x="600" y="250">? = at or past tail: never read</text>
+          </g>
+        </g>
+      </svg>
+    </div>
+    <figcaption>Reading the counters: everything before seq 3 is fully filled. Seq 3 is the head with 4 of its 10 lots taken. Seq 4 was cancelled mid-queue and is skipped. Seqs 5 to 9 are open, and 6 + 7 + 9 + 4 + 6 + 4 = 36 = <code>open_lots</code>. Slots 10 and 11 exist in the page but sit past <code>tail_seq</code>, so whatever bytes are there (possibly leftovers from an earlier generation) are never read.</figcaption>
+  </figure>
+  <p>
+    Generations and capacity keep the queue sound over time. When matching empties a whole level, or the first rest arrives at a level that cancels emptied, <code>generation</code> increments and seqs restart at 0; every earlier order's settlement is unaffected, because an old generation number reads as "fully filled" (next section). And a page holds <code>PAGE_SLOTS</code> seqs; one generation holds at most <code>INLINE_SLOTS + PAGE_SLOTS × MAX_PAGES</code> orders, after which rests fail with <code>LevelFull</code> until the level empties and resets.
+  </p>
+</section>
+
+<section id="order">
+  <h3>Order: the maker's claim <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#3-order">04 §3</a></span></h3>
+  <p>
+    A resting order is one <code>Order</code> entry. Its key is <code>(market, owner, nonce)</code>, and the nonce is chosen by the client before submission. So the key is known at simulation time, whatever the book does before the transaction lands. The queue coordinates, which execution assigns, live inside the entry.
+  </p>
+  <dl class="kv">
+    <div>
+      <dt>Key: chosen by the client</dt>
+      <dd><span class="v">Order(market, owner, nonce)</span><span class="d">Declarable before submission. Fails <code>OrderExists</code> if the nonce is live; reusable after settle.</span></dd>
+    </div>
+    <div>
+      <dt>Contents: assigned at execution</dt>
+      <dd><span class="v">side · tick · generation · seq · qty</span><span class="d">Reported in the <code>rested</code> event. Fixed size, so <code>replace</code> rewrites it in place; a same-size rewrite pays write fees but no rent.</span></dd>
+    </div>
+  </dl>
+  <p>
+    Keying by <code>(generation, seq)</code> would break under concurrency: any other rest at the same level moves the tail, any sweep bumps the generation, and the simulated key is wrong when the transaction executes.
+  </p>
+</section>
+
+<section id="index">
+  <h3>The tick index <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#5-the-tick-index-besttick-ticksummary-tickword">04 §5</a></span></h3>
+  <p>
+    Finding the next tick with liquidity is a two-level bitmap plus a cached best. <code>TickSummary</code> has one bit per <code>TickWord</code>; each <code>TickWord</code> has one bit per tick. Together they cover 2,048 × 2,048 ≈ 4.19 million ticks per side. <code>BestTick</code> is where the walk starts.
+  </p>
+  <figure>
+    <div class="fig">
+      <svg viewBox="0 0 880 250" role="img" aria-label="Three tiers. BestTick(ask) equals 100. TickSummary is a strip of 2,048 bits with bit 0 set. TickWord(0) is a strip covering ticks 0 to 2047, zoomed on ticks 99 to 104 with bits 100, 101 and 103 set. Each set bit resolves to a Level key. A settle that empties tick 101 leaves its bit set; the next walk clears it.">
+        <defs>
+          <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
+        </defs>
+        <g font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12">
+          <!-- BestTick -->
+          <rect x="30" y="20" width="200" height="34" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
+          <text x="130" y="42" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="13" fill="currentColor">BestTick(ask) = 100</text>
+          <text x="244" y="42" fill="var(--muted)">the walk starts here (never worse than the true best)</text>
+
+          <!-- TickSummary -->
+          <text x="30" y="88" fill="var(--muted)">TickSummary(ask): 2,048 bits, one per word</text>
+          <g>
+            <rect x="30" y="96" width="820" height="22" rx="4" fill="var(--code-bg)"/>
+            <rect x="30" y="96" width="14" height="22" rx="3" fill="var(--accent)"/>
+            <text x="37" y="112" text-anchor="middle" font-size="10" fill="#fff" font-weight="700">1</text>
+            <text x="60" y="112" font-size="10.5" fill="var(--muted)">word 0</text>
+            <text x="820" y="112" text-anchor="end" font-size="10.5" fill="var(--muted)">word 2047</text>
+          </g>
+          <line x1="37" y1="120" x2="37" y2="146" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar2)"/>
+          <text x="48" y="140" fill="var(--muted)" font-size="11">bit set ⇔ TickWord(0) has any bit</text>
+
+          <!-- TickWord zoom -->
+          <text x="30" y="166" fill="var(--muted)">TickWord(ask, 0): ticks 0 to 2047, zoomed on 99 to 104</text>
+          <g font-family="ui-monospace, Menlo, monospace" font-size="12" text-anchor="middle">
+            <rect x="30" y="174" width="60" height="26" rx="4" fill="var(--code-bg)"/><text x="60" y="192" fill="var(--muted)">…</text>
+            <rect x="96" y="174" width="60" height="26" rx="4" fill="var(--code-bg)"/><text x="126" y="192" fill="var(--muted)">0</text>
+            <rect x="162" y="174" width="60" height="26" rx="4" fill="var(--accent)"/><text x="192" y="192" fill="#fff" font-weight="700">1</text>
+            <rect x="228" y="174" width="60" height="26" rx="4" fill="var(--accent)"/><text x="258" y="192" fill="#fff" font-weight="700">1</text>
+            <rect x="294" y="174" width="60" height="26" rx="4" fill="var(--code-bg)"/><text x="324" y="192" fill="var(--muted)">0</text>
+            <rect x="360" y="174" width="60" height="26" rx="4" fill="var(--accent)"/><text x="390" y="192" fill="#fff" font-weight="700">1</text>
+            <rect x="426" y="174" width="60" height="26" rx="4" fill="var(--code-bg)"/><text x="456" y="192" fill="var(--muted)">0</text>
+            <rect x="492" y="174" width="60" height="26" rx="4" fill="var(--code-bg)"/><text x="522" y="192" fill="var(--muted)">…</text>
+          </g>
+          <g font-family="ui-monospace, Menlo, monospace" font-size="10.5" text-anchor="middle" fill="var(--muted)">
+            <text x="126" y="216">99</text><text x="192" y="216">100</text><text x="258" y="216">101</text><text x="324" y="216">102</text><text x="390" y="216">103</text><text x="456" y="216">104</text>
+          </g>
+          <line x1="192" y1="202" x2="192" y2="204" stroke="none"/>
+          <text x="580" y="192" font-size="11.5" fill="currentColor">tick 100 set ⇒ Level(ask, 100) has liquidity</text>
+          <text x="580" y="210" font-size="11.5" fill="var(--muted)">(or had it, and no walk has passed since)</text>
+          <text x="30" y="242" fill="var(--muted)" font-size="11.5">Real geometry: one summary entry per side, one word entry per 2,048 ticks; both 256 bytes.</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>Staleness runs in one direction only. A rest always sets its bit; a sweep always clears one. A settle that empties a level does not touch the bitmaps (that would widen its footprint), so a set bit over an empty level is allowed. The next walk that lands on it reads <code>open_lots = 0</code>, clears the bit, and moves on; no other operation touches stale bits.</figcaption>
+  </figure>
+</section>
+
+<h2 class="part" id="part2">Part II: processes</h2>
+<p class="lead">Four mechanisms do the work (settlement, the matching walk, rest, and replace) and the entry points compose them. The client runs a fifth process off-chain: simulate, pad, submit.</p>
+
+<section id="settle">
+  <h3>Settlement <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#7-the-settlement-state-machine">04 §7</a></span></h3>
+  <p>
+    Because every take at a level happens at exactly the tick price, it does not matter when a fill happened, only whether the queue moved past you. So an order's stored coordinates <code>(g, s, q)</code> compared with the level's counters <code>(G, H, C)</code> decide everything. Matching writes nothing per maker; the maker reads the answer off the counters when they settle.
+  </p>
+  <figure>
+    <div class="fig">
+      <svg viewBox="0 0 880 300" role="img" aria-label="On the left, the level's counters: G equals 2, H equals 3, C equals 4. On the right, four orders judged against them. Order with g 1, s 5, q 8: g less than G, fully filled, pay 8. Order with g 2, s 1, q 8: s less than H, fully filled, pay 8. Order with g 2, s 3, q 10: s equals H, partly filled, pay 4, refund 6, advance H. Order with g 2, s 6, q 9: s greater than H, open, refund 9 and tombstone the slot.">
+        <defs>
+          <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
+        </defs>
+        <g font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12">
+          <!-- level state -->
+          <rect x="30" y="80" width="190" height="130" rx="10" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+          <text x="125" y="104" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">Level(ask, 101)</text>
+          <g font-family="ui-monospace, Menlo, monospace" font-size="13" fill="currentColor">
+            <text x="50" y="136">G = 2</text><text x="110" y="136" fill="var(--muted)" font-size="11">generation</text>
+            <text x="50" y="160">H = 3</text><text x="110" y="160" fill="var(--muted)" font-size="11">head_seq</text>
+            <text x="50" y="184">C = 4</text><text x="110" y="184" fill="var(--muted)" font-size="11">head_consumed</text>
+          </g>
+
+          <!-- rows: y = 40 + i*62 -->
+          <!-- headers -->
+          <text x="300" y="28" fill="var(--muted)" font-size="11">Order(owner, nonce) says</text>
+          <text x="520" y="28" fill="var(--muted)" font-size="11">condition</text>
+          <text x="660" y="28" fill="var(--muted)" font-size="11">settle pays</text>
+
+          <!-- row 1 -->
+          <rect x="300" y="42" width="190" height="36" rx="7" fill="var(--code-bg)"/><text x="395" y="65" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">g=1  s=5  q=8</text>
+          <text x="520" y="65" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">g &lt; G</text>
+          <text x="660" y="60" fill="currentColor" font-weight="600">filled: pay 8 × price</text>
+          <text x="660" y="75" fill="var(--muted)" font-size="11">an earlier generation was swept or reset</text>
+          <!-- row 2 -->
+          <rect x="300" y="104" width="190" height="36" rx="7" fill="var(--code-bg)"/><text x="395" y="127" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">g=2  s=1  q=8</text>
+          <text x="520" y="127" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">s &lt; H</text>
+          <text x="660" y="122" fill="currentColor" font-weight="600">filled: pay 8 × price</text>
+          <text x="660" y="137" fill="var(--muted)" font-size="11">the head moved past it</text>
+          <!-- row 3 -->
+          <rect x="300" y="166" width="190" height="36" rx="7" fill="var(--ask-soft)" stroke="var(--ask)"/><text x="395" y="189" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">g=2  s=3  q=10</text>
+          <text x="520" y="189" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">s = H</text>
+          <text x="660" y="184" fill="currentColor" font-weight="600">pay 4 × price, refund 6</text>
+          <text x="660" y="199" fill="var(--muted)" font-size="11">open_lots −= 6; H → 5 (skips tombstone 4), C → 0</text>
+          <!-- row 4 -->
+          <rect x="300" y="228" width="190" height="36" rx="7" fill="var(--code-bg)"/><text x="395" y="251" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">g=2  s=6  q=9</text>
+          <text x="520" y="251" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">s &gt; H</text>
+          <text x="660" y="246" fill="currentColor" font-weight="600">open: refund 9</text>
+          <text x="660" y="261" fill="var(--muted)" font-size="11">zero slot 6 (tombstone), open_lots −= 9</text>
+
+          <!-- arrows from level to rows -->
+          <path d="M222 145 C 260 145, 260 60, 296 60" fill="none" stroke="currentColor" marker-end="url(#ar3)"/>
+          <path d="M222 145 C 260 145, 260 122, 296 122" fill="none" stroke="currentColor" marker-end="url(#ar3)"/>
+          <path d="M222 145 C 260 145, 260 184, 296 184" fill="none" stroke="currentColor" marker-end="url(#ar3)"/>
+          <path d="M222 145 C 260 145, 260 246, 296 246" fill="none" stroke="currentColor" marker-end="url(#ar3)"/>
+
+          <text x="30" y="286" fill="var(--muted)" font-size="11.5">Every row ends the same way: delete the Order entry, emit settled. Five writes including the two balances; nothing per maker was written during matching.</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>These are the four orders from the queue figure above, judged against that level's counters. Any interleaving of takes and settles that ends at the same counters pays the same amounts. It replaces Phoenix seats and DeepBook's settled/owed ledger without a crank.</figcaption>
+  </figure>
+</section>
+
+<section id="walk">
+  <h3>The matching walk <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#8-the-matching-walk-the-taker-path">04 §8</a></span></h3>
+  <p>
+    A taker's <code>place</code> starts at <code>start_tick</code>, the best opposite tick the client saw when it simulated, and walks toward its limit. Ticks better than <code>start_tick</code> are never visited: an order that arrived there after simulation is outside the footprint by construction, and the walk never reaches for it. Sweeping a whole level needs no slot reads (<code>open_lots × tick × tick_size</code> is exact) and is one small write: bump the generation. Only the last, partial level touches slots.
+  </p>
+  <figure>
+    <div class="fig">
+      <svg viewBox="0 0 880 300" role="img" aria-label="Ask side, ticks 100 to 104. Levels at 100 (12 lots), 101 (10 lots) and 103 (15 lots); 102 and 104 empty. A taker buys 30 lots with limit 103. It sweeps 100 (generation 4 to 5, bit cleared), sweeps 101 (generation 7 to 8, bit cleared), takes 8 of 15 at 103 (head advances), and finishes with BestTick moving to 103.">
+        <defs>
+          <marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--bid)"/></marker>
+        </defs>
+        <g font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12">
+          <text x="30" y="24" fill="currentColor" font-weight="600">place(taker, buy 30 lots, limit_tick 103, start_tick 100)</text>
+
+          <!-- tick axis at y=200, ticks at x = 120 + i*150 -->
+          <line x1="60" y1="200" x2="840" y2="200" stroke="currentColor" stroke-width="1.2"/>
+          <g font-family="ui-monospace, Menlo, monospace" font-size="12" text-anchor="middle" fill="var(--muted)">
+            <text x="120" y="222">100</text><text x="270" y="222">101</text><text x="420" y="222">102</text><text x="570" y="222">103</text><text x="720" y="222">104</text>
+          </g>
+          <text x="840" y="222" text-anchor="end" fill="var(--muted)" font-size="11">ask ticks →</text>
+
+          <!-- level bars: height = lots*5 -->
+          <!-- 100: 12 lots -> 60 -->
+          <rect x="85" y="140" width="70" height="60" rx="4" fill="var(--ask-soft)" stroke="var(--ask)"/>
+          <text x="120" y="176" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">12</text>
+          <!-- 101: 10 lots -> 50 -->
+          <rect x="235" y="150" width="70" height="50" rx="4" fill="var(--ask-soft)" stroke="var(--ask)"/>
+          <text x="270" y="181" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">10</text>
+          <!-- 102: none -->
+          <rect x="385" y="196" width="70" height="4" fill="none" stroke="var(--dead)" stroke-dasharray="3 3"/>
+          <text x="420" y="188" text-anchor="middle" fill="var(--muted)" font-size="11">no Level</text>
+          <!-- 103: 15 lots -> 75; taken 8 -> 40 from bottom -->
+          <rect x="535" y="125" width="70" height="75" rx="4" fill="var(--surface)" stroke="var(--ask)"/>
+          <rect x="535" y="160" width="70" height="40" fill="var(--ask-soft)"/>
+          <text x="570" y="147" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">15</text>
+          <text x="570" y="184" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="11" fill="var(--ask)">8 taken</text>
+          <!-- 104: none -->
+          <rect x="685" y="196" width="70" height="4" fill="none" stroke="var(--dead)" stroke-dasharray="3 3"/>
+
+          <!-- taker arrow -->
+          <line x1="80" y1="100" x2="600" y2="100" stroke="var(--bid)" stroke-width="2" marker-end="url(#ar4)"/>
+          <text x="80" y="90" fill="var(--bid)" font-weight="600">taker, 30 lots</text>
+          <text x="470" y="90" fill="var(--bid)" font-size="11">12 + 10 + 8 = 30 · done</text>
+
+          <!-- per-level effects -->
+          <g font-size="11" fill="currentColor">
+            <text x="120" y="52" text-anchor="middle" font-weight="600">sweep</text>
+            <text x="120" y="66" text-anchor="middle" fill="var(--muted)">generation 4→5</text>
+            <text x="120" y="79" text-anchor="middle" fill="var(--muted)">TickWord bit 100 cleared</text>
+            <text x="270" y="52" text-anchor="middle" font-weight="600">sweep</text>
+            <text x="270" y="66" text-anchor="middle" fill="var(--muted)">generation 7→8</text>
+            <text x="270" y="79" text-anchor="middle" fill="var(--muted)">bit 101 cleared</text>
+            <text x="420" y="52" text-anchor="middle" font-weight="600">skip</text>
+            <text x="420" y="66" text-anchor="middle" fill="var(--muted)">bit 102 clear;</text>
+            <text x="420" y="79" text-anchor="middle" fill="var(--muted)">next_set_tick → 103</text>
+            <text x="570" y="52" text-anchor="middle" font-weight="600">partial</text>
+            <text x="570" y="66" text-anchor="middle" fill="var(--muted)">head advances 8 lots</text>
+            <text x="570" y="79" text-anchor="middle" fill="var(--muted)">(only slot reads in the tx)</text>
+          </g>
+
+          <!-- write set -->
+          <text x="30" y="258" fill="var(--muted)" font-size="11.5">Writes: Level ×3 · TickWord ×1 · BestTick(ask) 100→103 · FeeAccrual · two vault balances. Events: filled ×3, swept ×2, top_changed.</text>
+          <text x="30" y="278" fill="var(--muted)" font-size="11.5">No order at either swept level was touched; their makers learn "filled" from the generation bump when they settle.</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption><b>Two sweeps and one partial take cost three Level writes.</b> The walk is bounded by two caps and one window: at most <code>MAX_LEVELS_CROSSED</code> levels, at most <code>MAX_SLOTS_SCANNED</code> slots while skipping tombstones at the head, and the partial level's slots must lie inside the pages the client declared. Hitting any of them ends the loop with progress kept and the remainder refunded, never rested crossing. <code>route</code> runs this once per leg with the caps shared across legs.</figcaption>
+  </figure>
+</section>
+
+<section id="rest">
+  <h3>Rest, and replace <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#9-rest-append">04 §9</a>, <a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#10-replace-the-maker-update-path">§10</a></span></h3>
+  <p>
+    A rest is an append: <code>seq = tail_seq++</code>, write the quantity into that slot, write the <code>Order</code>, set the tick's bit if the level was empty, move <code>BestTick</code> if this is a new best, escrow with one SAC transfer. The slot must land inside the append window the client declared (the pages around the simulated tail); if a concurrent rest pushed the tail past it, the result is the typed error <code>RetryRest</code>, not a host trap on an undeclared key.
+  </p>
+  <p>
+    A maker updating a quote does not settle and place again. <code>replace</code> settles the old order per the table above, then rewrites the same <code>Order</code> entry with new coordinates and appends at the new tick, atomically. The entry keeps its key and its size, so no rent is charged, and the maker is never unquoted in between. <code>replace_batch</code> does this for up to <code>MAX_REPLACE_BATCH</code> quotes with one netted transfer per token.
+  </p>
+  <figure>
+    <div class="fig">
+      <svg viewBox="0 0 880 236" role="img" aria-label="One Order entry with key (market, maker, nonce 7). Before: ask, tick 101, generation 2, seq 6, qty 9. Replace to tick 102 for 12 lots. After: same key, contents ask, tick 102, generation 5, seq 3, qty 12. Steps between: settle the old order (refund 9, tombstone slot 6 at 101), rewrite in place, append at 102, escrow the delta of 3 lots.">
+        <defs>
+          <marker id="ar5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
+        </defs>
+        <g font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12">
+          <!-- before -->
+          <rect x="30" y="30" width="270" height="110" rx="10" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
+          <text x="46" y="52" font-family="ui-monospace, Menlo, monospace" font-size="12.5" font-weight="600" fill="currentColor">Order(market, maker, 7)</text>
+          <text x="46" y="70" fill="var(--muted)" font-size="11">before</text>
+          <g font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">
+            <text x="46" y="98">ask · tick 101</text>
+            <text x="46" y="118">g 2 · s 6 · qty 9</text>
+          </g>
+          <!-- after -->
+          <rect x="580" y="30" width="270" height="110" rx="10" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
+          <text x="596" y="52" font-family="ui-monospace, Menlo, monospace" font-size="12.5" font-weight="600" fill="currentColor">Order(market, maker, 7)</text>
+          <text x="596" y="70" fill="var(--muted)" font-size="11">after: same key, same size, zero rent</text>
+          <g font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">
+            <text x="596" y="98">ask · tick 102</text>
+            <text x="596" y="118">g 5 · s 3 · qty 12</text>
+          </g>
+          <!-- arrow -->
+          <line x1="304" y1="85" x2="576" y2="85" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar5)"/>
+          <text x="440" y="70" text-anchor="middle" fill="currentColor" font-weight="600" font-size="12">replace(nonce 7 → ask 102, 12 lots)</text>
+          <text x="440" y="106" text-anchor="middle" fill="var(--muted)" font-size="11">one transaction, four steps</text>
+          <!-- steps row -->
+          <g font-size="11.5" fill="currentColor">
+            <text x="30" y="170"><tspan font-weight="600">1</tspan> settle the old order: s 6 &gt; H ⇒ refund 9, tombstone slot 6 at tick 101</text>
+            <text x="30" y="188"><tspan font-weight="600">2</tspan> rewrite the entry in place · <tspan font-weight="600">3</tspan> append at 102: seq = current tail (3)</text>
+            <text x="30" y="206"><tspan font-weight="600">4</tspan> escrow the delta: +3 lots (12 new − 9 refunded), one transfer</text>
+          </g>
+          <text x="30" y="228" fill="var(--muted)" font-size="11">Post-only check against recorded BestTick(bid): if 102 would cross, fail Crossed rather than take.</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>The maker's nonce becomes a durable quote slot whose rent (the minimum persistent TTL, about 120 days) is paid once and amortizes across every update. The architecture estimates that a 40-quote refresh in one transaction costs about 0.03 XLM.</figcaption>
+  </figure>
+</section>
+
+<section id="client">
+  <h3>The client's process <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#14-the-clients-process-simulate--pad--submit">04 §14</a></span></h3>
+  <p>
+    Every key the contract touches is a function of <code>(market, side, tick, word, page, owner, nonce)</code>, so the client builds the footprint itself. Its job is to pad that footprint so the transaction still fits the book it lands on, which may differ from the one <code>simulateTransaction</code> saw. Between simulation and inclusion, new levels can appear at any tick inside the walk range, and heads and tails can cross page boundaries.
+  </p>
+  <figure>
+    <div class="fig">
+      <svg viewBox="0 0 880 268" role="img" aria-label="A tick axis from 99 to 109. Simulated best t1 is 100; pad_end is 106. The band from 100 to 106 is shaded: every Level key in it is declared, set or not. Set levels at 100, 101 and 103 each get a small window of LevelPage keys around their simulated head. Ticks 102, 104, 105 and 106 are declared but empty. Beyond 106 is the trap zone: if the walk must pass pad_end, the transaction fails. The taker's own-side rest keys (its Level at the limit tick, that side's bitmap words, TickSummary and BestTick, Order, append pages around the simulated tail) are declared separately.">
+        <g font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12">
+          <!-- band shading: ticks at x = 60 + (t-99)*70, tick 100 -> 130 ... 106 -> 550; band from 100 to 106 inclusive: 105..585 -->
+          <rect x="102" y="60" width="490" height="120" rx="8" fill="var(--accent-soft)"/>
+          <text x="110" y="52" fill="var(--accent)" font-weight="600" font-size="11.5">declared band [t1, pad_end]: every Level key, set or not</text>
+          <!-- trap zone -->
+          <rect x="600" y="60" width="250" height="120" rx="8" fill="var(--ask-soft)"/>
+          <text x="612" y="52" fill="var(--ask)" font-weight="600" font-size="11.5">past pad_end: the only trap</text>
+
+          <!-- axis -->
+          <line x1="40" y1="180" x2="850" y2="180" stroke="currentColor" stroke-width="1.2"/>
+          <g font-family="ui-monospace, Menlo, monospace" font-size="11.5" text-anchor="middle" fill="var(--muted)">
+            <text x="60" y="200">99</text><text x="130" y="200">100</text><text x="200" y="200">101</text><text x="270" y="200">102</text><text x="340" y="200">103</text><text x="410" y="200">104</text><text x="480" y="200">105</text><text x="550" y="200">106</text><text x="620" y="200">107</text><text x="690" y="200">108</text><text x="760" y="200">109</text>
+          </g>
+          <text x="130" y="220" text-anchor="middle" fill="var(--accent)" font-size="11">t1 = start_tick</text>
+          <text x="550" y="220" text-anchor="middle" fill="var(--accent)" font-size="11">pad_end</text>
+
+          <!-- levels: set at 100, 101, 103; bars -->
+          <rect x="112" y="128" width="36" height="52" rx="3" fill="var(--surface)" stroke="var(--ask)"/>
+          <rect x="182" y="138" width="36" height="42" rx="3" fill="var(--surface)" stroke="var(--ask)"/>
+          <rect x="322" y="118" width="36" height="62" rx="3" fill="var(--surface)" stroke="var(--ask)"/>
+          <!-- unset ticks marked as declared keys -->
+          <g fill="none" stroke="var(--accent)" stroke-dasharray="3 3">
+            <rect x="252" y="166" width="36" height="14" rx="3"/>
+            <rect x="392" y="166" width="36" height="14" rx="3"/>
+            <rect x="462" y="166" width="36" height="14" rx="3"/>
+            <rect x="532" y="166" width="36" height="14" rx="3"/>
+          </g>
+          <text x="410" y="160" text-anchor="middle" fill="var(--muted)" font-size="10.5">unset: a footprint slot, ~2,800 stroops read-write</text>
+
+          <!-- windows above set levels -->
+          <g font-size="10" text-anchor="middle" fill="var(--muted)">
+            <rect x="106" y="86" width="48" height="30" rx="4" fill="var(--surface)" stroke="currentColor" stroke-dasharray="4 3"/><text x="130" y="105">pages</text>
+            <rect x="176" y="86" width="48" height="30" rx="4" fill="var(--surface)" stroke="currentColor" stroke-dasharray="4 3"/><text x="200" y="105">pages</text>
+            <rect x="316" y="86" width="48" height="30" rx="4" fill="var(--surface)" stroke="currentColor" stroke-dasharray="4 3"/><text x="340" y="105">pages</text>
+          </g>
+          <text x="238" y="76" text-anchor="middle" fill="var(--muted)" font-size="10.5">per set level: LevelPage keys around the simulated head (small window)</text>
+
+          <!-- own rest -->
+          <text x="40" y="242" fill="var(--muted)" font-size="11.5">Also declared: the TickWords over the band, that side's TickSummary and BestTick, both vault balances, FeeAccrual;</text>
+          <text x="40" y="260" fill="var(--muted)" font-size="11.5">and on the taker's own side, for its possible rest: Level(limit_tick), its TickWord, TickSummary, BestTick, Order(taker, nonce), append pages {page(tail_sim), +1, 0}.</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption><b>One failure mode traps; the rest degrade.</b> If the walk needs a level past <code>pad_end</code>, the host traps on the undeclared key. Everything else that can move between simulation and inclusion ends gracefully: a cap ends the loop with the remainder refunded, an append outside its window returns <code>RetryRest</code>. Padding is cheap (a 100-key band is ~0.003 XLM); the 400-entry per-transaction footprint limit is what binds, and on a sparse book the client trades band depth against trap probability.</figcaption>
+  </figure>
+</section>
+
+<section id="budgets">
+  <h3>Budgets and fees <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#17-budgets-and-fees">04 §17</a></span></h3>
+  <p>
+    What comes out of all of the above: small hot entries, capped loops, and a client-padded footprint give a router a transaction it can simulate once and trust, and one that parallelizes with anything outside its read-write set. The numbers:
+  </p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Operation</th><th class="num">Footprint entries</th><th class="num">Write entries</th><th class="num">Write bytes</th><th class="num">Est. resource fee</th><th>Dominated by</th></tr></thead>
+      <tbody>
+        <tr><td>place, rest only, existing level</td><td class="num">13</td><td class="num">5</td><td class="num">1.2 KB</td><td class="num">~0.048 XLM</td><td>Order rent (min TTL)</td></tr>
+        <tr><td>place, rest only, first touch of a tick</td><td class="num">15</td><td class="num">8</td><td class="num">2.1 KB</td><td class="num">~0.115 XLM</td><td>+ Level rent (~0.27 on an empty side)</td></tr>
+        <tr><td>settle</td><td class="num">9</td><td class="num">5</td><td class="num">0.9 KB</td><td class="num">~0.0015 XLM</td><td>write entries, no rent</td></tr>
+        <tr><td>replace, one quote (new tick with a level)</td><td class="num">13</td><td class="num">7</td><td class="num">2.0 KB</td><td class="num">~0.0024 XLM</td><td>write entries, zero rent</td></tr>
+        <tr><td>replace_batch, 40 quotes (same ticks)</td><td class="num">90</td><td class="num">83</td><td class="num">27.7 KB</td><td class="num">~0.031 XLM</td><td>write entries, zero rent</td></tr>
+        <tr><td>place, take 8 levels</td><td class="num">22</td><td class="num">17</td><td class="num">5.3 KB</td><td class="num">~0.006 XLM</td><td>write entries + events</td></tr>
+        <tr><td>place, take 32 levels in 32 words (max)</td><td class="num">77</td><td class="num">72</td><td class="num">26.6 KB</td><td class="num">~0.026 XLM</td><td>write entries</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    Matching is nearly free and placement pays rent: a 32-level sweep costs about half of resting one order, so the book's carrying cost sits with makers at roughly 0.046 XLM per open order per minimum TTL, which doubles as anti-spam for <em>holding</em> orders (churn is priced by <code>min_order_lots</code>: dust that arms a phantom best or poisons a queue gets filled or swept for its notional). And write bytes, not fees, are the throughput ceiling: the max sweep is 9.3% of the ledger-wide write-bytes limit (286,720), so a ledger fits about 10 of them, or hundreds of rests and settles. Every hot entry is a few hundred bytes for that reason.
+  </p>
+  <aside class="note">
+    <p><span class="lbl">Concurrency:</span> the vault's SAC balance entries are the serialization points. Every settling transaction has one or both in its read-write footprint, so under P23 parallel execution all markets sharing a token form one dependent-transaction cluster. v1 accepts this because write bytes bind first; per-market vault sub-accounts are the v2 fix. No market operation writes the instance entry (no <code>bump_instance</code> on the hot path; <code>keepalive()</code> cranks the TTL), so instance reads stay read-only and never widen the cluster. <a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#16-concurrency-and-serialization">04 §16</a></p>
+  </aside>
+</section>
+
+</main>
+
+<footer>
+  Deferred to v2 or a sibling market type: global cross-market orders, per-market vault sub-accounts, permissionless market creation, geometric ticks, pooled pro-rata levels, volatility-scaled fees. Full list and reasons in <a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#20-non-goals--deferred">04 §20</a>; the decisions behind the design in <a href="https://github.com/tomerweller/pagebook/tree/main/docs/decisions">docs/decisions</a>.
+</footer>
+
+</div>
+
+<a class="totop" href="#contents">&uarr; Contents</a>
+
+<script>
+(function () {
+  var nav = document.getElementById('contents');
+  if (!nav) return;
+  var links = Array.prototype.slice.call(nav.querySelectorAll('a[href^="#"]'));
+  var linkFor = {};
+  var targets = [];
+  links.forEach(function (a) {
+    var id = a.getAttribute('href').slice(1);
+    var el = document.getElementById(id);
+    if (el) { linkFor[id] = a; targets.push(el); }
+  });
+
+  var current = null;
+  function setCurrent(el) {
+    if (el === current) return;
+    if (current) linkFor[current.id].removeAttribute('aria-current');
+    current = el;
+    if (el) linkFor[el.id].setAttribute('aria-current', 'true');
+  }
+
+  if ('IntersectionObserver' in window) {
+    var visible = [];
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        var i = visible.indexOf(e.target);
+        if (e.isIntersecting && i < 0) visible.push(e.target);
+        if (!e.isIntersecting && i >= 0) visible.splice(i, 1);
+      });
+      var last = null;
+      targets.forEach(function (t) { if (visible.indexOf(t) >= 0) last = t; });
+      if (last) setCurrent(last);
+    }, { rootMargin: '0px 0px -60% 0px', threshold: 0 });
+    targets.forEach(function (t) { io.observe(t); });
+  }
+
+  var totop = document.querySelector('.totop');
+  if (totop) {
+    var queued = false;
+    var update = function () {
+      queued = false;
+      totop.classList.toggle('show', nav.getBoundingClientRect().bottom < 0);
+    };
+    window.addEventListener('scroll', function () {
+      if (!queued) { queued = true; window.requestAnimationFrame(update); }
+    }, { passive: true });
+    update();
+  }
+})();
+</script>
+
+</body>
+</html>

@@ -11,10 +11,12 @@ The repository contains a Rust contract, shared data types, a small Rust client
 helper crate, and tests. Use it to study the design or run local experiments. It
 is not a finished exchange, SDK, indexer, or wallet integration.
 
-The quickest way in is the rendered explainer at
-[blob.tomerweller.com/pagebook](https://blob.tomerweller.com/pagebook/): the design
-in pictures and worked numbers, with each section linking to the matching part of
-the architecture document.
+The quickest way in is the executive explainer at
+[blob.tomerweller.com/pagebook](https://blob.tomerweller.com/pagebook/). The deeper
+visual companion to the specification is at
+[blob.tomerweller.com/pagebook/design.html](https://blob.tomerweller.com/pagebook/design.html):
+the design in pictures and worked numbers, with each section linking to the
+matching part of the architecture document.
 
 ## The problem
 
@@ -157,7 +159,8 @@ same ADR).
 | `tools/stress/` | Ledger-limit saturation fleet: near-cap batches oversubscribing the write-byte cap (ADR-027) |
 | `docs/04-architecture.md` | Full technical specification |
 | `docs/09-resource-utilization.md` | Measured declared-vs-metered resource ranges per invocation, from live testnet traffic |
-| `docs/index.html` | Visual companion to the technical specification, rendered at [blob.tomerweller.com/pagebook](https://blob.tomerweller.com/pagebook/) |
+| `docs/index.html` | Executive explainer, the site's front page, rendered at [blob.tomerweller.com/pagebook](https://blob.tomerweller.com/pagebook/) |
+| `docs/design.html` | Visual companion to the technical specification, rendered at [blob.tomerweller.com/pagebook/design.html](https://blob.tomerweller.com/pagebook/design.html) |
 | `docs/dashboard/` | Read-only live market status page (RPC only, no build step), rendered at [blob.tomerweller.com/pagebook/dashboard](https://blob.tomerweller.com/pagebook/dashboard/) |
 | `docs/03-soroban-constraints.md` | Soroban storage, footprint, and resource background |
 | `docs/07-classic-dex-comparison.md` | Comparison with the classic Stellar DEX |
@@ -179,7 +182,8 @@ make lint
 
 - [Architecture](docs/04-architecture.md): storage, matching, settlement,
   events, footprints, fees, and archival behavior
-- [Architecture explainer](https://blob.tomerweller.com/pagebook/): diagrams and worked examples (source: `docs/index.html`)
+- [Executive explainer](https://blob.tomerweller.com/pagebook/): the design and its measured costs in brief (source: `docs/index.html`)
+- [Architecture explainer](https://blob.tomerweller.com/pagebook/design.html): diagrams and worked examples (source: `docs/design.html`)
 - [Market dashboard](https://blob.tomerweller.com/pagebook/dashboard/): live state of the testnet market (source: `docs/dashboard/`)
 - [Soroban constraints](docs/03-soroban-constraints.md): the runtime limits
   behind the design
