@@ -82,7 +82,7 @@
   strong, b { font-weight: 700; }
   ::selection { background: var(--accent-soft); }
 
-  .page { max-width: 860px; margin: 0 auto; padding: 0 28px; }
+  .page { max-width: 1160px; margin: 0 auto; padding: 0 28px; }
 
   header.masthead {
     padding: 3.5rem 0 1.75rem;
@@ -139,8 +139,34 @@
   }
   nav.contents a { color: var(--ink); text-decoration: none; }
   nav.contents a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 0.16em; }
+  nav.contents a[aria-current="true"] { color: var(--accent); font-weight: 700; }
   @media (min-width: 600px) {
     nav.contents ol { columns: 2; column-gap: 2.5rem; }
+  }
+
+  /* wide screens: sidebar contents, as on the design page */
+  @media (min-width: 1160px) {
+    .page {
+      display: grid;
+      grid-template-columns: 200px minmax(0, 840px);
+      column-gap: 60px;
+      align-items: start;
+    }
+    header.masthead { grid-column: 1 / -1; }
+    nav.contents {
+      grid-column: 1;
+      position: sticky;
+      top: 1.75rem;
+      max-height: calc(100vh - 3.5rem);
+      overflow-y: auto;
+      padding: 0 0 1rem;
+      margin: 0.35rem 0 0;
+      border-bottom: none;
+      font-size: 0.86rem;
+    }
+    nav.contents ol { columns: 1; }
+    main { grid-column: 2; }
+    footer { grid-column: 2; }
   }
 
   main { counter-reset: sec; }
@@ -265,7 +291,7 @@
   <p class="assume">This page assumes familiarity with order books, SDEX, and basic Soroban concepts. Examples use the USDC/XLM market, with prices in USDC per XLM.</p>
 </header>
 
-<nav class="contents" aria-label="Contents">
+<nav class="contents" id="contents" aria-label="Contents">
   <p class="toc-title">Contents</p>
   <ol>
     <li><a href="#why">Why does Soroban need an order book?</a></li>
@@ -813,3 +839,41 @@
 </footer>
 
 </div>
+
+<script>
+(function () {
+  var nav = document.getElementById('contents');
+  if (!nav) return;
+  var links = Array.prototype.slice.call(nav.querySelectorAll('a[href^="#"]'));
+  var linkFor = {};
+  var targets = [];
+  links.forEach(function (a) {
+    var id = a.getAttribute('href').slice(1);
+    var el = document.getElementById(id);
+    if (el) { linkFor[id] = a; targets.push(el); }
+  });
+
+  var current = null;
+  function setCurrent(el) {
+    if (el === current) return;
+    if (current) linkFor[current.id].removeAttribute('aria-current');
+    current = el;
+    if (el) linkFor[el.id].setAttribute('aria-current', 'true');
+  }
+
+  if ('IntersectionObserver' in window) {
+    var visible = [];
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        var i = visible.indexOf(e.target);
+        if (e.isIntersecting && i < 0) visible.push(e.target);
+        if (!e.isIntersecting && i >= 0) visible.splice(i, 1);
+      });
+      var last = null;
+      targets.forEach(function (t) { if (visible.indexOf(t) >= 0) last = t; });
+      if (last) setCurrent(last);
+    }, { rootMargin: '0px 0px -60% 0px', threshold: 0 });
+    targets.forEach(function (t) { io.observe(t); });
+  }
+})();
+</script>
