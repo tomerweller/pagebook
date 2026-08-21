@@ -415,7 +415,11 @@ async function walkDepthOnce(rpc, opts) {
     else wordMapAsk.set(wordMeta[i].word, bm);
   }
 
-  const candLimit = 2 * depth;
+  // Candidates are bitmap bits, and a re-quoting maker leaves trails of
+  // stale-set bits (emptied levels) right next to the best; with too few
+  // candidates the phantoms crowd out the live levels and a side renders
+  // empty. Bits are cheap to check (one batched entry fetch), so over-fetch.
+  const candLimit = Math.max(6 * depth, depth + 64);
   const candBid = ensureBest(
     bestBid.empty ? [] : ticksFromWords(wordMapBid, bestBid.tick, true, candLimit),
     bestBid,
