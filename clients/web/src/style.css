@@ -67,6 +67,10 @@ a:hover { text-decoration: underline; }
   font-size: 12px;
   background: var(--surface);
 }
+.wallet-brand { margin-bottom: 10px; font-size: 11px; letter-spacing: 0.08em; white-space: nowrap; }
+.wallet-brand-name { color: var(--ink); font-weight: 600; text-decoration: none; }
+.wallet-brand-name:hover { color: var(--accent); text-decoration: none; }
+.wallet-brand-sub { color: var(--muted); letter-spacing: 0.04em; }
 .wallet-head { display: flex; justify-content: flex-start; margin-bottom: 8px; }
 .wallet-toggle {
   font: inherit;

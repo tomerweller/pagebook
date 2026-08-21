@@ -289,14 +289,9 @@
 
 <header class="masthead">
   <h1>PageBook</h1>
-<<<<<<< Updated upstream
   <p class="sub">A good-enough order book for Soroban: a contract that stores, matches, and settles limit orders on-chain while keeping every transaction's footprint predictable.</p>
-  <p class="assume">This is a high-level explainer that assumes familiarity with order books, SDEX, and basic Soroban concepts. Examples use the XLM/USDC market, with prices in USDC per XLM.</p>
+  <p class="assume">This is a high-level explainer that assumes familiarity with order books, SDEX, and basic Soroban concepts. Examples use the XLM/USDC market, with prices in USDC per XLM. The <a href="client/">web client</a> shows the live testnet book and trades on it with an in-page disposable wallet.</p>
   <p class="assume">Little here is novel: the design leans heavily on on-chain CLOBs built elsewhere, including Serum, Phoenix, Manifest, DeepBook, Econia, and the LFJ Liquidity Book, surveyed in the <a href="https://github.com/tomerweller/pagebook/blob/main/docs/01-prior-art.md">prior-art notes</a>.</p>
-=======
-  <p class="sub">A central limit order book for Soroban with deterministic footprints: every ledger key an operation touches is computable at simulation time. This page is the short version of the <a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md">architecture doc</a>: the same data structures and processes, with pictures and worked numbers.</p>
-  <p class="sub">Implementation status: the Rust contract, shared types, client padding helpers, and tests are in the repository. M0 through M3 are implemented, M4 resource hardening is partial, and the M5 client SDK sketch is present. The <a href="client/">web client</a> shows the live testnet book and trades on it with an in-page disposable wallet.</p>
->>>>>>> Stashed changes
 </header>
 
 <nav class="contents" id="contents" aria-label="Contents">
@@ -744,7 +739,7 @@
 
 <section id="results">
   <h2>Results</h2>
-  <p>A draft implementation is live on testnet. The <a href="https://blob.tomerweller.com/pagebook/dashboard/">live dashboard</a> reads a PageBook market directly from Soroban RPC: best bid and ask, depth per side, recent trades, and the market's vault and fee balances.</p>
+  <p>A draft implementation is live on testnet. The <a href="https://blob.tomerweller.com/pagebook/client/">web client</a> reads a PageBook market directly from Soroban RPC — best bid and ask, depth per side, recent trades, the market's vault and fee balances — and trades on it with an in-page disposable testnet wallet.</p>
   <p>Each row below is one representative landed transaction on the live XLM/USDC market: the median-fee sample of its category, except the maximum take, a constructed transaction that crossed the full 32-level limit in one call, filling 1,576 lots (15,760&nbsp;XLM, about 3,000&nbsp;USDC). Declared numbers include footprint padding; metered numbers are what execution actually used. Persistent-state rent is separate.</p>
   <div class="tablewrap">
     <table class="results">
@@ -846,7 +841,7 @@
 
 <footer>
   <p>PageBook &#183; measured on protocol 27 testnet.</p>
-  <p>Companion to the full <a href="https://blob.tomerweller.com/pagebook/design.html">PageBook design notes</a> and the <a href="https://blob.tomerweller.com/pagebook/dashboard/">live market dashboard</a>.</p>
+  <p>Companion to the full <a href="https://blob.tomerweller.com/pagebook/design.html">PageBook design notes</a> and the <a href="https://blob.tomerweller.com/pagebook/client/">web client</a>.</p>
 </footer>
 
 </div>

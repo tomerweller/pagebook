@@ -233,6 +233,7 @@ export function mountWallet(opts: {
 
     el.className = `wallet${collapsed ? "" : " open"}`;
       el.innerHTML = `
+      <div class="wallet-brand"><a href="../" class="wallet-brand-name">PAGEBOOK</a> <span class="wallet-brand-sub">· Stellar testnet · experiment</span></div>
       <div class="wallet-head">
         <button type="button" class="wallet-toggle" data-act="toggle" aria-expanded="${collapsed ? "false" : "true"}">wallet</button>
       </div>
