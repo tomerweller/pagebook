@@ -7,7 +7,7 @@ This document assumes familiarity with order books, SDEX, and basic Soroban conc
 - People like order books. Why is a separate topic.
 - Stellar already has a native order book: SDEX.
 - Soroban contracts cannot call SDEX operations, and SDEX cannot call contracts.
-- SDEX offers use refundable base reserves rather than Soroban's resource metering and state rent. They can remain on-ledger indefinitely.
+- SDEX offers are backed by refundable base reserves rather than Soroban's resource metering and state rent. They can remain on-ledger indefinitely.
 - SDEX has no mechanism for sending a configurable trading fee to a market operator.
 
 
@@ -88,7 +88,7 @@ Each quantity is written to one slot. Filled slots remain as history; cancelled 
 
 `open_lots` tracks aggregate supply at the level. A taker that consumes the whole level can price and sweep it with one `Level` write, without reading each maker slot. Partial consumption walks slots from the head under a fixed scan limit.
 
-`Level` entries are never deleted. When an empty queue is reused, its generation increments and sequence numbers restart. The generation preserves settlement correctness for makers from the previous queue.
+`Level` entries are never deleted. When a queue is swept empty, or an empty queue is reused, the generation increments and sequence numbers restart. The generation preserves settlement correctness for makers from the previous queue.
 
 ### Order Record
 
