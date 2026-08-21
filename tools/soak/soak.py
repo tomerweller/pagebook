@@ -276,13 +276,37 @@ def window_json(q, consume_ticks):
     return json.dumps({"consume": consume, "append": {"first": p, "last": p + 1}})
 
 
-def apply_pad(sim_json, extra_keys):
+def apply_pad(sim_json, extra_keys, sizes=None):
+    """Union the client pad into the simulated footprint and raise the
+    declared resources to cover it.
+
+    `sizes` (optional; default None keeps the flat per-key behavior) makes the
+    write-byte coverage existence-aware. It is a dict with:
+      exists  callable(key_json) -> bool: whether the entry is on the ledger
+              now (e.g. from a getLedgerEntries sweep over the pad keys)
+      actual  callable(key_json) -> int: the entry's write-byte coverage,
+              its LedgerEntryData XDR size plus the 8-byte LedgerEntry
+              framing (measured on testnet, ADR-028); consulted for existing
+              keys only
+      growth  int, extra bytes per existing key for entries the transaction
+              may grow (default 0)
+      slack   int, flat extra write bytes for the whole transaction
+              (default 0)
+    A nonexistent pad key gets zero write-byte coverage (nonexistent keys are
+    free, ADR-025 finding 1). Instruction and fee headroom per key are
+    unchanged: the host charges footprint processing and the write-entry fee
+    whether or not the entry exists. Beware the race: a pad key created on the
+    ledger between the existence check and apply must be covered or the
+    transaction fails ResourceLimitExceeded at apply (fee charged); callers
+    accept that risk when they pass `sizes`.
+    """
     tx = sim_json["tx"]["tx"]
     sd = tx["ext"]["v1"]
     fp = sd["resources"]["footprint"]
     ro = {json.dumps(k, sort_keys=True): k for k in fp["read_only"]}
     rw = {json.dumps(k, sort_keys=True) for k in fp["read_write"]}
     added = 0
+    added_keys = []
     for k in extra_keys:
         s = json.dumps(k, sort_keys=True)
         if s in rw:
@@ -295,6 +319,7 @@ def apply_pad(sim_json, extra_keys):
             del ro[s]
         fp["read_write"].append(k)
         rw.add(s)
+        added_keys.append(k)
         added += 1
     # Padded keys cost the host instructions to process (the simulated budget
     # is exact) and grow the tx: add instruction and fee headroom per key.
@@ -306,9 +331,16 @@ def apply_pad(sim_json, extra_keys):
     res["instructions"] = int(res["instructions"] * 1.2) + 120_000 * added + 1_000_000
     # An EXISTING entry declared read-write must be covered by write_bytes even
     # if never touched (measured on testnet, ADR-025); nonexistent keys and
-    # read-only keys are free. The client cannot know which padded Level /
-    # LevelPage / TickWord keys exist, so cover each at the largest entry size.
-    res["write_bytes"] = int(res["write_bytes"]) + 600 * added
+    # read-only keys are free. Without existence knowledge (`sizes` is None)
+    # cover each padded key at the largest entry size.
+    if sizes is None:
+        res["write_bytes"] = int(res["write_bytes"]) + 600 * added
+    else:
+        extra_wb = int(sizes.get("slack", 0))
+        for k in added_keys:
+            if sizes["exists"](k):
+                extra_wb += int(sizes["actual"](k)) + int(sizes.get("growth", 0))
+        res["write_bytes"] = int(res["write_bytes"]) + extra_wb
     # classic entries (trustlines) live on disk: cover their read bytes too
     res["disk_read_bytes"] = int(res["disk_read_bytes"]) + 400 * added
     # Every read-write footprint entry pays the write-entry fee (2,500 stroops)

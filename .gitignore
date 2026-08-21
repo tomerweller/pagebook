@@ -14,3 +14,5 @@ tools/mm/mm.out
 tools/mm/trader.out
 tools/stress/*.log
 tools/stress/*.out
+tools/research/*.log
+tools/research/*.json
