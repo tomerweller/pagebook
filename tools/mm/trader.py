@@ -122,6 +122,11 @@ class Trader:
     def place(self, is_bid, limit, lots, no_rest, label):
         a = self.a
         q = self.cli.invoke_readonly(a.identity, "quote_place", ["--market", str(a.market), "--is_bid", str(is_bid).lower(), "--limit_tick", str(limit), "--qty", str(lots)])
+        if abs(limit - q["start_tick"]) > 140:
+            # a full band this wide would blow the 200 read-write footprint cap
+            # (seen once when the recorded opposite best lagged a fast rally)
+            self.record(label, "skip:band_too_wide", band=abs(limit - q["start_tick"]))
+            return "skip:band_too_wide", None, None
         nonce = self.next_nonce()
         window = soak.window_json(q, None)
         flags = json.dumps({"post_only": False, "fill_or_kill": False, "no_rest": no_rest})
