@@ -4,7 +4,7 @@
 Every number in this document comes from a landed transaction on the live
 XLM/USDC market (market 1 on
 `CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO`, testnet,
-protocol 23): 30 sampled transactions per category out of the market maker's
+protocol 27): 30 sampled transactions per category out of the market maker's
 and the trader's continuous traffic (ADR-026), pulled from the RPC by
 `tools/mm/resources.py`. For each transaction it records two sides:
 
@@ -23,7 +23,7 @@ footprint declares every key the book could touch however it moves between
 simulation and apply, so the declared side scales with the *possible* book
 and the metered side with the *actual* one.
 
-Context, the protocol 23 per-transaction ceilings (docs/03): 400 footprint
+Context, the protocol 27 per-transaction ceilings (docs/03): 400 footprint
 entries, 200 read-write entries, 400M instructions, 132,096 write bytes. The
 heaviest transaction sampled here (a 6-level sweep: 126 entries, 30.9M
 declared instructions, 70 KB declared writes) uses under a third of the
@@ -40,7 +40,7 @@ Two systematic observations before the tables:
   not the entry exists).
 - **Disk reads are almost zero.** Metered disk reads are a constant 260
   bytes in every category: the caller's classic trustline. All Soroban state
-  lives in memory under protocol 23, so reads of levels, orders, words and
+  lives in memory under protocol 27, so reads of levels, orders, words and
   balances cost no disk at all; the declared disk-read budget exists for the
   padded classic entries.
 
