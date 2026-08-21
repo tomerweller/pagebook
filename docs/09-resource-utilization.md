@@ -411,7 +411,15 @@ So the ranking holds under saturation, with one correction found by
 metering the stress shape itself: the word-dispersed batch meters 151
 written entries, 53 KB and 82M instructions (the same-tick batches in the
 tables above are far lighter), so the pad gap on this shape is 1.74x, not
-the larger multiples the light shapes show. Metered-exact footprints would
-fit ~5 such batches per ledger instead of 3. How the declared bytes
-decompose (protocol-mandated coverage of existing entries versus the pad's
-flat 600-byte estimate) is tracked as a research issue in the repo.
+the larger multiples the light shapes show. The gap is now measured, not
+open (ADR-028): the minimal accepted declaration equals the metered value
+exactly, because the host meters every existing read-write entry at its
+full size (LedgerEntryData plus 8 bytes of framing; nonexistent keys and
+key XDR are free). Of the batch's 93,100 declared bytes, 53,380 (57%) are
+that protocol floor, 24,000 (26%) are the flat 600 charged for 40
+nonexistent page keys, and 15,720 (17%) are the flat rate's excess over
+true entry sizes on existing keys. An existence-aware pad (`apply_pad`
+with `sizes`, ADR-028) declares 54,484 for the same batch and fits 5 per
+ledger instead of 3, the same bound metered-exact footprints would reach,
+at the cost of a quantified in-flight race (about 0.08 XLM per lost race,
+roughly 10 to 40 seconds of exposure).
