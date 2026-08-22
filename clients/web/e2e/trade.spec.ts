@@ -4,6 +4,12 @@ function seed(): string {
   return `e2e-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 }
 
+function m1Price(tick: number): string {
+  const frac = (tick % 100_000).toString().padStart(5, "0").replace(/0+$/, "");
+  const whole = Math.floor(tick / 100_000).toString();
+  return frac ? `${whole}.${frac}` : whole;
+}
+
 test("fund, trustline, take, rest, settle on XLM/USDC", async ({ page }) => {
   const errs: string[] = [];
   page.on("console", (msg) => {
@@ -26,7 +32,7 @@ test("fund, trustline, take, rest, settle on XLM/USDC", async ({ page }) => {
   expect(bidTick).toBeTruthy();
   await bid.click();
   await expect(ticket.locator("button[data-act=sell]")).toHaveClass(/on/);
-  await ticket.locator("[data-field=lots]").fill("2");
+  await ticket.locator("[data-field=qty]").fill("20");
   await ticket.locator("[data-flag=no_rest]").check();
   await expect(ticket.locator("[data-role=preview]")).toContainText(/takes [1-9]/, { timeout: 60_000 });
   await ticket.locator("button[data-act=place]").click();
@@ -35,8 +41,8 @@ test("fund, trustline, take, rest, settle on XLM/USDC", async ({ page }) => {
 
   const restTick = String(Number(bidTick) - 20);
   await ticket.locator("button[data-act=buy]").click();
-  await ticket.locator("[data-field=tick]").fill(restTick);
-  await ticket.locator("[data-field=lots]").fill("1");
+  await ticket.locator("[data-field=price]").fill(m1Price(Number(restTick)));
+  await ticket.locator("[data-field=qty]").fill("10");
   await ticket.locator("[data-flag=no_rest]").uncheck();
   await ticket.locator("[data-flag=post_only]").check();
   await expect(ticket.locator("[data-role=preview]")).toContainText(/remainder 1 lot rests/, { timeout: 60_000 });

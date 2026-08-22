@@ -11,6 +11,17 @@ import { countLabel, esc, priceOf, tokenDecimals, tokenLabel, txLink, type UrlOv
 import { parseAssetFromSacName, type AccountState } from "./account";
 import { NETWORK_PASSPHRASE } from "./network";
 import { plainError, typedErrorHtml } from "./ticket";
+import { logRender, setText } from "../view/stable";
+import {
+  lotsToQty,
+  oneLotQtyStep,
+  oneTickPriceStep,
+  parseDecimal,
+  priceToTick,
+  qtyToLots,
+  tickToPrice,
+  type Quant,
+} from "./units";
 
 const STORAGE_KEY = "pagebook.orders.v1";
 const MAX_ROWS = 20;
@@ -308,15 +319,35 @@ export function createOrders(opts: {
   let replaceOf: bigint | null = null;
   let replaceTick = 1;
   let replaceLots = 1n;
+  let replacePriceStr = "";
+  let replaceQtyStr = "";
   let replaceBid = true;
   let replacePostOnly = true;
   let batchOffset = 15;
   let phase = "";
   let lastHash = "";
   let rootEl: HTMLElement | null = null;
+  let lastHtml = "";
+  let lastStruct = "";
+  let lastLive = "";
+  let bound = false;
 
   function market(): MarketInfo | null {
     return book?.market ?? null;
+  }
+
+  function quant(): Quant | null {
+    const m = market();
+    if (!m) return null;
+    return {
+      lotSize: m.lot_size,
+      tickSize: m.tick_size,
+      baseDec: tokenDecimals(book?.tokens.base, overrides.baseDec),
+      quoteDec: tokenDecimals(book?.tokens.quote, overrides.quoteDec),
+      tickMin: m.tick_min,
+      tickMax: m.tick_max,
+      minLots: m.min_order_lots,
+    };
   }
 
   function find(n: bigint): OpenOrder | undefined {
@@ -343,10 +374,58 @@ export function createOrders(opts: {
     return settleAtoms(o, m.lot_size, m.tick_size);
   }
 
+  function structKey(): string {
+    return `${rows.map((r) => `${r.nonce}:${r.tick}:${r.qtyLots}:${r.archived}`).join(",")}|${replaceOf}|${confirmSettle}|${[...selected].join(",")}|${replaceTick}|${replaceLots}|${replaceBid}|${replacePostOnly}|${batchOffset}`;
+  }
+
+  function liveKey(): string {
+    const latest = book?.latestLedger ?? 0;
+    return rows
+      .map((r) => {
+        const age = r.restedLedger != null && latest ? latest - r.restedLedger : "";
+        return `${r.nonce}:${r.filledLots}:${r.refundLots}:${age}`;
+      })
+      .join("|");
+  }
+
+  function paintLive(): void {
+    if (!rootEl) return;
+    const latest = book?.latestLedger ?? 0;
+    for (const r of rows) {
+      const li = rootEl.querySelector(`[data-nonce="${r.nonce.toString()}"]`);
+      if (!li) continue;
+      setText(li.querySelector("[data-live=filled]"), formatInt(r.filledLots));
+      setText(li.querySelector("[data-live=refund]"), formatInt(r.refundLots));
+      const age = r.restedLedger != null && latest ? latest - r.restedLedger : null;
+      if (age != null) setText(li.querySelector("[data-live=age]"), countLabel(age, "ledger"));
+    }
+  }
+
   function paint(): void {
     if (!rootEl) return;
-    rootEl.innerHTML = html();
-    bind(rootEl);
+    const next = html();
+    const sk = structKey();
+    const lk = liveKey();
+    if (sk === lastStruct && lk === lastLive) {
+      logRender("orders", "skip");
+      return;
+    }
+    if (sk === lastStruct && lastHtml) {
+      lastLive = lk;
+      lastHtml = next;
+      logRender("orders", "patch");
+      paintLive();
+      return;
+    }
+    lastStruct = sk;
+    lastLive = lk;
+    lastHtml = next;
+    rootEl.innerHTML = next;
+    logRender("orders", "html");
+    if (!bound) {
+      bind(rootEl);
+      bound = true;
+    }
   }
 
   function html(): string {
@@ -366,7 +445,7 @@ export function createOrders(opts: {
           <label class="order-check"><input type="checkbox" data-act="sel" data-nonce="${r.nonce.toString()}" ${checked} /></label>
           <div class="order-main">
             <div>${esc(side)} ${r.tick}${human ? ` · ${esc(human)}` : ""} · ${esc(countLabel(r.qtyLots, "lot"))}</div>
-            <div class="wallet-muted">filled ${esc(formatInt(r.filledLots))} · refund ${esc(formatInt(r.refundLots))}${age != null ? ` · ${esc(countLabel(age, "ledger"))}` : ""}${r.archived ? " · archived" : ""}</div>
+            <div class="wallet-muted">filled <span data-live="filled">${esc(formatInt(r.filledLots))}</span> · refund <span data-live="refund">${esc(formatInt(r.refundLots))}</span>${age != null ? ` · <span data-live="age">${esc(countLabel(age, "ledger"))}</span>` : ""}${r.archived ? " · archived" : ""}</div>
             ${stale ? `<p class="wallet-muted">queue swept since this order rested — settle will return filled + refund</p>` : ""}
             <div class="wallet-actions">
               <button type="button" data-act="settle-ask" data-nonce="${r.nonce.toString()}">settle</button>
@@ -381,7 +460,7 @@ export function createOrders(opts: {
     const batch =
       nsel >= 2
         ? `<div class="order-batch">
-            <label>offset <input class="wallet-input" data-field="offset" inputmode="numeric" value="${batchOffset}" /></label>
+            <label>± ticks <input class="wallet-input" data-field="offset" inputmode="numeric" value="${batchOffset}" /></label>
             <p class="wallet-muted">${batchPreview()}</p>
             <button type="button" data-act="batch" ${nsel > MAX_REPLACE_BATCH ? "disabled" : ""}>replace selected</button>
           </div>`
@@ -418,9 +497,16 @@ export function createOrders(opts: {
       : 8;
     const fee = estimatePaddedFee(keys);
     const rent = o.archived ? `restore rent ~ ${formatAtoms(ARCHIVE_RENT_STROOPS, 7)} XLM` : "";
+    const qn = quant();
+    const bsym = tokenLabel(book?.tokens.base, overrides.baseSym, book?.base ?? null);
+    const qsym = tokenLabel(book?.tokens.quote, overrides.quoteSym, book?.quote ?? null);
+    const snap = qn
+      ? `= tick ${replaceTick} · ${replaceLots.toString()} lots (${lotsToQty(replaceLots, qn)} ${bsym})`
+      : "";
     return `<div class="wallet-confirm">
-      <label>tick <input class="wallet-input" data-field="rtick" value="${replaceTick}" /></label>
-      <label>lots <input class="wallet-input" data-field="rlots" value="${replaceLots.toString()}" /></label>
+      <label>price · ${esc(qsym)} per ${esc(bsym)} <input class="wallet-input" data-field="rprice" inputmode="decimal" step="${qn ? esc(oneTickPriceStep(qn)) : "any"}" value="${esc(replacePriceStr)}" /></label>
+      <label>quantity · ${esc(bsym)} <input class="wallet-input" data-field="rqty" inputmode="decimal" step="${qn ? esc(oneLotQtyStep(qn)) : "any"}" value="${esc(replaceQtyStr)}" /></label>
+      <p class="wallet-muted">${esc(snap)}</p>
       <label class="ticket-flag"><input type="checkbox" data-field="rbid" ${replaceBid ? "checked" : ""} /> bid</label>
       <label class="ticket-flag"><input type="checkbox" data-field="rpo" ${replacePostOnly ? "checked" : ""} /> post-only</label>
       <p class="wallet-muted">net ${esc(deltaText(net))} · padded fee ~ ${esc(formatInt(fee))} stroops (${esc(formatAtoms(fee, 7))} XLM)${rent ? ` · ${esc(rent)} (1,100,000 stroops)` : ""}</p>
@@ -443,34 +529,21 @@ export function createOrders(opts: {
   }
 
   function bind(root: HTMLElement): void {
-    root.querySelectorAll("[data-act=sel]").forEach((el) => {
-      el.addEventListener("change", () => {
-        const n = (el as HTMLInputElement).dataset.nonce ?? "";
-        if ((el as HTMLInputElement).checked) {
-          if (selected.size >= MAX_REPLACE_BATCH) return;
-          selected.add(n);
-        } else selected.delete(n);
-        paint();
-      });
-    });
-    root.querySelectorAll("[data-act=settle-ask]").forEach((el) => {
-      el.addEventListener("click", () => {
-        confirmSettle = BigInt((el as HTMLElement).dataset.nonce ?? "0");
+    root.addEventListener("click", (e) => {
+      const t = (e.target as HTMLElement).closest("[data-act]") as HTMLElement | null;
+      if (!t || !root.contains(t)) return;
+      const act = t.dataset.act;
+      if (act === "settle-ask") {
+        confirmSettle = BigInt(t.dataset.nonce ?? "0");
         replaceOf = null;
         paint();
-      });
-    });
-    root.querySelector("[data-act=settle-cancel]")?.addEventListener("click", () => {
-      confirmSettle = null;
-      paint();
-    });
-    root.querySelector("[data-act=settle-go]")?.addEventListener("click", () => {
-      const n = confirmSettle;
-      if (n != null) void runSettle(n);
-    });
-    root.querySelectorAll("[data-act=replace-ask]").forEach((el) => {
-      el.addEventListener("click", () => {
-        const n = BigInt((el as HTMLElement).dataset.nonce ?? "0");
+      } else if (act === "settle-cancel") {
+        confirmSettle = null;
+        paint();
+      } else if (act === "settle-go") {
+        if (confirmSettle != null) void runSettle(confirmSettle);
+      } else if (act === "replace-ask") {
+        const n = BigInt(t.dataset.nonce ?? "0");
         const o = find(n);
         if (!o) return;
         replaceOf = n;
@@ -478,42 +551,65 @@ export function createOrders(opts: {
         replaceTick = o.tick;
         replaceLots = o.qtyLots;
         replaceBid = o.isBid;
+        const qn = quant();
+        if (qn) {
+          replacePriceStr = tickToPrice(o.tick, qn);
+          replaceQtyStr = lotsToQty(o.qtyLots, qn);
+        }
         paint();
-      });
-    });
-    root.querySelector("[data-act=replace-cancel]")?.addEventListener("click", () => {
-      replaceOf = null;
-      paint();
-    });
-    root.querySelector("[data-field=rtick]")?.addEventListener("input", (e) => {
-      replaceTick = Number((e.target as HTMLInputElement).value) || 0;
-      paint();
-    });
-    root.querySelector("[data-field=rlots]")?.addEventListener("input", (e) => {
-      try {
-        replaceLots = BigInt((e.target as HTMLInputElement).value || "0");
-      } catch {
-        replaceLots = 0n;
+      } else if (act === "replace-cancel") {
+        replaceOf = null;
+        paint();
+      } else if (act === "replace-go") {
+        if (replaceOf != null) void runReplace(replaceOf);
+      } else if (act === "batch") {
+        void runBatch();
       }
-      paint();
     });
-    root.querySelector("[data-field=rbid]")?.addEventListener("change", (e) => {
-      replaceBid = (e.target as HTMLInputElement).checked;
-      paint();
+    root.addEventListener("change", (e) => {
+      const t = e.target as HTMLInputElement;
+      const act = t.dataset.act;
+      const field = t.dataset.field;
+      if (act === "sel") {
+        const n = t.dataset.nonce ?? "";
+        if (t.checked) {
+          if (selected.size >= MAX_REPLACE_BATCH) {
+            t.checked = false;
+            return;
+          }
+          selected.add(n);
+        } else selected.delete(n);
+        paint();
+      } else if (field === "rbid") {
+        replaceBid = t.checked;
+        const qn = quant();
+        const d = parseDecimal(replacePriceStr);
+        if (qn && d) replaceTick = priceToTick(d, qn, replaceBid).tick;
+        paint();
+      } else if (field === "rpo") {
+        replacePostOnly = t.checked;
+        paint();
+      }
     });
-    root.querySelector("[data-field=rpo]")?.addEventListener("change", (e) => {
-      replacePostOnly = (e.target as HTMLInputElement).checked;
-      paint();
-    });
-    root.querySelector("[data-act=replace-go]")?.addEventListener("click", () => {
-      if (replaceOf != null) void runReplace(replaceOf);
-    });
-    root.querySelector("[data-field=offset]")?.addEventListener("input", (e) => {
-      batchOffset = Math.max(0, Number((e.target as HTMLInputElement).value) || 0);
-      paint();
-    });
-    root.querySelector("[data-act=batch]")?.addEventListener("click", () => {
-      void runBatch();
+    root.addEventListener("input", (e) => {
+      const t = e.target as HTMLInputElement;
+      const field = t.dataset.field;
+      if (field === "rprice") {
+        replacePriceStr = t.value;
+        const qn = quant();
+        const d = parseDecimal(replacePriceStr);
+        replaceTick = qn && d ? priceToTick(d, qn, replaceBid).tick : 0;
+        paint();
+      } else if (field === "rqty") {
+        replaceQtyStr = t.value;
+        const qn = quant();
+        const d = parseDecimal(replaceQtyStr);
+        replaceLots = qn && d ? qtyToLots(d, qn) : 0n;
+        paint();
+      } else if (field === "offset") {
+        batchOffset = Math.max(0, Number(t.value) || 0);
+        paint();
+      }
     });
   }
 

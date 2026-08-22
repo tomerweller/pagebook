@@ -7,8 +7,20 @@ import { estimatePaddedFee } from "../engine/txdata";
 import { errorMessageByName, errorName, errorTitleByName, parseContractError } from "../engine/errors";
 import { allocNonce } from "../engine/pad";
 import { countLabel, esc, txLink } from "../view/format";
-import { priceOf, tokenDecimals, tokenLabel, type UrlOverrides } from "../view/format";
+import { tokenDecimals, tokenLabel, type UrlOverrides } from "../view/format";
 import { parseAssetFromSacName, type AccountState, type TrustlineState } from "./account";
+import { setAttr, setHtml, setText } from "../view/stable";
+import {
+  lotsToQty,
+  minLotLabel,
+  oneLotQtyStep,
+  oneTickPriceStep,
+  parseDecimal,
+  priceToTick,
+  qtyToLots,
+  tickToPrice,
+  type Quant,
+} from "./units";
 
 export const FEE_BPS_DENOM = 10_000n;
 export const XLM_FEE_HEADROOM = 2_000_000n;
@@ -65,14 +77,20 @@ export type TicketBalances = {
   quoteIsNative: boolean;
   quoteSymbol: string;
   baseSymbol: string;
+  baseDec: number;
+  quoteDec: number;
 };
 
-export function validateTicket(fields: TicketFields, market: MarketInfo, bal: TicketBalances): { ok: true } | { ok: false; reason: string } {
+export type TicketCheck = { ok: true } | { ok: false; reason: string; title?: string };
+
+export function validateTicket(fields: TicketFields, market: MarketInfo, bal: TicketBalances): TicketCheck {
   if (!bal.funded) return { ok: false, reason: "account not funded" };
   if (!tickInBand(fields.tick, market.tick_min, market.tick_max)) {
     return { ok: false, reason: `tick outside the band [${market.tick_min}, ${market.tick_max})` };
   }
-  if (fields.lots <= 0n) return { ok: false, reason: "lots must be positive" };
+  if (fields.lots < market.min_order_lots) {
+    return { ok: false, reason: minLotLabel({ lotSize: market.lot_size, tickSize: market.tick_size, baseDec: bal.baseDec, quoteDec: bal.quoteDec, tickMin: market.tick_min, tickMax: market.tick_max, minLots: market.min_order_lots }, bal.baseSymbol) };
+  }
   if (!lotsInBounds(fields.lots, market.min_order_lots, market.max_order_lots)) {
     return { ok: false, reason: `lots outside ${market.min_order_lots} / ${market.max_order_lots}` };
   }
@@ -81,13 +99,21 @@ export function validateTicket(fields: TicketFields, market: MarketInfo, bal: Ti
     if (bal.quoteAtoms == null) return { ok: false, reason: `no ${bal.quoteSymbol} trustline` };
     const need = escrowQuoteAtoms(fields.lots, fields.tick, market.tick_size);
     if (bal.quoteAtoms < need) {
-      return { ok: false, reason: `need ${need.toString()} ${bal.quoteSymbol} atoms for this bid` };
+      return {
+        ok: false,
+        reason: `need ${formatAtoms(need, bal.quoteDec)} ${bal.quoteSymbol} for this bid`,
+        title: `${need.toString()} atoms`,
+      };
     }
   } else {
     const need = escrowBaseAtoms(fields.lots, market.lot_size);
     const avail = bal.baseIsNative ? bal.xlmSpendable - XLM_FEE_HEADROOM : bal.baseAtoms;
     if (avail < need) {
-      return { ok: false, reason: `need ${need.toString()} ${bal.baseSymbol} atoms for this ask` };
+      return {
+        ok: false,
+        reason: `need ${formatAtoms(need, bal.baseDec)} ${bal.baseSymbol} for this ask`,
+        title: `${need.toString()} atoms`,
+      };
     }
   }
   return { ok: true };
@@ -141,6 +167,9 @@ export function createTicket(opts: {
   let isBid = true;
   let tick = 1;
   let lots = 1n;
+  let priceStr = "";
+  let qtyStr = "";
+  let priceSnapped = false;
   let flags: PlaceFlags = { post_only: false, fill_or_kill: false, no_rest: false };
   let preview: PreviewState = { kind: "idle" };
   let phase: SubmitPhase = "idle";
@@ -188,7 +217,60 @@ export function createTicket(opts: {
       quoteIsNative: !!quoteIsNative,
       quoteSymbol: tokenLabel(book?.tokens.quote, overrides.quoteSym, book?.quote ?? null),
       baseSymbol: tokenLabel(book?.tokens.base, overrides.baseSym, book?.base ?? null),
+      baseDec: tokenDecimals(book?.tokens.base, overrides.baseDec),
+      quoteDec: tokenDecimals(book?.tokens.quote, overrides.quoteDec),
     };
+  }
+
+  function quant(): Quant | null {
+    const m = market();
+    if (!m) return null;
+    const b = balances();
+    return {
+      lotSize: m.lot_size,
+      tickSize: m.tick_size,
+      baseDec: b.baseDec,
+      quoteDec: b.quoteDec,
+      tickMin: m.tick_min,
+      tickMax: m.tick_max,
+      minLots: m.min_order_lots,
+    };
+  }
+
+  function applyPrice(raw: string): void {
+    priceStr = raw;
+    const q = quant();
+    const d = parseDecimal(raw);
+    if (!q || !d) {
+      tick = 0;
+      priceSnapped = false;
+      return;
+    }
+    const out = priceToTick(d, q, isBid);
+    tick = out.tick;
+    priceSnapped = out.snapped;
+  }
+
+  function applyQty(raw: string): void {
+    qtyStr = raw;
+    const q = quant();
+    const d = parseDecimal(raw);
+    lots = q && d ? qtyToLots(d, q) : 0n;
+  }
+
+  function snapLine(qn: Quant): string {
+    const b = balances();
+    const parts = [`tick ${tick}`];
+    if (priceSnapped) parts.push(`${tickToPrice(tick, qn)} ${b.quoteSymbol}`);
+    parts.push(`${lots.toString()} lots (${lotsToQty(lots, qn)} ${b.baseSymbol})`);
+    return `= ${parts.join(" · ")}`;
+  }
+
+  function syncStrFromSnap(): void {
+    const q = quant();
+    if (!q) return;
+    if (!priceStr) priceStr = tickToPrice(tick, q);
+    if (!qtyStr) qtyStr = lotsToQty(lots, q);
   }
 
   function validation() {
@@ -212,12 +294,24 @@ export function createTicket(opts: {
     return out;
   }
 
+  function cancelPreviewTimer(): void {
+    if (previewTimer != null) {
+      clearTimeout(previewTimer);
+      previewTimer = null;
+    }
+  }
+
   function schedulePreview(): void {
-    if (previewTimer != null) clearTimeout(previewTimer);
+    cancelPreviewTimer();
     previewTimer = setTimeout(() => {
       previewTimer = null;
       void runPreview();
     }, 400);
+  }
+
+  function kickPreview(): void {
+    cancelPreviewTimer();
+    void runPreview();
   }
 
   async function runPreview(): Promise<void> {
@@ -393,21 +487,23 @@ export function createTicket(opts: {
     const v = validation();
     const human = rootEl.querySelector("[data-role=human]");
     const m = market();
-    if (human && m && book) {
-      human.textContent = `${priceOf(tick, book, overrides)} · ${formatAtoms(lots * m.lot_size, tokenDecimals(book.tokens.base, overrides.baseDec))} ${balances().baseSymbol}`;
-    }
+    const qn = quant();
+    if (human && m && qn) setText(human, snapLine(qn));
     const why = rootEl.querySelector("[data-role=why]");
-    if (why) why.textContent = v.ok ? "" : v.reason;
+    if (why) {
+      setText(why, v.ok ? "" : v.reason);
+      setAttr(why, "title", v.ok ? "" : (v.title ?? ""));
+    }
     const btn = rootEl.querySelector<HTMLButtonElement>("[data-act=place]");
     if (btn) {
-      btn.disabled = !v.ok || phase === "simulating" || phase === "signing" || phase === "sending" || (preview.kind === "typed" && preview.name === "Crossed");
-      btn.textContent = `${isBid ? "BUY" : "SELL"} ${balances().baseSymbol}`;
-      btn.className = `ticket-cta ${isBid ? "bid" : "ask"}`;
+      const off = !v.ok || phase === "simulating" || phase === "signing" || phase === "sending" || (preview.kind === "typed" && preview.name === "Crossed");
+      if (btn.disabled !== off) btn.disabled = off;
+      setText(btn, `${isBid ? "BUY" : "SELL"} ${balances().baseSymbol}`);
+      const cls = `ticket-cta ${isBid ? "bid" : "ask"}`;
+      if (btn.className !== cls) btn.className = cls;
     }
-    const prev = rootEl.querySelector("[data-role=preview]");
-    if (prev) prev.innerHTML = previewHtml();
-    const strip = rootEl.querySelector("[data-role=strip]");
-    if (strip) strip.innerHTML = stripHtml();
+    setHtml(rootEl.querySelector("[data-role=preview]"), previewHtml());
+    setHtml(rootEl.querySelector("[data-role=strip]"), stripHtml());
   }
 
   function previewHtml(): string {
@@ -451,13 +547,14 @@ export function createTicket(opts: {
 
   function fullHtml(): string {
     const v = validation();
-    const m = market();
-    const human =
-      m && book
-        ? `${priceOf(tick, book, overrides)} · ${formatAtoms(lots * m.lot_size, tokenDecimals(book.tokens.base, overrides.baseDec))} ${balances().baseSymbol}`
-        : "";
-    const sym = balances().baseSymbol;
+    const qn = quant();
+    const b = balances();
+    const human = qn ? snapLine(qn) : "";
+    const sym = b.baseSymbol;
+    const qsym = b.quoteSymbol;
     const busy = submitting || phase === "simulating" || phase === "signing" || phase === "sending";
+    const pStep = qn ? oneTickPriceStep(qn) : "any";
+    const qStep = qn ? oneLotQtyStep(qn) : "any";
     return `<section class="ticket">
       <h3>place order</h3>
       <div class="ticket-side">
@@ -465,8 +562,8 @@ export function createTicket(opts: {
         <button type="button" data-act="sell" class="${!isBid ? "on ask" : ""}">SELL ${esc(sym)}</button>
       </div>
       <div class="ticket-fields">
-        <label>tick <input class="wallet-input" data-field="tick" inputmode="numeric" value="${esc(tick)}" /></label>
-        <label>lots <input class="wallet-input" data-field="lots" inputmode="numeric" value="${esc(lots.toString())}" /></label>
+        <label>price · ${esc(qsym)} per ${esc(sym)} <input class="wallet-input" data-field="price" inputmode="decimal" step="${esc(pStep)}" value="${esc(priceStr)}" /></label>
+        <label>quantity · ${esc(sym)} <input class="wallet-input" data-field="qty" inputmode="decimal" step="${esc(qStep)}" value="${esc(qtyStr)}" /></label>
       </div>
       <p class="wallet-muted" data-role="human">${esc(human)}</p>
       <div class="ticket-flags">
@@ -484,25 +581,23 @@ export function createTicket(opts: {
   function bind(root: HTMLElement): void {
     root.querySelector("[data-act=buy]")?.addEventListener("click", () => {
       isBid = true;
-      schedulePreview();
+      applyPrice(priceStr);
+      kickPreview();
       draw(root);
     });
     root.querySelector("[data-act=sell]")?.addEventListener("click", () => {
       isBid = false;
-      schedulePreview();
+      applyPrice(priceStr);
+      kickPreview();
       draw(root);
     });
-    root.querySelector("[data-field=tick]")?.addEventListener("input", (e) => {
-      tick = Number((e.target as HTMLInputElement).value) || 0;
+    root.querySelector("[data-field=price]")?.addEventListener("input", (e) => {
+      applyPrice((e.target as HTMLInputElement).value);
       schedulePreview();
       paintChrome();
     });
-    root.querySelector("[data-field=lots]")?.addEventListener("input", (e) => {
-      try {
-        lots = BigInt((e.target as HTMLInputElement).value || "0");
-      } catch {
-        lots = 0n;
-      }
+    root.querySelector("[data-field=qty]")?.addEventListener("input", (e) => {
+      applyQty((e.target as HTMLInputElement).value);
       schedulePreview();
       paintChrome();
     });
@@ -511,7 +606,7 @@ export function createTicket(opts: {
         const box = el as HTMLInputElement;
         const key = box.dataset.flag as keyof PlaceFlags;
         flags = { ...flags, [key]: box.checked };
-        schedulePreview();
+        kickPreview();
         paintChrome();
       });
     });
@@ -526,16 +621,17 @@ export function createTicket(opts: {
   function draw(root: HTMLElement): void {
     rootEl = root;
     const active = document.activeElement;
-    const keep = active instanceof HTMLElement && root.contains(active) && !!root.querySelector("[data-field=tick]");
+    const keep = active instanceof HTMLElement && root.contains(active) && !!root.querySelector("[data-field=price]");
     if (keep) {
       paintChrome();
       return;
     }
+    syncStrFromSnap();
     root.innerHTML = fullHtml();
     bind(root);
     if (focusQty) {
       focusQty = false;
-      root.querySelector<HTMLInputElement>("[data-field=lots]")?.focus();
+      root.querySelector<HTMLInputElement>("[data-field=qty]")?.focus();
     }
   }
 
@@ -544,9 +640,12 @@ export function createTicket(opts: {
     prefill(side, t) {
       isBid = side === "ask";
       tick = t;
+      priceSnapped = false;
+      const q = quant();
+      if (q) priceStr = tickToPrice(t, q);
       focusQty = true;
       phase = "idle";
-      schedulePreview();
+      kickPreview();
       if (rootEl) draw(rootEl);
     },
     setLive(nextBook, nextAccount, nextTrust, nextOverrides) {
@@ -555,7 +654,12 @@ export function createTicket(opts: {
       trustlines = nextTrust;
       overrides = nextOverrides;
       if (rootEl) {
-        if (tick === 1 && nextBook && !nextBook.bestAsk.empty && isBid) tick = nextBook.bestAsk.tick;
+        if (tick === 1 && nextBook && !nextBook.bestAsk.empty && isBid) {
+          tick = nextBook.bestAsk.tick;
+          const q = quant();
+          if (q) priceStr = tickToPrice(tick, q);
+        }
+        syncStrFromSnap();
         paintChrome();
         schedulePreview();
       }

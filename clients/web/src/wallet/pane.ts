@@ -19,6 +19,7 @@ import { createOrders, loadOpenOrders, ownTicksOf, rememberNonce, sessionRestedN
 import { createTicket } from "./ticket";
 import type { UrlOverrides } from "../view/format";
 import type { OwnTicks } from "../view/market";
+import { MarkupCache, setText } from "../view/stable";
 
 export type WalletHandle = {
   onBook(book: BookSnapshot): void;
@@ -143,6 +144,9 @@ export function mountWallet(opts: {
   let sessionEvents: BookEvent[] = [];
   let openOrders: OpenOrder[] = [];
   let lastOrderLedger = -1;
+  const cache = new MarkupCache();
+  let shellReady = false;
+  let bound = false;
   const ordersPanel = createOrders({
     rpc: opts.rpc,
     contract: opts.contract,
@@ -205,11 +209,7 @@ export function mountWallet(opts: {
       sessionEvents,
     );
     opts.onOwnTicks(ownTicksOf(openOrders));
-    const box = el.querySelector<HTMLElement>("#orders-root");
-    if (box) {
-      ordersPanel.setLive(book, account, openOrders, opts.overrides);
-      ordersPanel.draw(box);
-    }
+    paintOrders();
   }
 
   async function refreshBalances(): Promise<void> {
@@ -239,34 +239,109 @@ export function mountWallet(opts: {
     void maybeProvision();
   }
 
+  function ensureShell(): void {
+    if (shellReady) return;
+    el.innerHTML = `
+      <div data-sec="brand"></div>
+      <div data-sec="head"></div>
+      <div class="wallet-body">
+        <div data-sec="identity"></div>
+        <div data-sec="balances"></div>
+        <div data-sec="ticket" id="ticket-root"></div>
+        <div data-sec="orders" id="orders-root"></div>
+        <div data-sec="keys"></div>
+        <div data-sec="status"></div>
+        <div data-sec="log"></div>
+      </div>`;
+    shellReady = true;
+    if (!bound) {
+      bind();
+      bound = true;
+    }
+  }
+
+  function sec(name: string): HTMLElement | null {
+    return el.querySelector(`[data-sec="${name}"]`);
+  }
+
+  function write(name: string, html: string): "skip" | "html" | "patch" {
+    return cache.write(name, sec(name), html);
+  }
+
+  function paintTicket(): void {
+    const id = active();
+    const box = el.querySelector<HTMLElement>("#ticket-root");
+    if (!box || !id || !enabled) return;
+    ticket.setLive(book, account, trustlines, opts.overrides);
+    if (!box.querySelector(".ticket")) ticket.draw(box);
+  }
+
+  function paintOrders(): void {
+    const id = active();
+    const box = el.querySelector<HTMLElement>("#orders-root");
+    if (!box || !id || !enabled) return;
+    ordersPanel.setLive(book, account, openOrders, opts.overrides);
+    ordersPanel.draw(box);
+  }
+
   function render(): void {
+    ensureShell();
+    const cls = `wallet${collapsed ? "" : " open"}`;
+    if (el.className !== cls) el.className = cls;
     const id = active();
     const ids = store.list();
-    const body = !booted
-      ? `<p class="wallet-copy">— checking network</p>`
-      : !enabled
-        ? `<p class="wallet-copy">${esc(status || "wallet disabled: not testnet")}</p>`
-        : !id
-          ? emptyHtml()
-          : activeHtml(id, ids);
-
-    el.className = `wallet${collapsed ? "" : " open"}`;
-      el.innerHTML = `
-      <div class="wallet-brand"><a href="../" class="wallet-brand-name">PAGEBOOK</a> <span class="wallet-brand-sub">· Stellar testnet<span class="wallet-brand-exp"> · experiment</span></span></div>
-      <div class="wallet-head">
-        <button type="button" class="wallet-toggle" data-act="toggle" aria-expanded="${collapsed ? "false" : "true"}">wallet</button>
-      </div>
-      <div class="wallet-body">${body}</div>`;
-    bind();
-    const ticketRoot = el.querySelector<HTMLElement>("#ticket-root");
-    if (ticketRoot && id && enabled) {
-      ticket.setLive(book, account, trustlines, opts.overrides);
-      ticket.draw(ticketRoot);
+    write("brand", `<div class="wallet-brand"><a href="../" class="wallet-brand-name">PAGEBOOK</a> <span class="wallet-brand-sub">· Stellar Testnet</span></div>`);
+    write(
+      "head",
+      `<div class="wallet-head"><button type="button" class="wallet-toggle" data-act="toggle" aria-expanded="${collapsed ? "false" : "true"}">wallet</button></div>`,
+    );
+    if (!booted) {
+      write("identity", `<p class="wallet-copy">— checking network</p>`);
+      write("balances", "");
+      write("keys", "");
+      write("status", "");
+      write("log", "");
+      return;
     }
-    const ordersRoot = el.querySelector<HTMLElement>("#orders-root");
-    if (ordersRoot && id && enabled) {
-      ordersPanel.setLive(book, account, openOrders, opts.overrides);
-      ordersPanel.draw(ordersRoot);
+    if (!enabled) {
+      write("identity", `<p class="wallet-copy">${esc(status || "wallet disabled: not testnet")}</p>`);
+      write("balances", "");
+      write("keys", "");
+      write("status", "");
+      write("log", "");
+      return;
+    }
+    if (!id) {
+      write("identity", emptyHtml());
+      write("balances", "");
+      write("keys", "");
+      write("status", status ? `<p class="wallet-status">${esc(status)}</p>` : "");
+      write("log", "");
+      return;
+    }
+    write("identity", identityHtml(id, ids));
+    const balAction = write("balances", balancesHtml());
+    if (balAction === "patch") patchBalances();
+    write("keys", keysHtml(id));
+    write("status", status ? `<p class="wallet-status">${esc(status)}</p>` : "");
+    write("log", logHtml());
+    paintTicket();
+    paintOrders();
+  }
+
+  function patchBalances(): void {
+    const node = sec("balances");
+    if (!node || !account?.exists) return;
+    setText(node.querySelector("[data-live=xlm]"), `${formatAtoms(account.spendable, 7)} XLM spendable`);
+    for (const row of marketRows(book)) {
+      if (!row.classic) continue;
+      if (row.classic.type === "native") {
+        setText(node.querySelector("[data-live=XLM]"), formatAtoms(account.balance, 7));
+        continue;
+      }
+      const credit = row.classic;
+      const tl = trustlines.find((t) => t.asset.code === credit.code && t.asset.issuer === credit.issuer);
+      if (tl?.exists) setText(node.querySelector(`[data-live="${credit.code}"]`), formatAtoms(tl.balance, row.decimals));
     }
   }
 
@@ -289,13 +364,24 @@ export function mountWallet(opts: {
       ${status ? `<p class="wallet-status">${esc(status)}</p>` : ""}`;
   }
 
-  function activeHtml(id: Identity, ids: Identity[]): string {
+  function identityHtml(id: Identity, ids: Identity[]): string {
     const optsHtml = ids
       .map((i) => `<option value="${esc(i.name)}"${i.name === id.name ? " selected" : ""}>${esc(i.name)}</option>`)
       .join("");
+    return `
+      <div class="wallet-id">
+        <select data-act="switch" aria-label="identity">${optsHtml}</select>
+      </div>
+      <div class="wallet-pub">
+        ${accountLink(id.publicKey)}
+        <button type="button" data-act="copy-pub">copy</button>
+      </div>`;
+  }
+
+  function balancesHtml(): string {
     const xlm = account
       ? account.exists
-        ? `<span title="${esc(formatAtoms(account.balance, 7))} XLM total · ${formatInt(account.balance)} stroops">${esc(formatAtoms(account.spendable, 7))} XLM spendable</span>`
+        ? `<span data-live="xlm" title="${esc(formatAtoms(account.balance, 7))} XLM total · ${formatInt(account.balance)} stroops">${esc(formatAtoms(account.spendable, 7))} XLM spendable</span>`
         : `<span>unfunded</span>`
       : `<span>…</span>`;
     const rows = marketRows(book);
@@ -306,7 +392,7 @@ export function mountWallet(opts: {
         }
         if (row.classic.type === "native") {
           const bal = account?.exists ? formatAtoms(account.balance, 7) : "—";
-          return `<li><span>XLM</span><span>${esc(bal)}</span></li>`;
+          return `<li><span>XLM</span><span data-live="XLM">${esc(bal)}</span></li>`;
         }
         const credit = row.classic;
         const tl = trustlines.find((t) => t.asset.code === credit.code && t.asset.issuer === credit.issuer);
@@ -316,10 +402,9 @@ export function mountWallet(opts: {
             <span>no trustline <button type="button" data-act="trust-ask" data-code="${esc(credit.code)}" data-issuer="${esc(credit.issuer)}">add trustline</button></span>
           </li>`;
         }
-        return `<li><span>${esc(credit.code)}</span><span>${esc(formatAtoms(tl.balance, row.decimals))}</span></li>`;
+        return `<li><span>${esc(credit.code)}</span><span data-live="${esc(credit.code)}">${esc(formatAtoms(tl.balance, row.decimals))}</span></li>`;
       })
       .join("");
-
     const trustAsk = confirmTrust
       ? `<div class="wallet-confirm">
           <p>${esc(confirmTrust.code)} issued by ${esc(shortAddr(confirmTrust.issuer))}. Adding a trustline locks 0.5 XLM (5,000,000 stroops) as reserve.</p>
@@ -329,13 +414,15 @@ export function mountWallet(opts: {
           </div>
         </div>`
       : "";
-
     const friendbot = provisionStatus
       ? `<p class="wallet-muted" data-role="provision">${esc(provisionStatus)}</p>`
       : account && !account.exists
         ? `<button type="button" data-act="friendbot" ${busy ? "disabled" : ""}>friendbot</button>`
         : "";
+    return `<div class="wallet-xlm">${xlm}</div>${friendbot}${rows.length ? `<ul class="wallet-assets">${assetHtml}</ul>` : ""}${trustAsk}`;
+  }
 
+  function keysHtml(id: Identity): string {
     const secretBlock = reveal || justCreated
       ? `<div class="wallet-secret">
           <code class="wallet-input">${esc(id.secret)}</code>
@@ -343,7 +430,6 @@ export function mountWallet(opts: {
           <button type="button" data-act="hide-secret">hide</button>
         </div>`
       : `<button type="button" data-act="reveal">reveal secret</button>`;
-
     const deleteBlock = confirmDelete
       ? `<div class="wallet-confirm">
           <p>Delete this key from the browser?</p>
@@ -353,17 +439,7 @@ export function mountWallet(opts: {
           </div>
         </div>`
       : `<button type="button" data-act="delete-ask">delete</button>`;
-
-    const saveSeed = store.isEphemeralActive()
-      ? `<button type="button" data-act="save-seed">save</button>`
-      : "";
-
-    const logHtml = log.length
-      ? `<ol class="wallet-log">${log
-          .map((item) => `<li>${esc(item.text)}${item.hash ? ` ${txLink(item.hash)}` : ""}</li>`)
-          .join("")}</ol>`
-      : "";
-
+    const saveSeed = store.isEphemeralActive() ? `<button type="button" data-act="save-seed">save</button>` : "";
     const keysShown = keysOpen || reveal || justCreated || confirmDelete || importOpen;
     const importForm = importOpen
       ? `<form class="wallet-import" data-act="import-submit">
@@ -371,22 +447,7 @@ export function mountWallet(opts: {
           <button type="submit">import</button>
         </form>`
       : "";
-
-    return `
-      <div class="wallet-id">
-        <select data-act="switch" aria-label="identity">${optsHtml}</select>
-      </div>
-      <div class="wallet-pub">
-        ${accountLink(id.publicKey)}
-        <button type="button" data-act="copy-pub">copy</button>
-      </div>
-      <div class="wallet-xlm">${xlm}</div>
-      ${friendbot}
-      ${rows.length ? `<ul class="wallet-assets">${assetHtml}</ul>` : ""}
-      ${trustAsk}
-      <div id="ticket-root"></div>
-      <div id="orders-root"></div>
-      <details class="wallet-keys"${keysShown ? " open" : ""}>
+    return `<details class="wallet-keys"${keysShown ? " open" : ""}>
         <summary>keys</summary>
         <div class="wallet-actions">
           ${saveSeed}
@@ -395,46 +456,119 @@ export function mountWallet(opts: {
           ${deleteBlock}
         </div>
         ${importForm}
-      </details>
-      ${status ? `<p class="wallet-status">${esc(status)}</p>` : ""}
-      ${logHtml}`;
+      </details>`;
+  }
+
+  function logHtml(): string {
+    if (!log.length) return "";
+    return `<ol class="wallet-log">${log
+      .map((item) => `<li>${esc(item.text)}${item.hash ? ` ${txLink(item.hash)}` : ""}</li>`)
+      .join("")}</ol>`;
   }
 
   function bind(): void {
-    el.querySelector("[data-act=toggle]")?.addEventListener("click", () => {
-      collapsed = !collapsed;
-      render();
-    });
-    el.querySelector(".wallet-keys")?.addEventListener("toggle", (e) => {
-      keysOpen = (e.target as HTMLDetailsElement).open;
-    });
-    el.querySelector("[data-act=generate]")?.addEventListener("click", () => {
-      try {
-        store.create();
-        justCreated = true;
-        reveal = true;
-        autoSource = "generate";
+    el.addEventListener("click", (e) => {
+      const t = (e.target as HTMLElement).closest("[data-act]") as HTMLElement | null;
+      if (!t || !el.contains(t)) return;
+      const act = t.dataset.act;
+      if (act === "toggle") {
+        collapsed = !collapsed;
+        render();
+      } else if (act === "generate") {
+        try {
+          store.create();
+          justCreated = true;
+          reveal = true;
+          autoSource = "generate";
+          setStatus("");
+          void refreshBalances();
+        } catch (err) {
+          setStatus(err instanceof Error ? err.message : String(err));
+          render();
+        }
+      } else if (act === "import-open") {
+        importOpen = !importOpen;
+        render();
+      } else if (act === "use-seed") {
+        if (!opts.seed) return;
+        store.activateSeed(opts.seed);
+        justCreated = false;
+        autoSource = "seed";
         setStatus("");
         void refreshBalances();
-      } catch (e) {
-        setStatus(e instanceof Error ? e.message : String(e));
+      } else if (act === "save-seed") {
+        try {
+          store.saveEphemeral();
+          setStatus("");
+          render();
+        } catch (err) {
+          setStatus(err instanceof Error ? err.message : String(err));
+          render();
+        }
+      } else if (act === "copy-pub") {
+        const id = active();
+        if (id) copyText(id.publicKey);
+      } else if (act === "copy-secret") {
+        const id = active();
+        if (id) copyText(id.secret);
+      } else if (act === "reveal") {
+        reveal = true;
+        render();
+      } else if (act === "hide-secret") {
+        reveal = false;
+        justCreated = false;
+        render();
+      } else if (act === "delete-ask") {
+        confirmDelete = true;
+        render();
+      } else if (act === "delete-cancel") {
+        confirmDelete = false;
+        render();
+      } else if (act === "delete-go") {
+        const id = active();
+        if (id) store.remove(id.name);
+        confirmDelete = false;
+        reveal = false;
+        justCreated = false;
+        account = null;
+        trustlines = [];
+        setStatus("");
+        void refreshBalances();
+      } else if (act === "friendbot") {
+        void runFriendbot();
+      } else if (act === "trust-ask") {
+        const code = t.dataset.code;
+        const issuer = t.dataset.issuer;
+        if (!code || !issuer) return;
+        confirmTrust = { type: "credit", code, issuer };
+        render();
+      } else if (act === "trust-cancel") {
+        confirmTrust = null;
+        render();
+      } else if (act === "trust-go") {
+        void runTrustline();
+      }
+    });
+    el.addEventListener("change", (e) => {
+      const t = e.target as HTMLSelectElement;
+      if (t.dataset.act !== "switch") return;
+      try {
+        store.select(t.value);
+        reveal = false;
+        justCreated = false;
+        confirmDelete = false;
+        confirmTrust = null;
+        autoSource = null;
+        setStatus("");
+        void refreshBalances();
+      } catch (err) {
+        setStatus(err instanceof Error ? err.message : String(err));
         render();
       }
     });
-    el.querySelector("[data-act=import-open]")?.addEventListener("click", () => {
-      importOpen = !importOpen;
-      render();
-    });
-    el.querySelector("[data-act=use-seed]")?.addEventListener("click", () => {
-      if (!opts.seed) return;
-      store.activateSeed(opts.seed);
-      justCreated = false;
-      autoSource = "seed";
-      setStatus("");
-      void refreshBalances();
-    });
-    const form = el.querySelector<HTMLFormElement>("[data-act=import-submit]");
-    form?.addEventListener("submit", (e) => {
+    el.addEventListener("submit", (e) => {
+      const form = (e.target as HTMLElement).closest("form[data-act=import-submit]") as HTMLFormElement | null;
+      if (!form) return;
       e.preventDefault();
       const raw = String(new FormData(form).get("secret") ?? "");
       try {
@@ -450,87 +584,10 @@ export function mountWallet(opts: {
         render();
       }
     });
-    el.querySelector("[data-act=switch]")?.addEventListener("change", (e) => {
-      const name = (e.target as HTMLSelectElement).value;
-      try {
-        store.select(name);
-        reveal = false;
-        justCreated = false;
-        confirmDelete = false;
-        confirmTrust = null;
-        autoSource = null;
-        setStatus("");
-        void refreshBalances();
-      } catch (err) {
-        setStatus(err instanceof Error ? err.message : String(err));
-        render();
-      }
-    });
-    el.querySelector("[data-act=save-seed]")?.addEventListener("click", () => {
-      try {
-        store.saveEphemeral();
-        setStatus("");
-        render();
-      } catch (err) {
-        setStatus(err instanceof Error ? err.message : String(err));
-        render();
-      }
-    });
-    el.querySelector("[data-act=copy-pub]")?.addEventListener("click", () => {
-      const id = active();
-      if (id) copyText(id.publicKey);
-    });
-    el.querySelector("[data-act=copy-secret]")?.addEventListener("click", () => {
-      const id = active();
-      if (id) copyText(id.secret);
-    });
-    el.querySelector("[data-act=reveal]")?.addEventListener("click", () => {
-      reveal = true;
-      render();
-    });
-    el.querySelector("[data-act=hide-secret]")?.addEventListener("click", () => {
-      reveal = false;
-      justCreated = false;
-      render();
-    });
-    el.querySelector("[data-act=delete-ask]")?.addEventListener("click", () => {
-      confirmDelete = true;
-      render();
-    });
-    el.querySelector("[data-act=delete-cancel]")?.addEventListener("click", () => {
-      confirmDelete = false;
-      render();
-    });
-    el.querySelector("[data-act=delete-go]")?.addEventListener("click", () => {
-      const id = active();
-      if (id) store.remove(id.name);
-      confirmDelete = false;
-      reveal = false;
-      justCreated = false;
-      account = null;
-      trustlines = [];
-      setStatus("");
-      void refreshBalances();
-    });
-    el.querySelector("[data-act=friendbot]")?.addEventListener("click", () => {
-      void runFriendbot();
-    });
-    el.querySelectorAll("[data-act=trust-ask]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const code = (btn as HTMLElement).dataset.code;
-        const issuer = (btn as HTMLElement).dataset.issuer;
-        if (!code || !issuer) return;
-        confirmTrust = { type: "credit", code, issuer };
-        render();
-      });
-    });
-    el.querySelector("[data-act=trust-cancel]")?.addEventListener("click", () => {
-      confirmTrust = null;
-      render();
-    });
-    el.querySelector("[data-act=trust-go]")?.addEventListener("click", () => {
-      void runTrustline();
-    });
+    el.addEventListener("toggle", (e) => {
+      const d = e.target as HTMLDetailsElement;
+      if (d.classList?.contains("wallet-keys")) keysOpen = d.open;
+    }, true);
   }
 
   async function waitAccountExists(pub: string): Promise<boolean> {
@@ -672,11 +729,7 @@ export function mountWallet(opts: {
       if (ledgerChanged) lastOrderLedger = next.latestLedger;
       if (enabled && active()) {
         if (ledgerChanged) void refreshBalances();
-        else {
-          ticket.setLive(book, account, trustlines, opts.overrides);
-          const ticketRoot = el.querySelector<HTMLElement>("#ticket-root");
-          if (ticketRoot) ticket.draw(ticketRoot);
-        }
+        else paintTicket();
       } else render();
     },
     onEvents(events) {

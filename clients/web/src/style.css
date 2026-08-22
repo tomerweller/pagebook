@@ -401,7 +401,6 @@ section h2 {
   .wallet:not(.open) .wallet-head { margin: 0; }
   .wallet:not(.open) .wallet-body { display: none; }
   .wallet.open .wallet-body { max-height: min(70vh, 560px); overflow-y: auto; }
-  .wallet-brand-exp { display: none; }
   .wallet-toggle::after { content: " ▴"; }
   .wallet.open .wallet-toggle::after { content: " ▾"; }
   .wallet button, .wallet-toggle, .wallet-id select, header.top .meta select { min-height: 44px; }

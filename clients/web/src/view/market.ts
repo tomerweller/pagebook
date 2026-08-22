@@ -12,6 +12,9 @@ import {
   tokenLabel,
   type UrlOverrides,
 } from "./format";
+import { MarkupCache } from "./stable";
+
+const paneCache = new MarkupCache();
 
 export type EventState = {
   cursor: string | null;
@@ -53,14 +56,18 @@ export function renderMeta(state: MarketViewState): void {
         .map((m) => `<option value="${m.id}"${m.id === market ? " selected" : ""}>${esc(marketLabel(m))} · ${m.id}</option>`)
         .join("")
     : `<option value="${market ?? 0}" selected>market ${market ?? 0}</option>`;
-  $("meta").innerHTML = `<label>market <select id="market-select" aria-label="market">${opts}</select></label> · ${contractLink(contract, isTestnet)}`;
-  $("market-select").addEventListener("change", (e) => state.onSwitchMarket(Number((e.target as HTMLSelectElement).value)));
+  const html = `<label>market <select id="market-select" aria-label="market">${opts}</select></label> · ${contractLink(contract, isTestnet)}`;
+  const action = paneCache.write("meta", $("meta"), html);
+  if (action === "html") {
+    $("market-select").addEventListener("change", (e) => state.onSwitchMarket(Number((e.target as HTMLSelectElement).value)));
+  }
 }
 
 export function render(book: BookSnapshot, state: MarketViewState): void {
   const baseSym = tokenLabel(book.tokens?.base, state.overrides.baseSym, book.base);
   const quoteSym = tokenLabel(book.tokens?.quote, state.overrides.quoteSym, book.quote);
-  $("pair").textContent = `${baseSym} / ${quoteSym}`;
+  const pair = `${baseSym} / ${quoteSym}`;
+  if ($("pair").textContent !== pair) $("pair").textContent = pair;
   renderMeta(state);
 
   const bid = book.bestBid;
@@ -70,22 +77,28 @@ export function render(book: BookSnapshot, state: MarketViewState): void {
   const staleBid = bid.stale ? `<span class="badge">stale best</span>` : "";
   const staleAsk = ask.stale ? `<span class="badge">stale best</span>` : "";
   const lastSide = last ? (last.taker === "buy" ? "bid" : "ask") : "";
-  $("kpis").innerHTML = `
+  paneCache.write(
+    "kpis",
+    $("kpis"),
+    `
     <div class="kpi bid"><span class="l">best bid</span><span class="v">${bid.empty ? "—" : esc(priceOf(bid.tick, book, state.overrides))}${staleBid}</span></div>
     <div class="kpi ask"><span class="l">best ask</span><span class="v">${ask.empty ? "—" : esc(priceOf(ask.tick, book, state.overrides))}${staleAsk}</span></div>
     <div class="kpi"><span class="l">spread</span><span class="v" title="${ticks == null ? "" : `${esc(ticks)} ticks`}">${spread == null ? "—" : esc(spread)}</span>${pct ? `<span class="sub">(${esc(pct)})</span>` : ""}</div>
     <div class="kpi"><span class="l">mid</span><span class="v">${mid == null ? "—" : esc(mid)}</span></div>
-    <div class="kpi ${lastSide}"><span class="l">last</span><span class="v">${last ? `${esc(priceOf(last.tick, book, state.overrides))} × ${esc(countLabel(last.lots, "lot"))}` : "—"}</span></div>`;
+    <div class="kpi ${lastSide}"><span class="l">last</span><span class="v">${last ? `${esc(priceOf(last.tick, book, state.overrides))} × ${esc(countLabel(last.lots, "lot"))}` : "—"}</span></div>`,
+  );
 
-  $("ladder").innerHTML =
+  paneCache.write(
+    "ladder",
+    $("ladder"),
     sideHtml("bids", book.bids, book, book.moreBids, state.overrides, state.ownTicks) +
-    sideHtml("asks", book.asks, book, book.moreAsks, state.overrides, state.ownTicks);
-  $("trades").innerHTML = tradesHtml(book, state);
-  $("activity").innerHTML = activityHtml(state);
-  $("history-note").textContent = state.eventState.historyFrom
-    ? `history from ledger ${formatInt(state.eventState.historyFrom)}`
-    : "";
-  $("facts").innerHTML = factsHtml(book, baseSym, quoteSym, state);
+      sideHtml("asks", book.asks, book, book.moreAsks, state.overrides, state.ownTicks),
+  );
+  paneCache.write("trades", $("trades"), tradesHtml(book, state));
+  paneCache.write("activity", $("activity"), activityHtml(state));
+  const note = state.eventState.historyFrom ? `history from ledger ${formatInt(state.eventState.historyFrom)}` : "";
+  if ($("history-note").textContent !== note) $("history-note").textContent = note;
+  paneCache.write("facts", $("facts"), factsHtml(book, baseSym, quoteSym, state));
 }
 
 function sideHtml(
@@ -242,6 +255,7 @@ function factsHtml(book: BookSnapshot, baseSym: string, quoteSym: string, state:
 }
 
 export function clearPanes(): void {
+  paneCache.forget();
   $("kpis").innerHTML = "";
   $("ladder").innerHTML = "";
   $("trades").innerHTML = "";

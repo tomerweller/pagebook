@@ -69,6 +69,8 @@ const funded = {
   quoteIsNative: false,
   quoteSymbol: "USDC",
   baseSymbol: "XLM",
+  baseDec: 7,
+  quoteDec: 7,
 };
 
 test("validateTicket accepts a funded in-band bid", () => {
