@@ -3,6 +3,8 @@ import { spendableXlm, parseAssetFromSacName, BASE_RESERVE_STROOPS } from "./acc
 import { Keystore, STORAGE_KEY, deriveFromSeed, SEED_NAME, type StorageLike } from "./keystore";
 import { isTestnetPassphrase, NETWORK_PASSPHRASE, checkTestnet } from "./network";
 import type { Rpc } from "../book";
+import { missingCredits, planProvision } from "./provision";
+import type { CreditAsset } from "./account";
 
 function memStorage(): StorageLike {
   const m = new Map<string, string>();
@@ -106,6 +108,42 @@ test("checkTestnet rejects a non-testnet passphrase from RPC", async () => {
   const res = await checkTestnet(rpc);
   expect(res.ok).toBe(false);
   if (!res.ok) expect(res.reason).toBe("wallet disabled: not testnet");
+});
+
+const USDC: CreditAsset = {
+  type: "credit",
+  code: "USDC",
+  issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+};
+
+test("provision planner: missing account funds then trusts", () => {
+  expect(planProvision({ source: "generate", accountExists: false, missing: [USDC] })).toEqual([
+    { op: "fund" },
+    { op: "trust", asset: USDC },
+  ]);
+  expect(planProvision({ source: "seed", accountExists: false, missing: [USDC] })).toEqual([
+    { op: "fund" },
+    { op: "trust", asset: USDC },
+  ]);
+});
+
+test("provision planner: funded without trustline only trusts", () => {
+  expect(planProvision({ source: "generate", accountExists: true, missing: [USDC] })).toEqual([{ op: "trust", asset: USDC }]);
+});
+
+test("provision planner: fully provisioned is empty", () => {
+  expect(planProvision({ source: "seed", accountExists: true, missing: [] })).toEqual([]);
+});
+
+test("provision planner: import never plans", () => {
+  expect(planProvision({ source: "import", accountExists: false, missing: [USDC] })).toEqual([]);
+  expect(planProvision({ source: "import", accountExists: true, missing: [USDC] })).toEqual([]);
+});
+
+test("missingCredits skips present trustlines", () => {
+  const pba: CreditAsset = { type: "credit", code: "PBA", issuer: USDC.issuer };
+  expect(missingCredits([USDC, pba], [{ asset: USDC, exists: true }])).toEqual([pba]);
+  expect(missingCredits([USDC], [{ asset: USDC, exists: false }])).toEqual([USDC]);
 });
 
 test("checkTestnet accepts the testnet passphrase", async () => {

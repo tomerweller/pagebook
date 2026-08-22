@@ -13,6 +13,7 @@ import {
 import type { BookEvent } from "../book";
 import { addTrustline, fundWithFriendbot, type SubmitResult } from "./classic";
 import { Keystore, type Identity } from "./keystore";
+import { missingCredits, planProvision, type ProvisionSource } from "./provision";
 import { checkTestnet } from "./network";
 import { createOrders, loadOpenOrders, ownTicksOf, rememberNonce, sessionRestedNonces, type OpenOrder } from "./orders";
 import { createTicket } from "./ticket";
@@ -64,6 +65,14 @@ function marketRows(book: BookSnapshot | null): MarketRow[] {
 
 function creditAssets(rows: MarketRow[]): CreditAsset[] {
   return rows.map((r) => r.classic).filter((a): a is CreditAsset => a != null && a.type === "credit");
+}
+
+function creditsReady(book: BookSnapshot | null): CreditAsset[] | null {
+  if (!book) return null;
+  if ((book.base && !book.tokens.base?.name) || (book.quote && !book.tokens.quote?.name)) return null;
+  const rows = marketRows(book);
+  if (!rows.length) return null;
+  return creditAssets(rows);
 }
 
 function copyText(text: string): void {
@@ -119,7 +128,16 @@ export function mountWallet(opts: {
   let importOpen = false;
   let keysOpen = false;
   let justCreated = false;
-  let collapsed = window.matchMedia("(max-width: 800px)").matches;
+  let autoSource: ProvisionSource | null = null;
+  let provisionStatus = "";
+  let provisioning = false;
+  const provisionedKeys = new Set<string>();
+  const narrowMq = window.matchMedia("(max-width: 960px)");
+  let collapsed = narrowMq.matches;
+  narrowMq.addEventListener("change", (e) => {
+    collapsed = e.matches;
+    render();
+  });
   const log: LogItem[] = [];
   let balGen = 0;
   let sessionEvents: BookEvent[] = [];
@@ -216,8 +234,9 @@ export function mountWallet(opts: {
       const msg = e instanceof Error ? e.message : String(e);
       setStatus(`RPC: ${msg}`);
     }
-    render();
+     render();
     void refreshOrders();
+    void maybeProvision();
   }
 
   function render(): void {
@@ -233,7 +252,7 @@ export function mountWallet(opts: {
 
     el.className = `wallet${collapsed ? "" : " open"}`;
       el.innerHTML = `
-      <div class="wallet-brand"><a href="../" class="wallet-brand-name">PAGEBOOK</a> <span class="wallet-brand-sub">· Stellar testnet · experiment</span></div>
+      <div class="wallet-brand"><a href="../" class="wallet-brand-name">PAGEBOOK</a> <span class="wallet-brand-sub">· Stellar testnet<span class="wallet-brand-exp"> · experiment</span></span></div>
       <div class="wallet-head">
         <button type="button" class="wallet-toggle" data-act="toggle" aria-expanded="${collapsed ? "false" : "true"}">wallet</button>
       </div>
@@ -311,8 +330,9 @@ export function mountWallet(opts: {
         </div>`
       : "";
 
-    const friendbot =
-      account && !account.exists
+    const friendbot = provisionStatus
+      ? `<p class="wallet-muted" data-role="provision">${esc(provisionStatus)}</p>`
+      : account && !account.exists
         ? `<button type="button" data-act="friendbot" ${busy ? "disabled" : ""}>friendbot</button>`
         : "";
 
@@ -393,6 +413,7 @@ export function mountWallet(opts: {
         store.create();
         justCreated = true;
         reveal = true;
+        autoSource = "generate";
         setStatus("");
         void refreshBalances();
       } catch (e) {
@@ -408,6 +429,7 @@ export function mountWallet(opts: {
       if (!opts.seed) return;
       store.activateSeed(opts.seed);
       justCreated = false;
+      autoSource = "seed";
       setStatus("");
       void refreshBalances();
     });
@@ -420,6 +442,7 @@ export function mountWallet(opts: {
         importOpen = false;
         justCreated = true;
         reveal = true;
+        autoSource = "import";
         setStatus("");
         void refreshBalances();
       } catch (err) {
@@ -435,6 +458,7 @@ export function mountWallet(opts: {
         justCreated = false;
         confirmDelete = false;
         confirmTrust = null;
+        autoSource = null;
         setStatus("");
         void refreshBalances();
       } catch (err) {
@@ -509,6 +533,78 @@ export function mountWallet(opts: {
     });
   }
 
+  async function waitAccountExists(pub: string): Promise<boolean> {
+    for (let i = 0; i < 16; i++) {
+      const acc = await readAccount(opts.rpc, pub);
+      if (acc.exists) {
+        account = acc;
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    return false;
+  }
+
+  async function addTrustlineRetry(secret: string, asset: CreditAsset): Promise<SubmitResult> {
+    let last: SubmitResult = { status: "FAILED", error: "account not funded" };
+    for (let i = 0; i < 8; i++) {
+      last = await addTrustline(opts.rpc, secret, asset);
+      if (last.status !== "FAILED" || !/not funded/i.test(last.error || "")) return last;
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    return last;
+  }
+
+  async function maybeProvision(): Promise<void> {
+    const id = active();
+    if (!enabled || !id || !autoSource || autoSource === "import" || !account) return;
+    if (provisioning || busy || provisionedKeys.has(id.publicKey)) return;
+    const credits = creditsReady(book);
+    if (credits == null && account.exists) return;
+    const missing = missingCredits(credits ?? [], trustlines);
+    const plan = planProvision({ source: autoSource, accountExists: account.exists, missing });
+    if (!plan.length) {
+      if (credits != null) provisionedKeys.add(id.publicKey);
+      return;
+    }
+    provisioning = true;
+    busy = true;
+    let failed = false;
+    for (const step of plan) {
+      if (step.op === "fund") {
+        provisionStatus = "funding…";
+        setStatus("");
+        render();
+        const res = await fundWithFriendbot(id.publicKey);
+        noteResult("funded", res);
+        if (res.status === "FAILED") {
+          failed = true;
+          break;
+        }
+        if (!(await waitAccountExists(id.publicKey))) {
+          failed = true;
+          setStatus("account not funded");
+          break;
+        }
+      } else {
+        provisionStatus = `adding ${step.asset.code} trustline…`;
+        setStatus("");
+        render();
+        const res = await addTrustlineRetry(id.secret, step.asset);
+        noteResult(`trustline ${step.asset.code} · 0.5 XLM reserve (5,000,000 stroops)`, res);
+        if (res.status === "FAILED") {
+          failed = true;
+          break;
+        }
+      }
+    }
+    if (failed || credits != null) provisionedKeys.add(id.publicKey);
+    provisioning = false;
+    busy = false;
+    provisionStatus = "";
+    await refreshBalances();
+  }
+
   async function runFriendbot(): Promise<void> {
     const id = active();
     if (!enabled || !id || busy) return;
@@ -544,7 +640,7 @@ export function mountWallet(opts: {
       pushLog({ text: "already funded", hash: res.hash });
     } else {
       setStatus(res.error || "failed");
-      if (res.hash) pushLog({ text: `${label} failed`, hash: res.hash });
+      pushLog({ text: `${label} failed`, hash: res.hash });
     }
   }
 
@@ -559,7 +655,10 @@ export function mountWallet(opts: {
       return;
     }
     enabled = true;
-    if (opts.seed) store.activateSeed(opts.seed);
+    if (opts.seed) {
+      store.activateSeed(opts.seed);
+      autoSource = "seed";
+    }
     setStatus("");
     await refreshBalances();
   }

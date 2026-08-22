@@ -1,13 +1,7 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 function seed(): string {
   return `e2e-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-}
-
-async function clickIf(page: Page, sel: string): Promise<void> {
-  const loc = page.locator(sel).first();
-  await loc.waitFor({ state: "visible", timeout: 60_000 });
-  await loc.click();
 }
 
 test("fund, trustline, take, rest, settle on XLM/USDC", async ({ page }) => {
@@ -19,14 +13,9 @@ test("fund, trustline, take, rest, settle on XLM/USDC", async ({ page }) => {
 
   await page.goto(`/pagebook/client/?seed=${seed()}&market=1`);
   await expect(page.getByRole("heading", { name: "XLM / USDC" })).toBeVisible({ timeout: 60_000 });
-
-  await clickIf(page, 'button[data-act="friendbot"]');
-  await expect(page.getByText("add trustline")).toBeVisible({ timeout: 90_000 });
-
-  await clickIf(page, 'button[data-act="trust-ask"]');
-  await clickIf(page, 'button[data-act="trust-go"]');
   await expect(page.getByText("add trustline")).toHaveCount(0, { timeout: 90_000 });
   await expect(page.locator(".wallet-assets")).toContainText("USDC");
+  await expect(page.locator(".wallet-xlm")).not.toContainText("unfunded");
 
   const ticket = page.locator(".ticket");
   await expect(ticket.getByRole("heading", { name: "place order" })).toBeVisible();
