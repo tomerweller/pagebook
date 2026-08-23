@@ -148,7 +148,9 @@ a:hover { text-decoration: underline; }
   color: var(--muted);
 }
 .ticket label { display: block; margin: 0; }
-.ticket-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
+.ticket-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; align-items: end; }
+.ticket-fields label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ticket-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ticket-fields .wallet-input { font-size: 15px; }
 .ticket-side { display: flex; gap: 0; margin-bottom: 8px; }
 .ticket-side button {

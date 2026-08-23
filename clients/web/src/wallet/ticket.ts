@@ -164,6 +164,7 @@ export function createTicket(opts: {
   let account: AccountState | null = null;
   let trustlines: TrustlineState[] = [];
   let overrides: UrlOverrides = { baseSym: null, quoteSym: null, baseDec: null, quoteDec: null };
+  let drawnSyms = "";
   let isBid = true;
   let tick = 1;
   let lots = 1n;
@@ -562,8 +563,8 @@ export function createTicket(opts: {
         <button type="button" data-act="sell" class="${!isBid ? "on ask" : ""}">SELL ${esc(sym)}</button>
       </div>
       <div class="ticket-fields">
-        <label>price · ${esc(qsym)} per ${esc(sym)} <input class="wallet-input" data-field="price" inputmode="decimal" step="${esc(pStep)}" value="${esc(priceStr)}" /></label>
-        <label>quantity · ${esc(sym)} <input class="wallet-input" data-field="qty" inputmode="decimal" step="${esc(qStep)}" value="${esc(qtyStr)}" /></label>
+        <label><span class="ticket-label" title="price · ${esc(qsym)} per ${esc(sym)}">price · ${esc(qsym)}/${esc(sym)}</span> <input class="wallet-input" data-field="price" inputmode="decimal" step="${esc(pStep)}" value="${esc(priceStr)}" /></label>
+        <label><span class="ticket-label">quantity · ${esc(sym)}</span> <input class="wallet-input" data-field="qty" inputmode="decimal" step="${esc(qStep)}" value="${esc(qtyStr)}" /></label>
       </div>
       <p class="wallet-muted" data-role="human">${esc(human)}</p>
       <div class="ticket-flags">
@@ -653,6 +654,15 @@ export function createTicket(opts: {
       account = nextAccount;
       trustlines = nextTrust;
       overrides = nextOverrides;
+      // The chrome (labels, side buttons) embeds token symbols; redraw once
+      // when they resolve or the market changes, else it keeps its first
+      // pre-metadata render forever (mount-once since the surgical-render
+      // round). draw() itself preserves focus.
+      const symsNow = `${tokenLabel(book?.tokens.base ?? null, overrides.baseSym, book?.base ?? null)}/${tokenLabel(book?.tokens.quote ?? null, overrides.quoteSym, book?.quote ?? null)}`;
+      if (rootEl && symsNow !== drawnSyms) {
+        draw(rootEl);
+        drawnSyms = symsNow;
+      }
       if (rootEl) {
         if (tick === 1 && nextBook && !nextBook.bestAsk.empty && isBid) {
           tick = nextBook.bestAsk.tick;

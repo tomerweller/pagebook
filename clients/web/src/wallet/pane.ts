@@ -290,7 +290,7 @@ export function mountWallet(opts: {
     if (el.className !== cls) el.className = cls;
     const id = active();
     const ids = store.list();
-    write("brand", `<div class="wallet-brand"><a href="../" class="wallet-brand-name">PAGEBOOK</a> <span class="wallet-brand-sub">· Stellar Testnet</span></div>`);
+    write("brand", `<div class="wallet-brand"><a href="../" class="wallet-brand-name">PAGEBOOK</a> <span class="wallet-brand-sub">· STELLAR TESTNET</span></div>`);
     write(
       "head",
       `<div class="wallet-head"><button type="button" class="wallet-toggle" data-act="toggle" aria-expanded="${collapsed ? "false" : "true"}">wallet</button></div>`,
