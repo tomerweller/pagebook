@@ -373,17 +373,17 @@ section h2 {
 .note { color: var(--muted); font-size: 11px; margin: 4px 0 0; }
 .side .note { padding: 6px 10px 8px; margin: 0; }
 @media (max-width: 960px) {
-  html, body { height: 100%; overflow: hidden; }
+  /* Document flow, not an app shell: a locked body never scrolls, so mobile
+     browser toolbars never collapse and a bottom strip inside a 100vh box
+     hides behind them (unreachable — the M9 regression). The document
+     scrolls; the strip is sticky against the visual viewport. */
   .shell {
     flex-direction: column;
-    height: 100dvh;
-    min-height: 100vh;
-    overflow: hidden;
+    min-height: 100dvh;
   }
   .page {
     flex: 1 1 auto;
     min-height: 0;
-    overflow-y: auto;
     order: 0;
   }
   .shell > .wallet {
