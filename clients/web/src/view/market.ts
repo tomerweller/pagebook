@@ -15,6 +15,7 @@ import {
 } from "./format";
 import { MarkupCache } from "./stable";
 import type { Store } from "../store";
+import type { WalletDomain } from "../wallet/pane";
 
 const paneCache = new MarkupCache();
 
@@ -34,7 +35,6 @@ export type MarketViewState = {
   overrides: UrlOverrides;
   isTestnet: boolean;
   eventState: EventState;
-  eventsLoading: boolean;
   onSwitchMarket: (id: number) => void;
   ownTicks?: OwnTicks;
 };
@@ -46,7 +46,6 @@ export type BookDomain = {
   market: number | null;
   lastOkAt: number;
   lastError: string;
-  eventsLoading: boolean;
   knownBase: string | null;
   knownQuote: string | null;
   marketsLoadedAt: number;
@@ -58,7 +57,26 @@ export type BookDomain = {
 
 export type AppState = {
   book: BookDomain;
+  wallet: WalletDomain;
 };
+
+export function emptyBookDomain(
+  partial: Partial<BookDomain> & Pick<BookDomain, "contract" | "overrides" | "isTestnet">,
+): BookDomain {
+  return {
+    snapshot: null,
+    eventState: emptyEventState(),
+    marketList: [],
+    market: null,
+    lastOkAt: 0,
+    lastError: "",
+    knownBase: null,
+    knownQuote: null,
+    marketsLoadedAt: 0,
+    ownTicks: emptyOwnTicks(),
+    ...partial,
+  };
+}
 
 export function emptyEventState(): EventState {
   return { cursor: null, seen: new Set(), historyFrom: null, events: [] };
@@ -107,24 +125,69 @@ export function registerMarketView(
   store: Store<AppState>,
   opts: {
     onSwitchMarket: (id: number) => void;
-    onBook: (book: BookSnapshot) => void;
-    onEvents: (events: BookEvent[]) => void;
   },
 ): void {
-  store.register("market", () => {
-    const app = store.read();
-    renderFresh(app.book);
-    const snap = app.book.snapshot;
-    if (!snap) {
-      $("pair").textContent = "-- / --";
-      renderMeta(viewStateFrom(app, opts.onSwitchMarket));
-      clearPanes();
-      return;
-    }
-    render(snap, viewStateFrom(app, opts.onSwitchMarket));
-    opts.onBook(snap);
-    opts.onEvents(app.book.eventState.events);
-  });
+  store.register("fresh", () => renderFresh(store.read().book), () => freshKey(store.read().book));
+  store.register(
+    "market",
+    () => {
+      const app = store.read();
+      const snap = app.book.snapshot;
+      if (!snap) {
+        $("pair").textContent = "-- / --";
+        renderMeta(viewStateFrom(app, opts.onSwitchMarket));
+        clearPanes();
+        return;
+      }
+      render(snap, viewStateFrom(app, opts.onSwitchMarket));
+    },
+    () => marketKey(store.read()),
+  );
+}
+
+function freshKey(book: BookDomain, now = Date.now()): string {
+  const ago = book.lastOkAt ? Math.round((now - book.lastOkAt) / 1000) : 0;
+  return `${book.snapshot ? 1 : 0}|${book.snapshot?.latestLedger ?? ""}|${book.lastOkAt}|${book.lastError}|${ago}`;
+}
+
+function marketKey(app: AppState): string {
+  const b = app.book;
+  const snap = b.snapshot;
+  const ev = b.eventState.events;
+  return [
+    snap?.latestLedger,
+    snap?.mismatched,
+    snap?.bestBid.tick,
+    snap?.bestBid.empty,
+    snap?.bestBid.stale,
+    snap?.bestAsk.tick,
+    snap?.bestAsk.empty,
+    snap?.bestAsk.stale,
+    snap?.bids.map((r) => `${r.tick}:${r.open_lots}:${r.queue}`).join(","),
+    snap?.asks.map((r) => `${r.tick}:${r.open_lots}:${r.queue}`).join(","),
+    snap?.moreBids,
+    snap?.moreAsks,
+    snap?.paused,
+    snap?.tokens.base?.symbol,
+    snap?.tokens.quote?.symbol,
+    snap?.vault.base,
+    snap?.vault.quote,
+    snap?.fees.base,
+    snap?.fees.quote,
+    b.market,
+    b.marketList.map((m) => `${m.id}:${m.baseSym}:${m.quoteSym}`).join(","),
+    b.lastError,
+    b.eventState.historyFrom,
+    ev.map((e) => e.id).join(","),
+    [...b.ownTicks.bid].join(","),
+    [...b.ownTicks.ask].join(","),
+    b.contract,
+    b.isTestnet,
+    b.overrides.baseSym,
+    b.overrides.quoteSym,
+    b.overrides.baseDec,
+    b.overrides.quoteDec,
+  ].join("|");
 }
 
 function viewStateFrom(app: AppState, onSwitchMarket: (id: number) => void): MarketViewState {
@@ -135,7 +198,6 @@ function viewStateFrom(app: AppState, onSwitchMarket: (id: number) => void): Mar
     overrides: app.book.overrides,
     isTestnet: app.book.isTestnet,
     eventState: app.book.eventState,
-    eventsLoading: app.book.eventsLoading,
     onSwitchMarket,
     ownTicks: app.book.ownTicks,
   };
@@ -244,9 +306,6 @@ function txLink(hash: string): string {
 }
 
 function tradesHtml(book: BookSnapshot, state: MarketViewState): string {
-  if (state.eventsLoading && !(state.eventState.events || []).length) {
-    return `<li class="empty">loading trades…</li>`;
-  }
   const rows = (state.eventState.events || []).filter((e): e is FilledEvent => e.name === "filled").slice(0, 80);
   if (!rows.length) return `<li class="empty">— no trades yet</li>`;
   const qdec = tokenDecimals(book.tokens?.quote, state.overrides.quoteDec);
@@ -281,9 +340,6 @@ function evClass(name: string, isBid?: boolean): string {
 }
 
 function activityHtml(state: MarketViewState): string {
-  if (state.eventsLoading && !(state.eventState.events || []).length) {
-    return `<li class="empty">loading activity…</li>`;
-  }
   const names = new Set(["rested", "settled", "swept", "top_changed"]);
   const rows = (state.eventState.events || []).filter((e) => names.has(e.name)).slice(0, 80);
   if (!rows.length) return `<li class="empty">— no activity yet</li>`;

@@ -8,7 +8,8 @@ import { createOrders, type OpenOrder } from "./wallet/orders";
 import { createTicket } from "./wallet/ticket";
 import type { UrlOverrides } from "./view/format";
 import { createStore } from "./store";
-import { emptyEventState, emptyOwnTicks, registerMarketView, type AppState } from "./view/market";
+import { emptyBookDomain, registerMarketView, type AppState } from "./view/market";
+import { emptyWalletDomain, mountWallet } from "./wallet/pane";
 
 const emptyOv: UrlOverrides = { baseSym: null, quoteSym: null, baseDec: null, quoteDec: null };
 
@@ -222,32 +223,23 @@ function mountShell(): void {
   `;
 }
 
-function emptyBookDomain(): AppState["book"] {
+function emptyApp(): AppState {
   return {
-    snapshot: null,
-    eventState: emptyEventState(),
-    marketList: [],
-    market: 0,
-    lastOkAt: 0,
-    lastError: "",
-    eventsLoading: false,
-    knownBase: null,
-    knownQuote: null,
-    marketsLoadedAt: 0,
-    ownTicks: emptyOwnTicks(),
-    overrides: emptyOv,
-    contract: "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO",
-    isTestnet: true,
+    book: emptyBookDomain({
+      market: 0,
+      overrides: emptyOv,
+      contract: "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO",
+      isTestnet: true,
+    }),
+    wallet: emptyWalletDomain(null),
   };
 }
 
 test("book update renders ladder and kpis via store", async () => {
   mountShell();
-  const store = createStore<AppState>({ book: emptyBookDomain() });
+  const store = createStore<AppState>(emptyApp());
   registerMarketView(store, {
     onSwitchMarket: () => {},
-    onBook: () => {},
-    onEvents: () => {},
   });
   const snap = mockSnapshot();
   store.update((s) => {
@@ -260,4 +252,62 @@ test("book update renders ladder and kpis via store", async () => {
   expect(document.getElementById("kpis")!.innerHTML).toMatch(/best bid/);
   expect(document.getElementById("ladder")!.innerHTML).toMatch(/data-tick/);
   expect(document.getElementById("pair")!.textContent).not.toBe("-- / --");
+});
+
+async function flush(n = 8): Promise<void> {
+  for (let i = 0; i < n; i++) await Promise.resolve();
+}
+
+test("wallet section renders from a store mutation", async () => {
+  document.body.innerHTML = `<aside id="wallet"></aside>`;
+  const store = createStore<AppState>(emptyApp());
+  mountWallet({
+    store,
+    el: document.getElementById("wallet")!,
+    rpc: stubRpc({ n: 0 }),
+    getMarket: () => 0,
+    onRefresh: () => {},
+  });
+  await flush();
+  expect(document.querySelector("[data-act=toggle]")).toBeTruthy();
+  store.update((s) => {
+    s.wallet.booted = true;
+    s.wallet.enabled = true;
+    s.wallet.status = "hello from store";
+  });
+  await Promise.resolve();
+  expect(document.querySelector(".wallet-status")?.textContent).toBe("hello from store");
+});
+
+test("provisioning status line appears and disappears via store", async () => {
+  document.body.innerHTML = `<aside id="wallet"></aside>`;
+  const store = createStore<AppState>(emptyApp());
+  mountWallet({
+    store,
+    el: document.getElementById("wallet")!,
+    rpc: stubRpc({ n: 0 }),
+    getMarket: () => 0,
+    onRefresh: () => {},
+  });
+  await flush();
+  const id = {
+    name: "t",
+    publicKey: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    secret: "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHW4",
+  };
+  store.update((s) => {
+    s.wallet.booted = true;
+    s.wallet.enabled = true;
+    s.wallet.active = id;
+    s.wallet.identities = [id];
+    s.wallet.account = { exists: false, balance: 0n, spendable: 0n, sequence: 0n, numSubEntries: 0 };
+    s.wallet.provisionStatus = "funding…";
+  });
+  await Promise.resolve();
+  expect(document.querySelector("[data-role=provision]")?.textContent).toBe("funding…");
+  store.update((s) => {
+    s.wallet.provisionStatus = "";
+  });
+  await Promise.resolve();
+  expect(document.querySelector("[data-role=provision]")).toBeNull();
 });

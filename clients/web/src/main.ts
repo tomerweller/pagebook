@@ -1,19 +1,14 @@
-import { createRpc, walkDepth, pollEvents, listMarkets, mockSnapshot, type BookEvent, type ListedMarket } from "./book";
-import {
-  emptyEventState,
-  emptyOwnTicks,
-  registerMarketView,
-  type AppState,
-} from "./view/market";
+import { createRpc, walkDepth, pollEvents, listMarkets, mockSnapshot, type ListedMarket } from "./book";
+import { emptyBookDomain, registerMarketView, type AppState } from "./view/market";
 import type { UrlOverrides } from "./view/format";
-import { mountWallet, type WalletHandle } from "./wallet/pane";
+import { emptyWalletDomain, mountWallet, type WalletHandle } from "./wallet/pane";
 import { createStore } from "./store";
+import { refreshBookAndEvents } from "./sync";
 import "./style.css";
 
 const DEFAULT_CONTRACT = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
 const DEFAULT_RPC = "https://soroban-testnet.stellar.org";
 const DEFAULT_PAIR = ["XLM", "USDC"] as const;
-const MAX_EVENTS = 500;
 const MARKETS_TTL_MS = 120000;
 
 const q = new URLSearchParams(location.search);
@@ -55,23 +50,22 @@ function isTestnetRpc(): boolean {
   }
 }
 
+function defaultCollapsed(): boolean {
+  try {
+    return window.matchMedia("(max-width: 960px)").matches;
+  } catch {
+    return false;
+  }
+}
+
 const store = createStore<AppState>({
-  book: {
-    snapshot: null,
-    eventState: emptyEventState(),
-    marketList: [],
+  book: emptyBookDomain({
     market: q.get("market") != null ? Number(q.get("market")) : null,
-    lastOkAt: 0,
-    lastError: "",
-    eventsLoading: false,
-    knownBase: null,
-    knownQuote: null,
-    marketsLoadedAt: 0,
-    ownTicks: emptyOwnTicks(),
     overrides,
     contract,
     isTestnet: isTestnetRpc(),
-  },
+  }),
+  wallet: emptyWalletDomain(q.get("seed"), defaultCollapsed()),
 });
 
 let wallet: WalletHandle | null = null;
@@ -79,22 +73,7 @@ let requestRefresh = () => {};
 
 registerMarketView(store, {
   onSwitchMarket: switchMarket,
-  onBook: (book) => wallet?.onBook(book),
-  onEvents: (events) => wallet?.onEvents(events),
 });
-
-function mergeEvents(into: AppState["book"]["eventState"], incoming: BookEvent[]): void {
-  const byId = new Map(into.events.map((e) => [e.id, e]));
-  for (const e of incoming) byId.set(e.id, e);
-  into.events = [...byId.values()]
-    .sort((a, b) => {
-      const ld = (b.ledger || 0) - (a.ledger || 0);
-      if (ld) return ld;
-      return String(b.id).localeCompare(String(a.id));
-    })
-    .slice(0, MAX_EVENTS);
-  into.seen = new Set(into.events.map((e) => e.id).filter((id): id is string => Boolean(id)));
-}
 
 function pickDefaultMarket(list: ListedMarket[]): number {
   const hit = list.find((m) => m.baseSym === DEFAULT_PAIR[0] && m.quoteSym === DEFAULT_PAIR[1]);
@@ -117,8 +96,7 @@ function switchMarket(id: number): void {
   if (id === store.read().book.market) return;
   store.update((s) => {
     s.book.market = id;
-    s.book.eventState = emptyEventState();
-    s.book.eventsLoading = false;
+    s.book.eventState = { cursor: null, seen: new Set(), historyFrom: null, events: [] };
     s.book.knownBase = null;
     s.book.knownQuote = null;
     s.book.snapshot = null;
@@ -135,33 +113,35 @@ async function refresh(rpc: ReturnType<typeof createRpc>): Promise<void> {
   await ensureMarkets(rpc);
   const forMarket = store.read().book.market;
   const known = store.read().book;
-  const book = await walkDepth(rpc, {
-    contract,
-    market: forMarket ?? 0,
-    depth,
-    base: known.knownBase,
-    quote: known.knownQuote,
+  await refreshBookAndEvents(store, forMarket, {
+    walk: () =>
+      walkDepth(rpc, {
+        contract,
+        market: forMarket ?? 0,
+        depth,
+        base: known.knownBase,
+        quote: known.knownQuote,
+      }),
+    poll: (book) =>
+      pollEvents(rpc, {
+        contract,
+        market: forMarket ?? 0,
+        latestLedger: book.latestLedger,
+        cursor: known.eventState.cursor,
+        seen: known.eventState.seen,
+        historyFrom: known.eventState.historyFrom,
+      }),
+    formatError: formatRpcError,
   });
-  if (store.read().book.market !== forMarket) return;
-  const ev = await pollEvents(rpc, {
-    contract,
-    market: forMarket ?? 0,
-    latestLedger: book.latestLedger,
-    cursor: known.eventState.cursor,
-    seen: known.eventState.seen,
-    historyFrom: known.eventState.historyFrom,
-  });
-  if (store.read().book.market !== forMarket) return;
-  store.update((s) => {
-    s.book.knownBase = book.base || s.book.knownBase;
-    s.book.knownQuote = book.quote || s.book.knownQuote;
-    s.book.snapshot = book;
-    s.book.lastOkAt = Date.now();
-    s.book.lastError = "";
-    s.book.eventsLoading = false;
-    s.book.eventState.cursor = ev.cursor;
-    if (ev.historyFrom != null) s.book.eventState.historyFrom = ev.historyFrom;
-    mergeEvents(s.book.eventState, ev.events);
+}
+
+function mount(): WalletHandle {
+  return mountWallet({
+    store,
+    el: $("wallet"),
+    rpc: createRpc(rpcUrl),
+    getMarket: () => store.read().book.market ?? 0,
+    onRefresh: () => requestRefresh(),
   });
 }
 
@@ -187,21 +167,7 @@ if (mock) {
     s.book.lastOkAt = Date.now();
   });
   setInterval(() => store.update(() => {}), 1000);
-  wallet = mountWallet({
-    el: $("wallet"),
-    rpc: createRpc(rpcUrl),
-    seed: q.get("seed"),
-    contract,
-    getMarket: () => store.read().book.market ?? 0,
-    overrides,
-    onRefresh: () => requestRefresh(),
-    onOwnTicks: (t) => {
-      store.update((s) => {
-        s.book.ownTicks = t;
-      });
-    },
-  });
-  store.update(() => {});
+  wallet = mount();
 } else {
   const rpc = createRpc(rpcUrl);
   let delay = 2000;
@@ -256,20 +222,7 @@ if (mock) {
     }
   });
   setInterval(() => store.update(() => {}), 1000);
-  wallet = mountWallet({
-    el: $("wallet"),
-    rpc,
-    seed: q.get("seed"),
-    contract,
-    getMarket: () => store.read().book.market ?? 0,
-    overrides,
-    onRefresh: () => requestRefresh(),
-    onOwnTicks: (t) => {
-      store.update((s) => {
-        s.book.ownTicks = t;
-      });
-    },
-  });
+  wallet = mount();
   $("ladder").addEventListener("click", (e) => {
     const row = (e.target as HTMLElement).closest("[data-tick]");
     if (!row) return;
