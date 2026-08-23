@@ -275,11 +275,13 @@ section h2 {
   text-transform: uppercase;
   color: var(--muted);
 }
-.ladder {
+.ladder { display: block; }
+.book-wide {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
 }
+.book-narrow { display: none; }
 .side { background: var(--surface); border: 1px solid var(--line); min-height: 10rem; }
 .side h3 {
   margin: 0;
@@ -321,9 +323,10 @@ section h2 {
   z-index: 0;
   background: var(--ask-soft);
 }
-.side.bids .row .rowbar { inset: 0 0 0 auto; background: var(--bid-soft); }
-.side.bids .cols, .side.bids .row { text-align: right; }
-.side.bids .cols span:last-child, .side.bids .row span.price { text-align: right; }
+.book-wide .side.bids .row .rowbar { inset: 0 0 0 auto; background: var(--bid-soft); }
+.book-wide .side.bids .cols, .book-wide .side.bids .row { text-align: right; }
+.book-wide .side.bids .cols span:last-child, .book-wide .side.bids .row span.price { text-align: right; }
+.book-narrow .side.bids .row .rowbar { background: var(--bid-soft); }
 .feeds {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -415,16 +418,90 @@ section h2 {
   .ticket-cta { padding: 12px 0; }
   .wallet .ticket-cta { padding: 12px 0; }
   .wallet-input, .ticket-fields .wallet-input { font-size: 16px; }
-  .ladder { gap: 8px; }
+  .book-wide { gap: 8px; }
   .feeds { grid-template-columns: 1fr; }
 
   .facts div.wide { grid-column: span 1; }
   .panel { max-height: 16rem; }
 }
 @media (max-width: 520px) {
-  .ladder { grid-template-columns: 1fr; }
+  html, body, .shell { overflow-x: hidden; max-width: 100%; }
+  .page { max-width: 100%; min-width: 0; overflow-x: hidden; }
+  .book-wide { display: none; }
+  .book-narrow { display: block; }
+  .book-narrow .cols .unit { display: none; }
+  .book-narrow .side {
+    border-left: 0;
+    border-right: 0;
+    min-height: 0;
+  }
+  .book-narrow .side.asks { border-bottom: 0; }
+  .book-narrow .side.bids { border-top: 0; }
+  .book-narrow .cols {
+    border: 1px solid var(--line);
+    border-bottom: 0;
+    background: var(--surface);
+  }
+  .spread-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 40px;
+    padding: 8px 10px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+  }
+  .book-narrow .row {
+    min-height: 40px;
+    padding: 8px 10px;
+  }
+  .book-narrow .row .price { font-weight: 600; font-size: 13px; }
+  .book-narrow .row .price::after {
+    content: " ›";
+    color: var(--muted);
+    font-weight: 400;
+  }
+  .row[data-tick]:hover { background: transparent; }
+  .book-narrow .row[data-tick]:active { background: var(--accent-soft); }
+  .book-narrow .row.own[data-tick]:hover { background: var(--accent-soft); }
+  .kpis {
+    display: flex;
+    margin: 10px 0 8px;
+  }
+  .kpi { flex: 1; min-width: 0; padding: 6px 8px; overflow: hidden; }
+  .kpi .v { font-size: 13px; }
+  .kpi-bid .v, .kpi-ask .v { white-space: normal; overflow: visible; }
+  .kpi-last .v { overflow: hidden; text-overflow: ellipsis; }
+  .page { overflow-x: hidden; }
+  .kpi-spread, .kpi-mid { display: none; }
+  details.fold > summary {
+    display: block;
+    list-style: none;
+    margin: 0 0 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  details.fold > summary::-webkit-details-marker { display: none; }
+  details.fold > summary::before { content: "▸ "; }
+  details.fold[open] > summary::before { content: "▾ "; }
+  .tape:not(.activity) .sec { display: none; }
+  .tape:not(.activity) li {
+    grid-template-columns: 2.8rem 1.7rem minmax(0, 1fr);
+    gap: 6px;
+    padding: 2px 6px;
+  }
+  .tape:not(.activity) li > .tx { display: none; }
+  .tape:not(.activity) li .detail { overflow: hidden; text-overflow: ellipsis; }
+  .tape:not(.activity) li:nth-child(n+13) { display: none; }
+  .tape:not(.activity) li.empty { display: block; }
 }
 @media (max-width: 480px) {
-  .kpis { grid-template-columns: repeat(2, 1fr); }
-  .kpi:last-child { grid-column: 1 / -1; }
+  .kpis { display: flex; }
 }

@@ -137,9 +137,14 @@ export function registerMarketView(
     const ago = s.book.lastOkAt ? Math.round((Date.now() - s.book.lastOkAt) / 1000) : 0;
     return `${s.versions.book}|${ago}`;
   });
+  const mq = typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(max-width: 520px)") : null;
+  const syncFolds = () => syncNarrowFolds(!!mq?.matches);
+  syncFolds();
+  mq?.addEventListener("change", syncFolds);
   store.register(
     "market",
     () => {
+      syncFolds();
       const app = store.read();
       const snap = app.book.snapshot;
       if (!snap) {
@@ -199,18 +204,20 @@ export function render(book: BookSnapshot, state: MarketViewState): void {
     "kpis",
     $("kpis"),
     `
-    <div class="kpi bid"><span class="l">best bid</span><span class="v">${bid.empty ? "—" : esc(priceOf(bid.tick, book, state.overrides))}${staleBid}</span></div>
-    <div class="kpi ask"><span class="l">best ask</span><span class="v">${ask.empty ? "—" : esc(priceOf(ask.tick, book, state.overrides))}${staleAsk}</span></div>
-    <div class="kpi"><span class="l">spread</span><span class="v" title="${ticks == null ? "" : `${esc(ticks)} ticks`}">${spread == null ? "—" : esc(spread)}</span>${pct ? `<span class="sub">(${esc(pct)})</span>` : ""}</div>
-    <div class="kpi"><span class="l">mid</span><span class="v">${mid == null ? "—" : esc(mid)}</span></div>
-    <div class="kpi ${lastSide}"><span class="l">last</span><span class="v">${last ? `<span title="${esc(countLabel(last.lots, "lot"))}">${esc(priceOf(last.tick, book, state.overrides))} × ${esc(lotsToBase(last.lots, book, state.overrides))} ${esc(baseSym)}</span>` : "—"}</span></div>`,
+    <div class="kpi kpi-bid bid"><span class="l">best bid</span><span class="v">${bid.empty ? "—" : esc(priceOf(bid.tick, book, state.overrides))}${staleBid}</span></div>
+    <div class="kpi kpi-ask ask"><span class="l">best ask</span><span class="v">${ask.empty ? "—" : esc(priceOf(ask.tick, book, state.overrides))}${staleAsk}</span></div>
+    <div class="kpi kpi-spread"><span class="l">spread</span><span class="v" title="${ticks == null ? "" : `${esc(ticks)} ticks`}">${spread == null ? "—" : esc(spread)}</span>${pct ? `<span class="sub">(${esc(pct)})</span>` : ""}</div>
+    <div class="kpi kpi-mid"><span class="l">mid</span><span class="v">${mid == null ? "—" : esc(mid)}</span></div>
+    <div class="kpi kpi-last ${lastSide}"><span class="l">last</span><span class="v">${last ? `<span title="${esc(countLabel(last.lots, "lot"))}">${esc(priceOf(last.tick, book, state.overrides))} × ${esc(lotsToBase(last.lots, book, state.overrides))} ${esc(baseSym)}</span>` : "—"}</span></div>`,
   );
 
   paneCache.write(
     "ladder",
     $("ladder"),
-    sideHtml("bids", book.bids, book, book.moreBids, state.overrides, state.ownTicks) +
-      sideHtml("asks", book.asks, book, book.moreAsks, state.overrides, state.ownTicks),
+    `<div class="book-wide">${
+      sideHtml("bids", book.bids, book, book.moreBids, state.overrides, state.ownTicks) +
+      sideHtml("asks", book.asks, book, book.moreAsks, state.overrides, state.ownTicks)
+    }</div>${narrowBookHtml(book, state, { spread, mid, pct })}`,
   );
   paneCache.write("trades", $("trades"), tradesHtml(book, state));
   paneCache.write("activity", $("activity"), activityHtml(state));
@@ -263,6 +270,61 @@ function sideHtml(
   </div>`;
 }
 
+function stackedRows(
+  name: "bids" | "asks",
+  rows: BookSnapshot["bids"],
+  book: BookSnapshot,
+  overrides: UrlOverrides,
+  own: OwnTicks | undefined,
+  reverse: boolean,
+): string {
+  let cum = 0n;
+  const withCum = rows.map((r) => {
+    cum += r.open_lots;
+    return { ...r, cum };
+  });
+  const max = cum;
+  const ordered = reverse ? [...withCum].reverse() : withCum;
+  if (!ordered.length) return `<div class="empty">— no ${name} in window</div>`;
+  return ordered
+    .map((r) => {
+      const side = name === "bids" ? "bid" : "ask";
+      const mine = own && (side === "bid" ? own.bid.has(r.tick) : own.ask.has(r.tick));
+      const w = max > 0n ? Number((r.cum * 1000n) / max) / 10 : 0;
+      const price = `<span class="price" title="tick ${r.tick}">${esc(priceOf(r.tick, book, overrides))}${mine ? `<i class="own-dot ${side}"></i>` : ""}</span>`;
+      const amount = `<span title="${esc(countLabel(r.open_lots, "lot"))} · ${esc(countLabel(r.queue, "order"))} queued">${esc(lotsToBase(r.open_lots, book, overrides))}${r.queue > 1 ? ` <i class="q">·${r.queue}</i>` : ""}</span>`;
+      const depth = `<span title="${esc(countLabel(r.cum, "lot"))} cumulative">${esc(lotsToBase(r.cum, book, overrides))}</span>`;
+      return `<div class="row${mine ? " own" : ""}" data-tick="${r.tick}" data-side="${side}">
+            <i class="rowbar" style="width:${w}%"></i>${price}${amount}${depth}
+          </div>`;
+    })
+    .join("");
+}
+
+function spreadRowHtml(spread: string | null, mid: string | null, pct: string | null): string {
+  const s = spread == null ? "—" : spread;
+  const m = mid == null ? "—" : mid;
+  const p = pct ? ` · ${pct}` : "";
+  return `<div class="spread-row">spread ${esc(s)}${esc(p)} · mid ${esc(m)}</div>`;
+}
+
+function narrowBookHtml(
+  book: BookSnapshot,
+  state: MarketViewState,
+  ms: { spread: string | null; mid: string | null; pct: string | null },
+): string {
+  const bsym = tokenLabel(book.tokens?.base, state.overrides.baseSym, book.base);
+  const qsym = tokenLabel(book.tokens?.quote, state.overrides.quoteSym, book.quote);
+  const asks = stackedRows("asks", book.asks, book, state.overrides, state.ownTicks, true);
+  const bids = stackedRows("bids", book.bids, book, state.overrides, state.ownTicks, false);
+  return `<div class="book-narrow">
+    <div class="cols"><span>price<i class="unit"> · ${esc(qsym)}</i></span><span>amount<i class="unit"> · ${esc(bsym)}</i></span><span>depth<i class="unit"> · ${esc(bsym)}</i></span></div>
+    <div class="side asks">${asks}${book.moreAsks ? `<div class="note">more levels beyond the read window</div>` : ""}</div>
+    ${spreadRowHtml(ms.spread, ms.mid, ms.pct)}
+    <div class="side bids">${bids}${book.moreBids ? `<div class="note">more levels beyond the read window</div>` : ""}</div>
+  </div>`;
+}
+
 function txLink(hash: string): string {
   if (!hash) return "";
   const short = `${hash.slice(0, 6)}…`;
@@ -280,11 +342,13 @@ function tradesHtml(book: BookSnapshot, state: MarketViewState): string {
       const side = e.taker === "buy" ? "buy" : "sell";
       const t = fmtTime(e.ledgerClosedAt);
       const mine = state.ownTicks && (state.ownTicks.bid.has(e.tick) || state.ownTicks.ask.has(e.tick));
+      const hashTip = e.txHash ? ` · ${e.txHash}` : "";
+      const clock = t.text.length >= 8 ? `${esc(t.text.slice(0, 5))}<span class="sec">${esc(t.text.slice(5))}</span>` : esc(t.text);
       return `<li${mine ? ` class="own"` : ""}>
-        <span title="${esc(t.title)}">${esc(t.text)}</span>
+        <span title="${esc(t.title)}">${clock}</span>
         <span class="${side}">${side}${mine ? `<i class="own-dot ${e.is_bid ? "bid" : "ask"}"></i>` : ""}</span>
-        <span class="detail ${side}" title="${esc(countLabel(e.lots, "lot"))} · ${esc(formatInt(e.quote))} quote atoms">${esc(priceOf(e.tick, book, state.overrides))} × ${esc(lotsToBase(e.lots, book, state.overrides))} ${esc(bsym)} · ${esc(formatAtoms(e.quote, qdec))} ${esc(qsym)}</span>
-        <span title="ledger ${formatInt(e.ledger)}">${txLink(e.txHash)}</span>
+        <span class="detail ${side}" title="${esc(countLabel(e.lots, "lot"))} · ${esc(formatInt(e.quote))} quote atoms${esc(hashTip)}">${esc(priceOf(e.tick, book, state.overrides))} × ${esc(lotsToBase(e.lots, book, state.overrides))} ${esc(bsym)} · ${esc(formatAtoms(e.quote, qdec))} ${esc(qsym)}</span>
+        <span class="tx" title="ledger ${formatInt(e.ledger)}">${txLink(e.txHash)}</span>
       </li>`;
     })
     .join("");
@@ -372,6 +436,44 @@ function factsHtml(book: BookSnapshot, baseSym: string, quoteSym: string, state:
     fact("fees_base", `<span title="${esc(formatInt(book.fees.base))} atoms">${esc(feeB)}</span>`),
     fact("fees_quote", `<span title="${esc(formatInt(book.fees.quote))} atoms">${esc(feeQ)}</span>`),
   ].join("");
+}
+
+export function syncNarrowFolds(narrow: boolean): void {
+  foldBox("activity", "activity", true, narrow);
+  foldBox("facts", "market", false, narrow);
+}
+
+function foldBox(id: string, title: string, wrapPanel: boolean, narrow: boolean): void {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const box = wrapPanel ? el.closest(".panel") : el;
+  if (!(box instanceof HTMLElement)) return;
+  const parent = box.parentElement;
+  if (!parent) return;
+  const existing = box.closest("details.fold");
+  if (narrow) {
+    if (existing) return;
+    const heading = parent.querySelector(":scope > h2");
+    const d = document.createElement("details");
+    d.className = "fold";
+    const s = document.createElement("summary");
+    s.textContent = title;
+    parent.insertBefore(d, box);
+    d.append(s, box);
+    if (heading instanceof HTMLElement) heading.hidden = true;
+    return;
+  }
+  if (!existing) return;
+  const host = existing.parentElement;
+  if (!host) return;
+  host.insertBefore(box, existing);
+  existing.remove();
+  const heading = host.querySelector(":scope > h2");
+  if (heading instanceof HTMLElement) heading.hidden = false;
+}
+
+export function resetPaneCache(): void {
+  paneCache.forget();
 }
 
 export function clearPanes(): void {
