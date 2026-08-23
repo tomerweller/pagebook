@@ -4,6 +4,7 @@ import src from "./main.ts?raw";
 import marketSrc from "./view/market.ts?raw";
 import paneSrc from "./wallet/pane.ts?raw";
 import ordersSrc from "./wallet/orders.ts?raw";
+import ticketSrc from "./wallet/ticket.ts?raw";
 
 test("N updates in one microtask coalesce to one renderAll", async () => {
   const store = createStore({ n: 0 });
@@ -83,13 +84,22 @@ test("keyFn skips unchanged views", async () => {
   expect(n).toBe(2);
 });
 
+function assertNoDirectWrites(text: string): void {
+  expect(text).not.toMatch(/\.innerHTML\s*=/);
+  expect(text).not.toMatch(/\.textContent\s*=/);
+  expect(text).not.toMatch(/\.className\s*=/);
+  expect(text).not.toMatch(/\.setAttribute\s*\(/);
+  expect(text).not.toMatch(/\.classList\./);
+  expect(text).not.toMatch(/insertAdjacentHTML/);
+}
+
 test("main.ts has no direct element writes", () => {
-  expect(src).not.toMatch(/\.innerHTML\s*=/);
-  expect(src).not.toMatch(/\.textContent\s*=/);
-  expect(src).not.toMatch(/\.className\s*=/);
-  expect(src).not.toMatch(/\.setAttribute\s*\(/);
-  expect(src).not.toMatch(/\.classList\./);
-  expect(src).not.toMatch(/insertAdjacentHTML/);
+  assertNoDirectWrites(src);
+});
+
+test("ticket.ts and orders.ts have no direct element writes", () => {
+  assertNoDirectWrites(ticketSrc);
+  assertNoDirectWrites(ordersSrc);
 });
 
 test("mutating a domain re-renders only its keyed view", async () => {
@@ -147,9 +157,37 @@ test("throwing keyed view retries on the same key", async () => {
   err.mockRestore();
 });
 
+test("nested set and mutating methods bump domain versions", () => {
+  const store = createStore({
+    book: { eventState: { cursor: null as string | null } },
+    wallet: { log: [] as string[] },
+    orders: { selected: [] as string[] },
+    versions: { book: 0, wallet: 0, orders: 0 },
+  });
+  store.update((s) => {
+    s.wallet.log.unshift("a");
+  });
+  expect(store.read().versions.wallet).toBe(1);
+  expect(store.read().wallet.log).toEqual(["a"]);
+  store.update((s) => {
+    s.orders.selected.push("n");
+  });
+  expect(store.read().versions.orders).toBe(1);
+  expect(store.read().orders.selected).toEqual(["n"]);
+  store.update((s) => {
+    s.book.eventState.cursor = "c";
+  });
+  expect(store.read().versions.book).toBe(1);
+  expect(store.read().book.eventState.cursor).toBe("c");
+});
+
 test("hand-enumerated market/wallet/orders keys are gone", () => {
   expect(marketSrc).not.toMatch(/function marketKey/);
   expect(paneSrc).not.toMatch(/function walletKey/);
   expect(ordersSrc).not.toMatch(/function structKey/);
   expect(ordersSrc).not.toMatch(/function liveKey/);
+  expect(ticketSrc).not.toMatch(/\bdraw\b/);
+  expect(ticketSrc).not.toMatch(/paintChrome/);
+  expect(ticketSrc).not.toMatch(/drawnSyms/);
+  expect(ticketSrc).not.toMatch(/setLive/);
 });

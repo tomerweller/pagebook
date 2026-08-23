@@ -576,13 +576,19 @@ export function createOrders(opts: {
         const n = t.dataset.nonce ?? "";
         app.update((s) => {
           if (t.checked) {
-            if (s.orders.selected.length >= MAX_REPLACE_BATCH) return;
+            if (s.orders.selected.length >= MAX_REPLACE_BATCH) {
+              // Cap rejection cannot be state-driven: the regenerated html is
+              // byte-identical, so the cache skips the write and the box would
+              // stay visually checked. Revert the DOM property directly (A5
+              // audit MUST-FIX).
+              t.checked = false;
+              return;
+            }
             if (!s.orders.selected.includes(n)) s.orders.selected.push(n);
           } else {
             s.orders.selected = s.orders.selected.filter((x) => x !== n);
           }
         });
-        if (t.checked && ui().selected.length >= MAX_REPLACE_BATCH && !ui().selected.includes(n)) t.checked = false;
       } else if (field === "rbid") {
         const qn = quant();
         const d = parseDecimal(ui().replacePriceStr);

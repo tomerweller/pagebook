@@ -195,6 +195,7 @@ export function mountWallet(opts: {
     },
   });
   const ticket = createTicket({
+    store: app,
     rpc: opts.rpc,
     contract: app.read().book.contract,
     getSecret: () => app.read().wallet.active?.secret ?? null,
@@ -305,8 +306,10 @@ export function mountWallet(opts: {
       bind();
       bound = true;
     }
-    const box = el.querySelector<HTMLElement>("#orders-root");
-    if (box) ordersPanel.draw(box);
+    const ordersBox = el.querySelector<HTMLElement>("#orders-root");
+    if (ordersBox) ordersPanel.draw(ordersBox);
+    const ticketBox = el.querySelector<HTMLElement>("#ticket-root");
+    if (ticketBox) ticket.attach(ticketBox);
   }
 
   function sec(name: string): HTMLElement | null {
@@ -315,14 +318,6 @@ export function mountWallet(opts: {
 
   function write(name: string, html: string): "skip" | "html" | "patch" {
     return cache.write(name, sec(name), html);
-  }
-
-  function paintTicket(): void {
-    const { wallet, book } = app.read();
-    const box = el.querySelector<HTMLElement>("#ticket-root");
-    if (!box || !wallet.active || !wallet.enabled) return;
-    ticket.setLive(book.snapshot, wallet.account, wallet.trustlines, book.overrides);
-    if (!box.querySelector(".ticket")) ticket.draw(box);
   }
 
   function renderWallet(): void {
@@ -368,7 +363,6 @@ export function mountWallet(opts: {
     write("keys", keysHtml(id, w));
     write("status", w.status ? `<p class="wallet-status">${esc(w.status)}</p>` : "");
     write("log", logHtml(w.log));
-    paintTicket();
   }
 
   function emptyHtml(w: WalletDomain): string {

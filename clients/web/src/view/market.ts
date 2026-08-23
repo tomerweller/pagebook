@@ -17,6 +17,7 @@ import { MarkupCache } from "./stable";
 import type { Store } from "../store";
 import type { WalletDomain } from "../wallet/pane";
 import type { OrdersDomain } from "../wallet/orders";
+import type { TicketDomain } from "../wallet/ticket";
 
 const paneCache = new MarkupCache();
 
@@ -60,7 +61,8 @@ export type AppState = {
   book: BookDomain;
   wallet: WalletDomain;
   orders: OrdersDomain;
-  versions: { book: number; wallet: number; orders: number };
+  ticket: TicketDomain;
+  versions: { book: number; wallet: number; orders: number; ticket: number };
 };
 
 export function emptyBookDomain(

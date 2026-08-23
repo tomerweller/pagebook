@@ -3,6 +3,7 @@ import { emptyBookDomain, registerMarketView, type AppState } from "./view/marke
 import type { UrlOverrides } from "./view/format";
 import { emptyWalletDomain, mountWallet, type WalletHandle } from "./wallet/pane";
 import { emptyOrdersDomain } from "./wallet/orders";
+import { emptyTicketDomain } from "./wallet/ticket";
 import { createStore } from "./store";
 import { refreshBookAndEvents } from "./sync";
 import "./style.css";
@@ -68,7 +69,8 @@ const store = createStore<AppState>({
   }),
   wallet: emptyWalletDomain(q.get("seed"), defaultCollapsed()),
   orders: emptyOrdersDomain(),
-  versions: { book: 0, wallet: 0, orders: 0 },
+  ticket: emptyTicketDomain(),
+  versions: { book: 0, wallet: 0, orders: 0, ticket: 0 },
 });
 
 let wallet: WalletHandle | null = null;

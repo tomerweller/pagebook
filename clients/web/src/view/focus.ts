@@ -10,6 +10,7 @@ export function swapPreservingFocus(node: Element, html: string): void {
   const value = input && input.type !== "checkbox" && input.type !== "radio" ? input.value : null;
   const start = input?.selectionStart ?? null;
   const end = input?.selectionEnd ?? null;
+  const dir = input?.selectionDirection ?? "none";
   const scrolls = captureScrolls(node);
   node.innerHTML = html;
   restoreScrolls(node, scrolls);
@@ -20,7 +21,7 @@ export function swapPreservingFocus(node: Element, html: string): void {
   next.focus();
   if (start != null && end != null && (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement)) {
     try {
-      next.setSelectionRange(start, end);
+      next.setSelectionRange(Math.min(start, end), Math.max(start, end), dir === "none" ? undefined : dir);
     } catch {
       /* not a text field */
     }

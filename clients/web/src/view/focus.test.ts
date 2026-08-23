@@ -32,6 +32,21 @@ test("swap preserves focused input value over generated html", () => {
   root.remove();
 });
 
+test("swap restores backward selection direction", () => {
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+  root.innerHTML = `<input data-field="rprice" value="12.50" />`;
+  const input = root.querySelector("input")!;
+  input.focus();
+  input.setSelectionRange(1, 3, "backward");
+  swapPreservingFocus(root, `<input data-field="rprice" value="12.50" />`);
+  const again = root.querySelector("input")!;
+  expect(again.selectionStart).toBe(1);
+  expect(again.selectionEnd).toBe(3);
+  expect(again.selectionDirection).toBe("backward");
+  root.remove();
+});
+
 test("swap restores descendant scroll", () => {
   const root = document.createElement("div");
   document.body.appendChild(root);

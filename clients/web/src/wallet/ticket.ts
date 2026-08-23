@@ -9,7 +9,9 @@ import { allocNonce } from "../engine/pad";
 import { countLabel, esc, txLink } from "../view/format";
 import { tokenDecimals, tokenLabel, type UrlOverrides } from "../view/format";
 import { parseAssetFromSacName, type AccountState, type TrustlineState } from "./account";
-import { setAttr, setHtml, setText } from "../view/stable";
+import { MarkupCache } from "../view/stable";
+import type { Store } from "../store";
+import type { AppState } from "../view/market";
 import {
   lotsToQty,
   minLotLabel,
@@ -128,9 +130,8 @@ export function typedErrorHtml(name: string): string {
 }
 
 export type TicketHandle = {
-  draw(root: HTMLElement): void;
+  attach(root: HTMLElement): void;
   prefill(side: "bid" | "ask", tick: number): void;
-  setLive(book: BookSnapshot | null, account: AccountState | null, trustlines: TrustlineState[], overrides: UrlOverrides): void;
 };
 
 type PreviewOk = {
@@ -146,11 +147,54 @@ type PreviewOk = {
   avg: string;
 };
 
-type PreviewState = PreviewOk | { kind: "typed"; name: string } | { kind: "err"; message: string } | { kind: "idle" } | { kind: "loading" };
+export type PreviewState = PreviewOk | { kind: "typed"; name: string } | { kind: "err"; message: string } | { kind: "idle" } | { kind: "loading" };
 
-type SubmitPhase = "idle" | "simulating" | "signing" | "sending" | "confirmed" | "failed";
+export type SubmitPhase = "idle" | "simulating" | "signing" | "sending" | "confirmed" | "failed";
+
+export type TicketDomain = {
+  isBid: boolean;
+  tick: number;
+  lots: bigint;
+  priceStr: string;
+  qtyStr: string;
+  priceSnapped: boolean;
+  flags: PlaceFlags;
+  preview: PreviewState;
+  phase: SubmitPhase;
+  phaseDetail: string;
+  lastHash: string;
+  lastNonce: bigint | null;
+  retryable: boolean;
+  focusQty: boolean;
+  previewGen: number;
+  previewQuoteKey: string;
+  submitting: boolean;
+};
+
+export function emptyTicketDomain(): TicketDomain {
+  return {
+    isBid: true,
+    tick: 1,
+    lots: 1n,
+    priceStr: "",
+    qtyStr: "",
+    priceSnapped: false,
+    flags: { post_only: false, fill_or_kill: false, no_rest: false },
+    preview: { kind: "idle" },
+    phase: "idle",
+    phaseDetail: "",
+    lastHash: "",
+    lastNonce: null,
+    retryable: false,
+    focusQty: false,
+    previewGen: 0,
+    previewQuoteKey: "",
+    submitting: false,
+  };
+}
 
 export function createTicket(opts: {
+  store: Store<AppState>;
   rpc: Rpc;
   contract: string;
   getSecret: () => string | null;
@@ -160,54 +204,59 @@ export function createTicket(opts: {
   onRested: (nonce: bigint) => void;
   onLog: (text: string, hash?: string) => void;
 }): TicketHandle {
-  let book: BookSnapshot | null = null;
-  let account: AccountState | null = null;
-  let trustlines: TrustlineState[] = [];
-  let overrides: UrlOverrides = { baseSym: null, quoteSym: null, baseDec: null, quoteDec: null };
-  let drawnSyms = "";
-  let isBid = true;
-  let tick = 1;
-  let lots = 1n;
-  let priceStr = "";
-  let qtyStr = "";
-  let priceSnapped = false;
-  let flags: PlaceFlags = { post_only: false, fill_or_kill: false, no_rest: false };
-  let preview: PreviewState = { kind: "idle" };
-  let phase: SubmitPhase = "idle";
-  let phaseDetail = "";
-  let lastHash = "";
-  let lastNonce: bigint | null = null;
-  let retryable = false;
-  let focusQty = false;
+  const app = opts.store;
   let previewTimer: ReturnType<typeof setTimeout> | null = null;
-  let previewGen = 0;
-  let previewQuoteKey = "";
   let rootEl: HTMLElement | null = null;
-  let submitting = false;
+  let bound = false;
+  const cache = new MarkupCache();
+
+  function snap(): BookSnapshot | null {
+    return app.read().book.snapshot;
+  }
+
+  function account(): AccountState | null {
+    return app.read().wallet.account;
+  }
+
+  function trustlines(): TrustlineState[] {
+    return app.read().wallet.trustlines;
+  }
+
+  function overrides(): UrlOverrides {
+    return app.read().book.overrides;
+  }
+
+  function tkt(): TicketDomain {
+    return app.read().ticket;
+  }
 
   function market(): MarketInfo | null {
-    return book?.market ?? null;
+    return snap()?.market ?? null;
   }
 
   function balances(): TicketBalances {
+    const book = snap();
+    const acc = account();
+    const tls = trustlines();
+    const ov = overrides();
     const baseClassic = book?.tokens.base?.name ? safeAsset(book.tokens.base.name) : null;
     const quoteClassic = book?.tokens.quote?.name ? safeAsset(book.tokens.quote.name) : null;
     const quoteTl =
       quoteClassic && quoteClassic.type === "credit"
-        ? trustlines.find((t) => t.asset.code === quoteClassic.code && t.asset.issuer === quoteClassic.issuer)
+        ? tls.find((t) => t.asset.code === quoteClassic.code && t.asset.issuer === quoteClassic.issuer)
         : undefined;
     const baseTl =
       baseClassic && baseClassic.type === "credit"
-        ? trustlines.find((t) => t.asset.code === baseClassic.code && t.asset.issuer === baseClassic.issuer)
+        ? tls.find((t) => t.asset.code === baseClassic.code && t.asset.issuer === baseClassic.issuer)
         : undefined;
     const baseIsNative = !baseClassic || baseClassic.type === "native";
     const quoteIsNative = quoteClassic?.type === "native";
     return {
-      funded: !!account?.exists,
-      xlmSpendable: account?.spendable ?? 0n,
-      baseAtoms: baseIsNative ? (account?.balance ?? 0n) : baseTl?.exists ? baseTl.balance : 0n,
+      funded: !!acc?.exists,
+      xlmSpendable: acc?.spendable ?? 0n,
+      baseAtoms: baseIsNative ? (acc?.balance ?? 0n) : baseTl?.exists ? baseTl.balance : 0n,
       quoteAtoms: quoteIsNative
-        ? (account?.balance ?? 0n)
+        ? (acc?.balance ?? 0n)
         : quoteTl
           ? quoteTl.exists
             ? quoteTl.balance
@@ -217,10 +266,10 @@ export function createTicket(opts: {
             : 0n,
       baseIsNative,
       quoteIsNative: !!quoteIsNative,
-      quoteSymbol: tokenLabel(book?.tokens.quote, overrides.quoteSym, book?.quote ?? null),
-      baseSymbol: tokenLabel(book?.tokens.base, overrides.baseSym, book?.base ?? null),
-      baseDec: tokenDecimals(book?.tokens.base, overrides.baseDec),
-      quoteDec: tokenDecimals(book?.tokens.quote, overrides.quoteDec),
+      quoteSymbol: tokenLabel(book?.tokens.quote, ov.quoteSym, book?.quote ?? null),
+      baseSymbol: tokenLabel(book?.tokens.base, ov.baseSym, book?.base ?? null),
+      baseDec: tokenDecimals(book?.tokens.base, ov.baseDec),
+      quoteDec: tokenDecimals(book?.tokens.quote, ov.quoteDec),
     };
   }
 
@@ -240,48 +289,62 @@ export function createTicket(opts: {
   }
 
   function applyPrice(raw: string): void {
-    priceStr = raw;
     const q = quant();
     const d = parseDecimal(raw);
-    if (!q || !d) {
-      tick = 0;
-      priceSnapped = false;
-      return;
-    }
-    const out = priceToTick(d, q, isBid);
-    tick = out.tick;
-    priceSnapped = out.snapped;
+    app.update((s) => {
+      s.ticket.priceStr = raw;
+      if (!q || !d) {
+        s.ticket.tick = 0;
+        s.ticket.priceSnapped = false;
+        return;
+      }
+      const out = priceToTick(d, q, s.ticket.isBid);
+      s.ticket.tick = out.tick;
+      s.ticket.priceSnapped = out.snapped;
+    });
   }
 
   function applyQty(raw: string): void {
-    qtyStr = raw;
     const q = quant();
     const d = parseDecimal(raw);
-    lots = q && d ? qtyToLots(d, q) : 0n;
+    app.update((s) => {
+      s.ticket.qtyStr = raw;
+      s.ticket.lots = q && d ? qtyToLots(d, q) : 0n;
+    });
   }
 
   function snapLine(qn: Quant): string {
     const b = balances();
-    const parts = [`tick ${tick}`];
-    if (priceSnapped) parts.push(`${tickToPrice(tick, qn)} ${b.quoteSymbol}`);
-    parts.push(`${lots.toString()} lots (${lotsToQty(lots, qn)} ${b.baseSymbol})`);
+    const t = tkt();
+    const parts = [`tick ${t.tick}`];
+    if (t.priceSnapped) parts.push(`${tickToPrice(t.tick, qn)} ${b.quoteSymbol}`);
+    parts.push(`${t.lots.toString()} lots (${lotsToQty(t.lots, qn)} ${b.baseSymbol})`);
     return `= ${parts.join(" · ")}`;
   }
 
-  function syncStrFromSnap(): void {
+  function displayPrice(): string {
+    const t = tkt();
+    if (t.priceStr) return t.priceStr;
     const q = quant();
-    if (!q) return;
-    if (!priceStr) priceStr = tickToPrice(tick, q);
-    if (!qtyStr) qtyStr = lotsToQty(lots, q);
+    return q ? tickToPrice(t.tick, q) : "";
+  }
+
+  function displayQty(): string {
+    const t = tkt();
+    if (t.qtyStr) return t.qtyStr;
+    const q = quant();
+    return q ? lotsToQty(t.lots, q) : "";
   }
 
   function validation() {
     const m = market();
+    const t = tkt();
     if (!m) return { ok: false as const, reason: "no Market entry" };
-    return validateTicket({ isBid, tick, lots, flags }, m, balances());
+    return validateTicket({ isBid: t.isBid, tick: t.tick, lots: t.lots, flags: t.flags }, m, balances());
   }
 
   function padTokens(): ClassicToken[] {
+    const book = snap();
     const out: ClassicToken[] = [];
     if (book?.base) {
       const a = book.tokens.base?.name ? safeAsset(book.tokens.base.name) : null;
@@ -321,10 +384,13 @@ export function createTicket(opts: {
   }
 
   function quoteKey(): string {
+    const book = snap();
+    const acc = account();
+    const t = tkt();
     const bid = book?.bestBid?.empty ? "-" : String(book?.bestBid?.tick ?? "");
     const ask = book?.bestAsk?.empty ? "-" : String(book?.bestAsk?.tick ?? "");
-    const seq = account?.sequence?.toString() ?? "";
-    const spend = account?.spendable?.toString() ?? "";
+    const seq = acc?.sequence?.toString() ?? "";
+    const spend = acc?.spendable?.toString() ?? "";
     const b = balances();
     return [
       bid,
@@ -335,12 +401,12 @@ export function createTicket(opts: {
       spend,
       b.baseAtoms.toString(),
       String(b.quoteAtoms),
-      isBid,
-      String(tick),
-      lots.toString(),
-      flags.post_only,
-      flags.fill_or_kill,
-      flags.no_rest,
+      t.isBid,
+      String(t.tick),
+      t.lots.toString(),
+      t.flags.post_only,
+      t.flags.fill_or_kill,
+      t.flags.no_rest,
       opts.getMarket(),
     ].join("|");
   }
@@ -349,74 +415,89 @@ export function createTicket(opts: {
     const pub = opts.getPublic();
     const m = market();
     const v = validation();
-    if (!pub || !m || !book?.base || !book.quote || !v.ok || !account?.exists) {
-      preview = { kind: "idle" };
-      previewQuoteKey = quoteKey();
-      paintChrome();
+    const book = snap();
+    const acc = account();
+    const t = tkt();
+    if (!pub || !m || !book?.base || !book.quote || !v.ok || !acc?.exists) {
+      app.update((s) => {
+        s.ticket.preview = { kind: "idle" };
+        s.ticket.previewQuoteKey = quoteKey();
+      });
       return;
     }
-    const gen = ++previewGen;
-    preview = { kind: "loading" };
-    paintChrome();
+    let gen = 0;
+    app.update((s) => {
+      s.ticket.previewGen += 1;
+      gen = s.ticket.previewGen;
+      if (s.ticket.preview.kind === "idle") s.ticket.preview = { kind: "loading" };
+      s.ticket.previewQuoteKey = quoteKey();
+    });
     try {
       const q = await simulatePlace(opts.rpc, {
         contract: opts.contract,
         source: pub,
-        sequence: account.sequence.toString(),
+        sequence: acc.sequence.toString(),
         market: opts.getMarket(),
-        isBid,
-        limitTick: tick,
-        qty: lots,
+        isBid: t.isBid,
+        limitTick: t.tick,
+        qty: t.lots,
         taker: pub,
-        nonce: lastNonce ?? 1n,
+        nonce: t.lastNonce ?? 1n,
         base: book.base,
         quote: book.quote,
       });
-      if (gen !== previewGen) return;
-      const disp = remainderDisposition(q.filledLots, lots, flags);
+      if (gen !== app.read().ticket.previewGen) return;
+      const cur = tkt();
+      const disp = remainderDisposition(q.filledLots, cur.lots, cur.flags);
       if (disp === "crossed") {
-        preview = { kind: "typed", name: "Crossed" };
-        previewQuoteKey = quoteKey();
-        paintChrome();
+        app.update((s) => {
+          s.ticket.preview = { kind: "typed", name: "Crossed" };
+          s.ticket.previewQuoteKey = quoteKey();
+        });
         return;
       }
       if (disp === "unfilled") {
-        preview = { kind: "typed", name: "Unfilled" };
-        previewQuoteKey = quoteKey();
-        paintChrome();
+        app.update((s) => {
+          s.ticket.preview = { kind: "typed", name: "Unfilled" };
+          s.ticket.previewQuoteKey = quoteKey();
+        });
         return;
       }
-      const feeIsQuote = !isBid;
-      const output = isBid ? q.filledLots * m.lot_size : q.quoteAtoms;
+      const feeIsQuote = !cur.isBid;
+      const output = cur.isBid ? q.filledLots * m.lot_size : q.quoteAtoms;
       const feeAtoms = takerFeeAtoms(output, m.taker_fee_bps);
-      const padded = pad(q.quoted, tick);
+      const padded = pad(q.quoted, cur.tick);
       const padFee = estimatePaddedFee(padded.keys.length);
-      const rem = lots - q.filledLots;
+      const rem = cur.lots - q.filledLots;
+      const ov = overrides();
       const avg =
         q.filledLots > 0n
-          ? formatRatio(q.quoteAtoms * 10n ** BigInt(tokenDecimals(book.tokens.base, overrides.baseDec)), q.filledLots * m.lot_size * 10n ** BigInt(tokenDecimals(book.tokens.quote, overrides.quoteDec)))
+          ? formatRatio(q.quoteAtoms * 10n ** BigInt(tokenDecimals(book.tokens.base, ov.baseDec)), q.filledLots * m.lot_size * 10n ** BigInt(tokenDecimals(book.tokens.quote, ov.quoteDec)))
           : "—";
-      preview = {
-        kind: "ok",
-        filledLots: q.filledLots,
-        quoteAtoms: q.quoteAtoms,
-        feeAtoms,
-        feeIsQuote,
-        remainder: rem < 0n ? 0n : rem,
-        disposition: disp,
-        crossed: q.quoted.crossed.length,
-        padFee,
-        avg,
-      };
+      app.update((s) => {
+        s.ticket.preview = {
+          kind: "ok",
+          filledLots: q.filledLots,
+          quoteAtoms: q.quoteAtoms,
+          feeAtoms,
+          feeIsQuote,
+          remainder: rem < 0n ? 0n : rem,
+          disposition: disp,
+          crossed: q.quoted.crossed.length,
+          padFee,
+          avg,
+        };
+        s.ticket.previewQuoteKey = quoteKey();
+      });
     } catch (e) {
-      if (gen !== previewGen) return;
+      if (gen !== app.read().ticket.previewGen) return;
       const msg = e instanceof Error ? e.message : String(e);
       const code = parseContractError(msg);
-      preview = code != null ? { kind: "typed", name: errorName(code) } : { kind: "err", message: msg };
+      app.update((s) => {
+        s.ticket.preview = code != null ? { kind: "typed", name: errorName(code) } : { kind: "err", message: msg };
+        s.ticket.previewQuoteKey = s.ticket.preview.kind === "err" ? "" : quoteKey();
+      });
     }
-    if (preview.kind === "err") previewQuoteKey = "";
-    else previewQuoteKey = quoteKey();
-    paintChrome();
   }
 
   async function submit(reuseNonce: boolean): Promise<void> {
@@ -424,129 +505,124 @@ export function createTicket(opts: {
     const pub = opts.getPublic();
     const m = market();
     const v = validation();
-    if (!secret || !pub || !m || !book?.base || !book.quote || !v.ok || !account?.exists) return;
-    if (preview.kind === "typed" && preview.name === "Crossed") return;
-    if (submitting) return;
-    submitting = true;
-    retryable = false;
-    phase = "simulating";
-    phaseDetail = "";
-    lastHash = "";
-    paintChrome();
+    const book = snap();
+    const acc = account();
+    const t = tkt();
+    if (!secret || !pub || !m || !book?.base || !book.quote || !v.ok || !acc?.exists) return;
+    if (t.preview.kind === "typed" && t.preview.name === "Crossed") return;
+    if (t.submitting) return;
+    app.update((s) => {
+      s.ticket.submitting = true;
+      s.ticket.retryable = false;
+      s.ticket.phase = "simulating";
+      s.ticket.phaseDetail = "";
+      s.ticket.lastHash = "";
+    });
     try {
       const hint = BigInt(Date.now()) * 1000n + BigInt(Math.floor(Math.random() * 1000));
-      const nonce = reuseNonce && lastNonce != null ? lastNonce : await allocNonce(opts.rpc, opts.contract, opts.getMarket(), pub, hint);
-      lastNonce = nonce;
+      const cur = tkt();
+      const nonce = reuseNonce && cur.lastNonce != null ? cur.lastNonce : await allocNonce(opts.rpc, opts.contract, opts.getMarket(), pub, hint);
+      app.update((s) => {
+        s.ticket.lastNonce = nonce;
+      });
       const q = await simulatePlace(opts.rpc, {
         contract: opts.contract,
         source: pub,
-        sequence: account.sequence.toString(),
+        sequence: acc.sequence.toString(),
         market: opts.getMarket(),
-        isBid,
-        limitTick: tick,
-        qty: lots,
+        isBid: cur.isBid,
+        limitTick: cur.tick,
+        qty: cur.lots,
         taker: pub,
         nonce,
         base: book.base,
         quote: book.quote,
       });
-      const disp = remainderDisposition(q.filledLots, lots, flags);
+      const now = tkt();
+      const disp = remainderDisposition(q.filledLots, now.lots, now.flags);
       if (disp === "crossed") {
-        phase = "failed";
-        phaseDetail = plainError("Crossed");
-        paintChrome();
+        app.update((s) => {
+          s.ticket.phase = "failed";
+          s.ticket.phaseDetail = plainError("Crossed");
+        });
         return;
       }
-      phase = "signing";
-      paintChrome();
-      phase = "sending";
-      paintChrome();
-      const out = pad(q.quoted, tick);
+      app.update((s) => {
+        s.ticket.phase = "signing";
+      });
+      app.update((s) => {
+        s.ticket.phase = "sending";
+      });
+      const out = pad(q.quoted, now.tick);
       const res = await submitPlace(opts.rpc, {
         contract: opts.contract,
         secret,
         taker: pub,
         market: opts.getMarket(),
-        isBid,
-        limitTick: tick,
-        qtyLots: lots,
+        isBid: now.isBid,
+        limitTick: now.tick,
+        qtyLots: now.lots,
         startTick: q.quoted.startTick,
         nonce,
         window: out.window,
-        flags,
+        flags: now.flags,
         quoted: q.quoted,
         tokens: padTokens(),
-        padEnd: tick,
+        padEnd: now.tick,
       });
       applyResult(res, q.filledLots, q.quoteAtoms, disp === "rests", nonce);
     } catch (e) {
-      phase = "failed";
-      phaseDetail = e instanceof Error ? e.message : String(e);
-      paintChrome();
+      app.update((s) => {
+        s.ticket.phase = "failed";
+        s.ticket.phaseDetail = e instanceof Error ? e.message : String(e);
+      });
     } finally {
-      submitting = false;
+      app.update((s) => {
+        s.ticket.submitting = false;
+      });
     }
   }
 
   function applyResult(res: EngineResult, filledLots: bigint, quoteAtoms: bigint, rested: boolean, nonce: bigint): void {
+    const t = tkt();
     if (res.kind === "ok") {
-      phase = "confirmed";
-      lastHash = res.hash;
       const fee = res.fee ? ` · fee ${res.fee} stroops charged` : "";
-      phaseDetail = `took ${filledLots.toString()} lots · ${quoteAtoms.toString()} quote atoms${rested ? " · rests" : ""}${fee}`;
-      opts.onLog(`place ${isBid ? "bid" : "ask"} ${tick}`, res.hash);
+      app.update((s) => {
+        s.ticket.phase = "confirmed";
+        s.ticket.lastHash = res.hash;
+        s.ticket.phaseDetail = `took ${filledLots.toString()} lots · ${quoteAtoms.toString()} quote atoms${rested ? " · rests" : ""}${fee}`;
+        s.ticket.lastNonce = null;
+      });
+      opts.onLog(`place ${t.isBid ? "bid" : "ask"} ${t.tick}`, res.hash);
       if (rested) opts.onRested(nonce);
-      lastNonce = null;
       opts.onRefresh();
     } else if (res.kind === "typed") {
-      phase = "failed";
-      phaseDetail = plainError(res.errorName);
-      lastHash = res.hash ?? "";
-      retryable = res.errorName === "RetryRest";
+      app.update((s) => {
+        s.ticket.phase = "failed";
+        s.ticket.phaseDetail = plainError(res.errorName);
+        s.ticket.lastHash = res.hash ?? "";
+        s.ticket.retryable = res.errorName === "RetryRest";
+      });
       opts.onLog(`place ${res.errorName}`, res.hash);
     } else if (res.kind === "footprint") {
-      phase = "failed";
-      phaseDetail = "footprint";
-      lastHash = res.hash ?? "";
+      app.update((s) => {
+        s.ticket.phase = "failed";
+        s.ticket.phaseDetail = "footprint";
+        s.ticket.lastHash = res.hash ?? "";
+      });
       opts.onLog("place footprint", res.hash);
     } else {
-      phase = "failed";
-      phaseDetail = res.message;
-      lastHash = res.hash ?? "";
+      app.update((s) => {
+        s.ticket.phase = "failed";
+        s.ticket.phaseDetail = res.message;
+        s.ticket.lastHash = res.hash ?? "";
+      });
       opts.onLog("place failed", res.hash);
     }
-    paintChrome();
-  }
-
-  function paintChrome(): void {
-    if (!rootEl) return;
-    const v = validation();
-    const human = rootEl.querySelector("[data-role=human]");
-    const m = market();
-    const qn = quant();
-    if (human && m && qn) setText(human, snapLine(qn));
-    const why = rootEl.querySelector("[data-role=why]");
-    if (why) {
-      setText(why, v.ok ? "" : v.reason);
-      setAttr(why, "title", v.ok ? "" : (v.title ?? ""));
-    }
-    const buyBtn = rootEl.querySelector<HTMLButtonElement>("[data-act=buy]");
-    const sellBtn = rootEl.querySelector<HTMLButtonElement>("[data-act=sell]");
-    if (buyBtn && buyBtn.className !== (isBid ? "on bid" : "")) buyBtn.className = isBid ? "on bid" : "";
-    if (sellBtn && sellBtn.className !== (!isBid ? "on ask" : "")) sellBtn.className = !isBid ? "on ask" : "";
-    const btn = rootEl.querySelector<HTMLButtonElement>("[data-act=place]");
-    if (btn) {
-      const off = !v.ok || phase === "simulating" || phase === "signing" || phase === "sending" || (preview.kind === "typed" && preview.name === "Crossed");
-      if (btn.disabled !== off) btn.disabled = off;
-      setText(btn, `${isBid ? "BUY" : "SELL"} ${balances().baseSymbol}`);
-      const cls = `ticket-cta ${isBid ? "bid" : "ask"}`;
-      if (btn.className !== cls) btn.className = cls;
-    }
-    setHtml(rootEl.querySelector("[data-role=preview]"), previewHtml());
-    setHtml(rootEl.querySelector("[data-role=strip]"), stripHtml());
   }
 
   function previewHtml(): string {
+    const preview = tkt().preview;
     if (preview.kind === "idle") return "";
     if (preview.kind === "loading") return `<p class="wallet-muted">preview…</p>`;
     if (preview.kind === "err") return `<p class="wallet-status">${esc(preview.message)}</p>`;
@@ -569,37 +645,41 @@ export function createTicket(opts: {
   }
 
   function stripHtml(): string {
-    if (phase === "idle") return "";
+    const t = tkt();
+    if (t.phase === "idle") return "";
     const label =
-      phase === "simulating"
+      t.phase === "simulating"
         ? "simulating"
-        : phase === "signing"
+        : t.phase === "signing"
           ? "signing"
-          : phase === "sending"
+          : t.phase === "sending"
             ? "sending"
-            : phase === "confirmed"
+            : t.phase === "confirmed"
               ? "confirmed"
               : "failed";
-    const hash = lastHash ? ` ${txLink(lastHash)}` : "";
-    const retry = retryable ? ` <button type="button" data-act="retry">retry</button>` : "";
-    return `<p class="ticket-strip">${esc(label)}${phaseDetail ? ` · ${esc(phaseDetail)}` : ""}${hash}${retry}</p>`;
+    const hash = t.lastHash ? ` ${txLink(t.lastHash)}` : "";
+    const retry = t.retryable ? ` <button type="button" data-act="retry">retry</button>` : "";
+    return `<p class="ticket-strip">${esc(label)}${t.phaseDetail ? ` · ${esc(t.phaseDetail)}` : ""}${hash}${retry}</p>`;
   }
 
   function fullHtml(): string {
     const v = validation();
     const qn = quant();
     const b = balances();
+    const t = tkt();
     const human = qn ? snapLine(qn) : "";
     const sym = b.baseSymbol;
     const qsym = b.quoteSymbol;
-    const busy = submitting || phase === "simulating" || phase === "signing" || phase === "sending";
+    const busy = t.submitting || t.phase === "simulating" || t.phase === "signing" || t.phase === "sending";
     const pStep = qn ? oneTickPriceStep(qn) : "any";
     const qStep = qn ? oneLotQtyStep(qn) : "any";
+    const priceStr = displayPrice();
+    const qtyStr = displayQty();
     return `<section class="ticket">
       <h3>place order</h3>
       <div class="ticket-side">
-        <button type="button" data-act="buy" class="${isBid ? "on bid" : ""}">BUY ${esc(sym)}</button>
-        <button type="button" data-act="sell" class="${!isBid ? "on ask" : ""}">SELL ${esc(sym)}</button>
+        <button type="button" data-act="buy" class="${t.isBid ? "on bid" : ""}">BUY ${esc(sym)}</button>
+        <button type="button" data-act="sell" class="${!t.isBid ? "on ask" : ""}">SELL ${esc(sym)}</button>
       </div>
       <div class="ticket-fields">
         <label><span class="ticket-label" title="price · ${esc(qsym)} per ${esc(sym)}">price · ${esc(qsym)}/${esc(sym)}</span> <input class="wallet-input" data-field="price" inputmode="decimal" step="${esc(pStep)}" value="${esc(priceStr)}" /></label>
@@ -607,111 +687,121 @@ export function createTicket(opts: {
       </div>
       <p class="wallet-muted" data-role="human">${esc(human)}</p>
       <div class="ticket-flags">
-        <label class="ticket-flag" title="rest only; reject if the order would take"><input type="checkbox" data-flag="post_only" ${flags.post_only ? "checked" : ""} /> post-only</label>
-        <label class="ticket-flag" title="fill completely or revert; nothing rests"><input type="checkbox" data-flag="fill_or_kill" ${flags.fill_or_kill ? "checked" : ""} /> fill-or-kill</label>
-        <label class="ticket-flag" title="take what is there and refund the rest; do not rest"><input type="checkbox" data-flag="no_rest" ${flags.no_rest ? "checked" : ""} /> no-rest</label>
+        <label class="ticket-flag" title="rest only; reject if the order would take"><input type="checkbox" data-flag="post_only" ${t.flags.post_only ? "checked" : ""} /> post-only</label>
+        <label class="ticket-flag" title="fill completely or revert; nothing rests"><input type="checkbox" data-flag="fill_or_kill" ${t.flags.fill_or_kill ? "checked" : ""} /> fill-or-kill</label>
+        <label class="ticket-flag" title="take what is there and refund the rest; do not rest"><input type="checkbox" data-flag="no_rest" ${t.flags.no_rest ? "checked" : ""} /> no-rest</label>
       </div>
       <p class="wallet-muted" data-role="why">${v.ok ? "" : esc(v.reason)}</p>
       <div data-role="preview">${previewHtml()}</div>
-      <button type="button" data-act="place" class="ticket-cta ${isBid ? "bid" : "ask"}" ${!v.ok || busy ? "disabled" : ""}>${isBid ? "BUY" : "SELL"} ${esc(sym)}</button>
+      <button type="button" data-act="place" class="ticket-cta ${t.isBid ? "bid" : "ask"}" ${!v.ok || busy || (t.preview.kind === "typed" && t.preview.name === "Crossed") ? "disabled" : ""}>${t.isBid ? "BUY" : "SELL"} ${esc(sym)}</button>
       <div data-role="strip">${stripHtml()}</div>
     </section>`;
   }
 
   function bind(root: HTMLElement): void {
-    root.querySelector("[data-act=buy]")?.addEventListener("click", () => {
-      isBid = true;
-      applyPrice(priceStr);
-      kickPreview();
-      draw(root);
-    });
-    root.querySelector("[data-act=sell]")?.addEventListener("click", () => {
-      isBid = false;
-      applyPrice(priceStr);
-      kickPreview();
-      draw(root);
-    });
-    root.querySelector("[data-field=price]")?.addEventListener("input", (e) => {
-      applyPrice((e.target as HTMLInputElement).value);
-      schedulePreview();
-      paintChrome();
-    });
-    root.querySelector("[data-field=qty]")?.addEventListener("input", (e) => {
-      applyQty((e.target as HTMLInputElement).value);
-      schedulePreview();
-      paintChrome();
-    });
-    root.querySelectorAll("[data-flag]").forEach((el) => {
-      el.addEventListener("change", () => {
-        const box = el as HTMLInputElement;
-        const key = box.dataset.flag as keyof PlaceFlags;
-        flags = { ...flags, [key]: box.checked };
+    root.addEventListener("click", (e) => {
+      const el = (e.target as HTMLElement).closest("[data-act]") as HTMLElement | null;
+      if (!el || !root.contains(el)) return;
+      const act = el.dataset.act;
+      if (act === "buy") {
+        app.update((s) => {
+          s.ticket.isBid = true;
+        });
+        applyPrice(tkt().priceStr);
         kickPreview();
-        paintChrome();
+      } else if (act === "sell") {
+        app.update((s) => {
+          s.ticket.isBid = false;
+        });
+        applyPrice(tkt().priceStr);
+        kickPreview();
+      } else if (act === "place") {
+        void submit(false);
+      } else if (act === "retry") {
+        void submit(true);
+      }
+    });
+    root.addEventListener("input", (e) => {
+      const el = e.target as HTMLInputElement;
+      const field = el.dataset.field;
+      if (field === "price") {
+        applyPrice(el.value);
+        schedulePreview();
+      } else if (field === "qty") {
+        applyQty(el.value);
+        schedulePreview();
+      }
+    });
+    root.addEventListener("change", (e) => {
+      const el = e.target as HTMLInputElement;
+      const key = el.dataset.flag as keyof PlaceFlags | undefined;
+      if (!key) return;
+      app.update((s) => {
+        s.ticket.flags = { ...s.ticket.flags, [key]: el.checked };
       });
-    });
-    root.querySelector("[data-act=place]")?.addEventListener("click", () => {
-      void submit(false);
-    });
-    root.querySelector("[data-act=retry]")?.addEventListener("click", () => {
-      void submit(true);
+      kickPreview();
     });
   }
 
-  function draw(root: HTMLElement): void {
-    rootEl = root;
-    const active = document.activeElement;
-    const keep = active instanceof HTMLElement && root.contains(active) && !!root.querySelector("[data-field=price]");
-    if (keep) {
-      paintChrome();
+  function maybeDefaultTick(): void {
+    const book = snap();
+    const t = tkt();
+    if (t.tick !== 1 || !book || book.bestAsk.empty || !t.isBid) return;
+    const q = quant();
+    app.update((s) => {
+      if (s.ticket.tick !== 1) return;
+      s.ticket.tick = book.bestAsk.tick;
+      if (q) s.ticket.priceStr = tickToPrice(s.ticket.tick, q);
+    });
+  }
+
+  function renderTicket(): void {
+    if (!rootEl) return;
+    const w = app.read().wallet;
+    if (!w.enabled || !w.active) {
+      cache.write("ticket", rootEl, "");
       return;
     }
-    syncStrFromSnap();
-    root.innerHTML = fullHtml();
-    bind(root);
-    if (focusQty) {
-      focusQty = false;
-      root.querySelector<HTMLInputElement>("[data-field=qty]")?.focus();
+    maybeDefaultTick();
+    cache.write("ticket", rootEl, fullHtml());
+    if (!bound) {
+      bind(rootEl);
+      bound = true;
     }
+    if (tkt().focusQty) {
+      app.update((s) => {
+        s.ticket.focusQty = false;
+      });
+      rootEl.querySelector<HTMLInputElement>("[data-field=qty]")?.focus();
+    }
+    if (quoteKey() !== tkt().previewQuoteKey) schedulePreview();
   }
 
-  return {
-    draw,
-    prefill(side, t) {
-      isBid = side === "ask";
-      tick = t;
-      priceSnapped = false;
-      const q = quant();
-      if (q) priceStr = tickToPrice(t, q);
-      focusQty = true;
-      phase = "idle";
-      kickPreview();
-      if (rootEl) draw(rootEl);
+  app.register(
+    "ticket",
+    () => renderTicket(),
+    () => {
+      const v = app.read().versions;
+      return `${v.book}|${v.wallet}|${v.ticket}`;
     },
-    setLive(nextBook, nextAccount, nextTrust, nextOverrides) {
-      book = nextBook;
-      account = nextAccount;
-      trustlines = nextTrust;
-      overrides = nextOverrides;
-      // The chrome (labels, side buttons) embeds token symbols; redraw once
-      // when they resolve or the market changes, else it keeps its first
-      // pre-metadata render forever (mount-once since the surgical-render
-      // round). draw() itself preserves focus.
-      const symsNow = `${tokenLabel(book?.tokens.base ?? null, overrides.baseSym, book?.base ?? null)}/${tokenLabel(book?.tokens.quote ?? null, overrides.quoteSym, book?.quote ?? null)}`;
-      if (rootEl && symsNow !== drawnSyms) {
-        draw(rootEl);
-        drawnSyms = symsNow;
-      }
-      if (rootEl) {
-        if (tick === 1 && nextBook && !nextBook.bestAsk.empty && isBid) {
-          tick = nextBook.bestAsk.tick;
-          const q = quant();
-          if (q) priceStr = tickToPrice(tick, q);
-        }
-        syncStrFromSnap();
-        paintChrome();
-        if (quoteKey() !== previewQuoteKey) schedulePreview();
-      }
+  );
+
+  return {
+    attach(root) {
+      rootEl = root;
+      renderTicket();
+    },
+    prefill(side, tickN) {
+      const q = quant();
+      app.update((s) => {
+        s.ticket.isBid = side === "ask";
+        s.ticket.tick = tickN;
+        s.ticket.priceSnapped = false;
+        if (q) s.ticket.priceStr = tickToPrice(tickN, q);
+        s.ticket.focusQty = true;
+        s.ticket.phase = "idle";
+      });
+      kickPreview();
     },
   };
 }

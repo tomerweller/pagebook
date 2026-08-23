@@ -11,6 +11,7 @@ import { createStore } from "./store";
 import { emptyBookDomain, registerMarketView, type AppState } from "./view/market";
 import { emptyWalletDomain, mountWallet } from "./wallet/pane";
 import { emptyOrdersDomain } from "./wallet/orders";
+import { emptyTicketDomain } from "./wallet/ticket";
 
 const emptyOv: UrlOverrides = { baseSym: null, quoteSym: null, baseDec: null, quoteDec: null };
 
@@ -29,12 +30,19 @@ function stubRpc(sims: { n: number }): Rpc {
   } as unknown as Rpc;
 }
 
-function ticketOpts(rpc: Rpc) {
+const testId = {
+  name: "t",
+  publicKey: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+  secret: "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHW4",
+};
+
+function ticketOpts(rpc: Rpc, store: ReturnType<typeof createStore<AppState>>) {
   return {
+    store,
     rpc,
     contract: "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO",
     getSecret: () => null,
-    getPublic: () => "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    getPublic: () => testId.publicKey,
     getMarket: () => 1,
     onRefresh: () => {},
     onRested: () => {},
@@ -58,14 +66,29 @@ function namedBook(): BookSnapshot {
   };
 }
 
-test("late token metadata updates BUY text and price label", () => {
+function liveWallet(store: ReturnType<typeof createStore<AppState>>): void {
+  store.update((s) => {
+    s.wallet.enabled = true;
+    s.wallet.active = testId;
+  });
+}
+
+test("late token metadata updates BUY text and price label", async () => {
+  const store = createStore<AppState>(emptyApp());
   const root = document.createElement("div");
   document.body.appendChild(root);
-  const t = createTicket(ticketOpts(stubRpc({ n: 0 })));
-  t.draw(root);
-  t.setLive(bareBook(), null, [], emptyOv);
+  const t = createTicket(ticketOpts(stubRpc({ n: 0 }), store));
+  t.attach(root);
+  liveWallet(store);
+  store.update((s) => {
+    s.book.snapshot = bareBook();
+  });
+  await flush();
   expect(root.querySelector("[data-act=place]")?.textContent).toMatch(/\?/);
-  t.setLive(namedBook(), null, [], emptyOv);
+  store.update((s) => {
+    s.book.snapshot = namedBook();
+  });
+  await flush();
   expect(root.querySelector("[data-act=place]")?.textContent).toMatch(/XLM/);
   const priceLabel = root.querySelector("[data-field=price]")?.closest("label")?.textContent ?? "";
   expect(priceLabel).toMatch(/USDC/);
@@ -73,17 +96,23 @@ test("late token metadata updates BUY text and price label", () => {
   root.remove();
 });
 
-test("SELL click while price is focused flips side classes and CTA", () => {
+test("SELL click while price is focused flips side classes and CTA", async () => {
+  const store = createStore<AppState>(emptyApp());
   const root = document.createElement("div");
   document.body.appendChild(root);
-  const t = createTicket(ticketOpts(stubRpc({ n: 0 })));
-  t.draw(root);
-  t.setLive(namedBook(), null, [], emptyOv);
+  const t = createTicket(ticketOpts(stubRpc({ n: 0 }), store));
+  t.attach(root);
+  liveWallet(store);
+  store.update((s) => {
+    s.book.snapshot = namedBook();
+  });
+  await flush();
   const price = root.querySelector<HTMLInputElement>("[data-field=price]");
   expect(price).toBeTruthy();
   price!.focus();
   expect(document.activeElement).toBe(price);
   root.querySelector<HTMLButtonElement>("[data-act=sell]")!.click();
+  await flush();
   expect(root.querySelector("[data-act=sell]")?.className).toMatch(/on ask/);
   expect(root.querySelector("[data-act=buy]")?.className).not.toMatch(/on bid/);
   expect(root.querySelector("[data-act=place]")?.textContent).toMatch(/SELL/);
@@ -127,7 +156,7 @@ async function flush(n = 8): Promise<void> {
 function mountOrders(store: ReturnType<typeof createStore<AppState>>) {
   const root = document.createElement("div");
   document.body.appendChild(root);
-  const orders = createOrders({ store, ...ticketOpts(stubRpc({ n: 0 })) });
+  const orders = createOrders({ ...ticketOpts(stubRpc({ n: 0 }), store), getMarket: () => 0 });
   orders.draw(root);
   return root;
 }
@@ -203,10 +232,11 @@ test("typing in replace price updates net preview while focused", async () => {
 });
 
 function liveTicket(sims: { n: number }) {
+  const store = createStore<AppState>(emptyApp());
   const root = document.createElement("div");
   document.body.appendChild(root);
-  const t = createTicket(ticketOpts(stubRpc(sims)));
-  t.draw(root);
+  const t = createTicket(ticketOpts(stubRpc(sims), store));
+  t.attach(root);
   const book = namedBook();
   const acc = { exists: true, balance: 10n ** 10n, spendable: 10n ** 10n, sequence: 1n, numSubEntries: 0 };
   const usdc = {
@@ -214,18 +244,31 @@ function liveTicket(sims: { n: number }) {
     exists: true,
     balance: 10n ** 12n,
   };
-  return { root, t, book, acc, usdc };
+  liveWallet(store);
+  store.update((s) => {
+    s.book.snapshot = book;
+    s.wallet.account = acc;
+    s.wallet.trustlines = [usdc];
+  });
+  return { root, t, book, acc, usdc, store };
 }
 
 test("idle ticket does not simulate on an unchanged book", async () => {
   const sims = { n: 0 };
-  const { root, t, book, acc, usdc } = liveTicket(sims);
-  t.setLive(book, acc, [usdc], emptyOv);
+  const { root, store, book, acc, usdc } = liveTicket(sims);
   await new Promise((r) => setTimeout(r, 500));
   const afterFirst = sims.n;
   expect(afterFirst).toBeGreaterThan(0);
-  t.setLive({ ...book, latestLedger: book.latestLedger + 1 }, acc, [usdc], emptyOv);
-  t.setLive({ ...book, latestLedger: book.latestLedger + 2 }, acc, [usdc], emptyOv);
+  store.update((s) => {
+    s.book.snapshot = { ...book, latestLedger: book.latestLedger + 1 };
+    s.wallet.account = acc;
+    s.wallet.trustlines = [usdc];
+  });
+  store.update((s) => {
+    s.book.snapshot = { ...book, latestLedger: book.latestLedger + 2 };
+    s.wallet.account = acc;
+    s.wallet.trustlines = [usdc];
+  });
   await new Promise((r) => setTimeout(r, 500));
   expect(sims.n).toBe(afterFirst);
   root.remove();
@@ -233,13 +276,16 @@ test("idle ticket does not simulate on an unchanged book", async () => {
 
 test("best-ask size change re-runs preview", async () => {
   const sims = { n: 0 };
-  const { root, t, book, acc, usdc } = liveTicket(sims);
-  t.setLive(book, acc, [usdc], emptyOv);
+  const { root, store, book, acc, usdc } = liveTicket(sims);
   await new Promise((r) => setTimeout(r, 500));
   const afterFirst = sims.n;
   expect(afterFirst).toBeGreaterThan(0);
   const asks = book.asks.map((r, i) => (i === 0 ? { ...r, open_lots: r.open_lots + 3n } : r));
-  t.setLive({ ...book, asks, latestLedger: book.latestLedger + 1 }, acc, [usdc], emptyOv);
+  store.update((s) => {
+    s.book.snapshot = { ...book, asks, latestLedger: book.latestLedger + 1 };
+    s.wallet.account = acc;
+    s.wallet.trustlines = [usdc];
+  });
   await new Promise((r) => setTimeout(r, 500));
   expect(sims.n).toBeGreaterThan(afterFirst);
   root.remove();
@@ -269,7 +315,8 @@ function emptyApp(): AppState {
     }),
     wallet: emptyWalletDomain(null),
     orders: emptyOrdersDomain(),
-    versions: { book: 0, wallet: 0, orders: 0 },
+    ticket: emptyTicketDomain(),
+    versions: { book: 0, wallet: 0, orders: 0, ticket: 0 },
   };
 }
 
@@ -377,4 +424,26 @@ test("reveal secret paints immediately while the button is focused", async () =>
   btn!.click();
   await flush();
   expect(document.querySelector(".wallet-secret")?.textContent).toMatch(/SAAA/);
+});
+
+test("batch-cap rejection unchecks the box even when html is unchanged", async () => {
+  // A5 audit MUST-FIX: state-only rejection is skipped by the cache because
+  // the regenerated html is byte-identical; the handler must revert the DOM
+  // property itself.
+  const store = createStore<AppState>(emptyApp());
+  const root = mountOrders(store);
+  const rows = Array.from({ length: 41 }, (_, i) => sampleOrder(BigInt(1000 + i)));
+  store.update((s) => {
+    s.book.snapshot = mockSnapshot();
+    s.wallet.openOrders = rows;
+    s.orders.selected = rows.slice(0, 40).map((r) => r.nonce.toString());
+  });
+  await flush();
+  const boxes = [...root.querySelectorAll<HTMLInputElement>('input[data-act="sel"]')];
+  const extra = boxes.find((b) => !b.checked);
+  if (!extra) throw new Error("fixture needs an unselected row");
+  extra.checked = true;
+  extra.dispatchEvent(new Event("change", { bubbles: true }));
+  await flush();
+  expect(extra.checked).toBe(false);
 });

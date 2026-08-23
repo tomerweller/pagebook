@@ -5,6 +5,7 @@ import { refreshBookAndEvents } from "./sync";
 import { emptyBookDomain, type AppState } from "./view/market";
 import { emptyWalletDomain } from "./wallet/pane";
 import { emptyOrdersDomain } from "./wallet/orders";
+import { emptyTicketDomain } from "./wallet/ticket";
 import type { UrlOverrides } from "./view/format";
 
 const emptyOv: UrlOverrides = { baseSym: null, quoteSym: null, baseDec: null, quoteDec: null };
@@ -14,7 +15,8 @@ function emptyApp(): AppState {
     book: emptyBookDomain({ contract: "C", overrides: emptyOv, isTestnet: true, market: 0 }),
     wallet: emptyWalletDomain(null),
     orders: emptyOrdersDomain(),
-    versions: { book: 0, wallet: 0, orders: 0 },
+    ticket: emptyTicketDomain(),
+    versions: { book: 0, wallet: 0, orders: 0, ticket: 0 },
   };
 }
 
