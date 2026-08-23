@@ -304,6 +304,12 @@ section h2 {
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
+.cols span { white-space: nowrap; overflow: hidden; min-width: 0; }
+.cols .unit { font-style: normal; }
+.side { container-type: inline-size; }
+@container (max-width: 430px) {
+  .cols .unit { display: none; }
+}
 .row { padding: 2px 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .row > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row .q { font-style: normal; color: var(--muted); }

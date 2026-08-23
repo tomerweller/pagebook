@@ -138,8 +138,8 @@ function sideHtml(
     <h3>${name}</h3>
     <div class="cols">${
       name === "bids"
-        ? `<span>depth · ${esc(bsym)}</span><span>amount · ${esc(bsym)}</span><span>price · ${esc(qsym)}</span>`
-        : `<span>price · ${esc(qsym)}</span><span>amount · ${esc(bsym)}</span><span>depth · ${esc(bsym)}</span>`
+        ? `<span>depth<i class="unit"> · ${esc(bsym)}</i></span><span>amount<i class="unit"> · ${esc(bsym)}</i></span><span>price<i class="unit"> · ${esc(qsym)}</i></span>`
+        : `<span>price<i class="unit"> · ${esc(qsym)}</i></span><span>amount<i class="unit"> · ${esc(bsym)}</i></span><span>depth<i class="unit"> · ${esc(bsym)}</i></span>`
     }</div>
     ${body}
     ${more ? `<div class="note">more levels beyond the read window</div>` : ""}
