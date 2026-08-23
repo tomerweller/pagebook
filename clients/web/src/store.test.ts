@@ -1,6 +1,9 @@
 import { expect, test, vi } from "vitest";
 import { createStore } from "./store";
 import src from "./main.ts?raw";
+import marketSrc from "./view/market.ts?raw";
+import paneSrc from "./wallet/pane.ts?raw";
+import ordersSrc from "./wallet/orders.ts?raw";
 
 test("N updates in one microtask coalesce to one renderAll", async () => {
   const store = createStore({ n: 0 });
@@ -87,4 +90,66 @@ test("main.ts has no direct element writes", () => {
   expect(src).not.toMatch(/\.setAttribute\s*\(/);
   expect(src).not.toMatch(/\.classList\./);
   expect(src).not.toMatch(/insertAdjacentHTML/);
+});
+
+test("mutating a domain re-renders only its keyed view", async () => {
+  const store = createStore({
+    book: { n: 0 },
+    wallet: { n: 0 },
+    versions: { book: 0, wallet: 0 },
+  });
+  let bookRuns = 0;
+  let walletRuns = 0;
+  store.register("book", () => {
+    bookRuns += 1;
+  }, () => store.read().versions.book);
+  store.register("wallet", () => {
+    walletRuns += 1;
+  }, () => store.read().versions.wallet);
+  store.update((s) => {
+    s.book.n = 1;
+  });
+  await Promise.resolve();
+  expect(bookRuns).toBe(1);
+  expect(walletRuns).toBe(1);
+  store.update((s) => {
+    s.book.n = 2;
+  });
+  await Promise.resolve();
+  expect(bookRuns).toBe(2);
+  expect(walletRuns).toBe(1);
+  expect(store.read().versions.book).toBe(2);
+  expect(store.read().versions.wallet).toBe(0);
+});
+
+test("throwing keyed view retries on the same key", async () => {
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  const store = createStore({ book: { n: 0 }, versions: { book: 0 } });
+  let throws = true;
+  let n = 0;
+  store.register(
+    "k",
+    () => {
+      if (throws) throw new Error("boom");
+      n += 1;
+    },
+    () => store.read().versions.book,
+  );
+  store.update((s) => {
+    s.book.n = 1;
+  });
+  await Promise.resolve();
+  expect(n).toBe(0);
+  throws = false;
+  store.update(() => {});
+  await Promise.resolve();
+  expect(n).toBe(1);
+  err.mockRestore();
+});
+
+test("hand-enumerated market/wallet/orders keys are gone", () => {
+  expect(marketSrc).not.toMatch(/function marketKey/);
+  expect(paneSrc).not.toMatch(/function walletKey/);
+  expect(ordersSrc).not.toMatch(/function structKey/);
+  expect(ordersSrc).not.toMatch(/function liveKey/);
 });

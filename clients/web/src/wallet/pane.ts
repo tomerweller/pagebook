@@ -18,7 +18,7 @@ import { createOrders, loadOpenOrders, ownTicksOf, rememberNonce, sessionRestedN
 import { createTicket } from "./ticket";
 import type { AppState } from "../view/market";
 import type { Store } from "../store";
-import { MarkupCache, setAttr } from "../view/stable";
+import { MarkupCache } from "../view/stable";
 
 export type WalletHandle = {
   prefillFromLadder(side: "bid" | "ask", tick: number): void;
@@ -165,55 +165,6 @@ function syncIdentity(s: AppState, ks: Keystore): void {
   s.wallet.ephemeral = ks.isEphemeralActive();
 }
 
-function walletKey(s: AppState): string {
-  const w = s.wallet;
-  const b = s.book;
-  const snap = b.snapshot;
-  return [
-    w.booted,
-    w.enabled,
-    w.status,
-    w.busy,
-    w.reveal,
-    w.confirmDelete,
-    w.confirmTrust?.code,
-    w.confirmTrust?.issuer,
-    w.importOpen,
-    w.keysOpen,
-    w.justCreated,
-    w.autoSource,
-    w.provisionStatus,
-    w.provisioning,
-    w.collapsed,
-    w.log.length,
-    w.log[0]?.text,
-    w.log[0]?.hash,
-    w.account?.exists,
-    w.account?.balance,
-    w.account?.spendable,
-    w.account?.sequence,
-    w.trustlines.map((t) => `${t.asset.code}:${t.exists}:${t.balance}`).join(","),
-    w.openOrders.map((o) => `${o.nonce}:${o.tick}:${o.qtyLots}:${o.filledLots}:${o.archived}`).join(","),
-    w.active?.name,
-    w.active?.publicKey,
-    w.identities.length,
-    w.ephemeral,
-    snap?.latestLedger,
-    snap?.bestBid.tick,
-    snap?.bestBid.empty,
-    snap?.bestAsk.tick,
-    snap?.bestAsk.empty,
-    snap?.bids[0]?.open_lots,
-    snap?.asks[0]?.open_lots,
-    snap?.tokens.base?.symbol,
-    snap?.tokens.quote?.symbol,
-    b.overrides.baseSym,
-    b.overrides.quoteSym,
-    b.eventState.events.length,
-    b.eventState.events[0]?.id,
-  ].join("|");
-}
-
 export function mountWallet(opts: {
   store: Store<AppState>;
   el: HTMLElement;
@@ -230,6 +181,7 @@ export function mountWallet(opts: {
   let bound = false;
   const cache = new MarkupCache();
   const ordersPanel = createOrders({
+    store: app,
     rpc: opts.rpc,
     contract: app.read().book.contract,
     getSecret: () => app.read().wallet.active?.secret ?? null,
@@ -353,6 +305,8 @@ export function mountWallet(opts: {
       bind();
       bound = true;
     }
+    const box = el.querySelector<HTMLElement>("#orders-root");
+    if (box) ordersPanel.draw(box);
   }
 
   function sec(name: string): HTMLElement | null {
@@ -371,14 +325,6 @@ export function mountWallet(opts: {
     if (!box.querySelector(".ticket")) ticket.draw(box);
   }
 
-  function paintOrders(): void {
-    const { wallet, book } = app.read();
-    const box = el.querySelector<HTMLElement>("#orders-root");
-    if (!box || !wallet.active || !wallet.enabled) return;
-    ordersPanel.setLive(book.snapshot, wallet.account, wallet.openOrders, book.overrides);
-    ordersPanel.draw(box);
-  }
-
   function renderWallet(): void {
     ensureShell();
     const w = app.read().wallet;
@@ -388,13 +334,10 @@ export function mountWallet(opts: {
       "brand",
       `<div class="wallet-brand"><a href="../" class="wallet-brand-name">PAGEBOOK</a> <span class="wallet-brand-sub">· STELLAR TESTNET</span></div>`,
     );
-    const headHtml = `<div class="wallet-head"><button type="button" class="wallet-toggle" data-act="toggle" aria-expanded="${w.collapsed ? "false" : "true"}">wallet</button></div>`;
-    const headAction = write("head", headHtml);
-    if (headAction === "patch") {
-      const head = sec("head");
-      setAttr(head ? head.querySelector("[data-act=toggle]") : null, "aria-expanded", w.collapsed ? "false" : "true");
-      cache.patched("head", head);
-    }
+    write(
+      "head",
+      `<div class="wallet-head"><button type="button" class="wallet-toggle" data-act="toggle" aria-expanded="${w.collapsed ? "false" : "true"}">wallet</button></div>`,
+    );
     const id = w.active;
     if (!w.booted) {
       write("identity", `<p class="wallet-copy">— checking network</p>`);
@@ -426,7 +369,6 @@ export function mountWallet(opts: {
     write("status", w.status ? `<p class="wallet-status">${esc(w.status)}</p>` : "");
     write("log", logHtml(w.log));
     paintTicket();
-    paintOrders();
   }
 
   function emptyHtml(w: WalletDomain): string {
@@ -877,8 +819,11 @@ export function mountWallet(opts: {
     if (app.read().wallet.enabled) await refreshBalances();
   }
 
-  app.register("wallet", renderWallet, () => walletKey(app.read()));
-  app.register("wallet-ledger", maybeRefreshOnLedger, () => String(app.read().book.snapshot?.latestLedger ?? ""));
+  app.register("wallet", renderWallet, () => {
+    const v = app.read().versions;
+    return `${v.wallet}|${v.book}`;
+  });
+  app.register("wallet-ledger", maybeRefreshOnLedger, () => String(app.read().versions.book));
   app.update(() => {});
   void boot();
 

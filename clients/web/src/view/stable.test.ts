@@ -22,21 +22,18 @@ test("MarkupCache skips second identical write", () => {
   expect(c.write("kpis", node, "<b>2</b>")).toBe("html");
 });
 
-test("MarkupCache patch does not poison the cache", () => {
+test("MarkupCache focus/scroll write still records html", () => {
+  const kids: { scrollTop: number; scrollLeft: number }[] = [];
   const node = {
     innerHTML: "",
     contains: () => false,
     querySelector: () => null,
-    querySelectorAll: () => [{ scrollTop: 4, scrollLeft: 0 }],
+    querySelectorAll: () => kids,
+    children: [] as unknown[],
   } as unknown as Element;
   const c = new MarkupCache();
-  node.querySelectorAll = () => [] as unknown as NodeListOf<HTMLElement>;
   expect(c.write("trades", node, "<p>a</p>")).toBe("html");
-  node.querySelectorAll = () => [{ scrollTop: 4, scrollLeft: 0 }] as unknown as NodeListOf<HTMLElement>;
-  expect(c.write("trades", node, "<p>b</p>")).toBe("patch");
-  expect(c.get("trades")).toBe("<p>a</p>");
-  expect(node.innerHTML).toBe("<p>a</p>");
-  node.querySelectorAll = () => [] as unknown as NodeListOf<HTMLElement>;
+  kids.push({ scrollTop: 4, scrollLeft: 0 });
   expect(c.write("trades", node, "<p>b</p>")).toBe("html");
   expect(c.get("trades")).toBe("<p>b</p>");
   expect(node.innerHTML).toBe("<p>b</p>");

@@ -16,6 +16,7 @@ import {
 import { MarkupCache } from "./stable";
 import type { Store } from "../store";
 import type { WalletDomain } from "../wallet/pane";
+import type { OrdersDomain } from "../wallet/orders";
 
 const paneCache = new MarkupCache();
 
@@ -58,6 +59,8 @@ export type BookDomain = {
 export type AppState = {
   book: BookDomain;
   wallet: WalletDomain;
+  orders: OrdersDomain;
+  versions: { book: number; wallet: number; orders: number };
 };
 
 export function emptyBookDomain(
@@ -127,7 +130,11 @@ export function registerMarketView(
     onSwitchMarket: (id: number) => void;
   },
 ): void {
-  store.register("fresh", () => renderFresh(store.read().book), () => freshKey(store.read().book));
+  store.register("fresh", () => renderFresh(store.read().book), () => {
+    const s = store.read();
+    const ago = s.book.lastOkAt ? Math.round((Date.now() - s.book.lastOkAt) / 1000) : 0;
+    return `${s.versions.book}|${ago}`;
+  });
   store.register(
     "market",
     () => {
@@ -141,53 +148,8 @@ export function registerMarketView(
       }
       render(snap, viewStateFrom(app, opts.onSwitchMarket));
     },
-    () => marketKey(store.read()),
+    () => store.read().versions.book,
   );
-}
-
-function freshKey(book: BookDomain, now = Date.now()): string {
-  const ago = book.lastOkAt ? Math.round((now - book.lastOkAt) / 1000) : 0;
-  return `${book.snapshot ? 1 : 0}|${book.snapshot?.latestLedger ?? ""}|${book.lastOkAt}|${book.lastError}|${ago}`;
-}
-
-function marketKey(app: AppState): string {
-  const b = app.book;
-  const snap = b.snapshot;
-  const ev = b.eventState.events;
-  return [
-    snap?.latestLedger,
-    snap?.mismatched,
-    snap?.bestBid.tick,
-    snap?.bestBid.empty,
-    snap?.bestBid.stale,
-    snap?.bestAsk.tick,
-    snap?.bestAsk.empty,
-    snap?.bestAsk.stale,
-    snap?.bids.map((r) => `${r.tick}:${r.open_lots}:${r.queue}`).join(","),
-    snap?.asks.map((r) => `${r.tick}:${r.open_lots}:${r.queue}`).join(","),
-    snap?.moreBids,
-    snap?.moreAsks,
-    snap?.paused,
-    snap?.tokens.base?.symbol,
-    snap?.tokens.quote?.symbol,
-    snap?.vault.base,
-    snap?.vault.quote,
-    snap?.fees.base,
-    snap?.fees.quote,
-    b.market,
-    b.marketList.map((m) => `${m.id}:${m.baseSym}:${m.quoteSym}`).join(","),
-    b.lastError,
-    b.eventState.historyFrom,
-    ev.map((e) => e.id).join(","),
-    [...b.ownTicks.bid].join(","),
-    [...b.ownTicks.ask].join(","),
-    b.contract,
-    b.isTestnet,
-    b.overrides.baseSym,
-    b.overrides.quoteSym,
-    b.overrides.baseDec,
-    b.overrides.quoteDec,
-  ].join("|");
 }
 
 function viewStateFrom(app: AppState, onSwitchMarket: (id: number) => void): MarketViewState {

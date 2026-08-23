@@ -50,6 +50,7 @@ export async function refreshBookAndEvents(
       mergeEvents(s.book.eventState, ev.events);
     });
   } catch (e) {
+    if (store.read().book.market !== forMarket) return;
     store.update((s) => {
       s.book.lastError = deps.formatError(e);
     });

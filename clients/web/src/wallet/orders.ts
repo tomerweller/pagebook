@@ -8,10 +8,12 @@ import { submitReplace, submitReplaceBatch, submitSettle, type ClassicToken, typ
 import { estimatePaddedFee } from "../engine/txdata";
 import { orderKey } from "../keys";
 import { countLabel, esc, priceOf, tokenDecimals, tokenLabel, txLink, type UrlOverrides } from "../view/format";
-import { parseAssetFromSacName, type AccountState } from "./account";
+import { parseAssetFromSacName } from "./account";
 import { NETWORK_PASSPHRASE } from "./network";
 import { plainError, typedErrorHtml } from "./ticket";
-import { logRender, setText } from "../view/stable";
+import { MarkupCache } from "../view/stable";
+import type { Store } from "../store";
+import type { AppState } from "../view/market";
 import {
   lotsToQty,
   oneLotQtyStep,
@@ -41,6 +43,38 @@ export type OpenOrder = {
 };
 
 export type TokenDelta = { base: bigint; quote: bigint };
+
+export type OrdersDomain = {
+  selected: string[];
+  confirmSettle: string | null;
+  replaceOf: string | null;
+  replaceTick: number;
+  replaceLots: bigint;
+  replacePriceStr: string;
+  replaceQtyStr: string;
+  replaceBid: boolean;
+  replacePostOnly: boolean;
+  batchOffset: number;
+  phase: string;
+  lastHash: string;
+};
+
+export function emptyOrdersDomain(): OrdersDomain {
+  return {
+    selected: [],
+    confirmSettle: null,
+    replaceOf: null,
+    replaceTick: 1,
+    replaceLots: 1n,
+    replacePriceStr: "",
+    replaceQtyStr: "",
+    replaceBid: true,
+    replacePostOnly: true,
+    batchOffset: 15,
+    phase: "",
+    lastHash: "",
+  };
+}
 
 type Stored = Record<string, string[]>;
 
@@ -298,10 +332,10 @@ const EMPTY_WINDOW: WindowSpec = { consume: [], append: { first: 0, last: 1 } };
 
 export type OrdersHandle = {
   draw(root: HTMLElement): void;
-  setLive(book: BookSnapshot | null, account: AccountState | null, rows: OpenOrder[], overrides: UrlOverrides): void;
 };
 
 export function createOrders(opts: {
+  store: Store<AppState>;
   rpc: Rpc;
   contract: string;
   getSecret: () => string | null;
@@ -310,40 +344,40 @@ export function createOrders(opts: {
   onRefresh: () => void;
   onLog: (text: string, hash?: string) => void;
 }): OrdersHandle {
-  let book: BookSnapshot | null = null;
-  let account: AccountState | null = null;
-  let rows: OpenOrder[] = [];
-  let overrides: UrlOverrides = { baseSym: null, quoteSym: null, baseDec: null, quoteDec: null };
-  let selected = new Set<string>();
-  let confirmSettle: bigint | null = null;
-  let replaceOf: bigint | null = null;
-  let replaceTick = 1;
-  let replaceLots = 1n;
-  let replacePriceStr = "";
-  let replaceQtyStr = "";
-  let replaceBid = true;
-  let replacePostOnly = true;
-  let batchOffset = 15;
-  let phase = "";
-  let lastHash = "";
+  const app = opts.store;
   let rootEl: HTMLElement | null = null;
-  let lastHtml = "";
-  let lastStruct = "";
-  let lastLive = "";
   let bound = false;
+  const cache = new MarkupCache();
+
+  function snap(): BookSnapshot | null {
+    return app.read().book.snapshot;
+  }
+
+  function ov(): UrlOverrides {
+    return app.read().book.overrides;
+  }
+
+  function rows(): OpenOrder[] {
+    return app.read().wallet.openOrders;
+  }
+
+  function ui(): OrdersDomain {
+    return app.read().orders;
+  }
 
   function market(): MarketInfo | null {
-    return book?.market ?? null;
+    return snap()?.market ?? null;
   }
 
   function quant(): Quant | null {
     const m = market();
+    const book = snap();
     if (!m) return null;
     return {
       lotSize: m.lot_size,
       tickSize: m.tick_size,
-      baseDec: tokenDecimals(book?.tokens.base, overrides.baseDec),
-      quoteDec: tokenDecimals(book?.tokens.quote, overrides.quoteDec),
+      baseDec: tokenDecimals(book?.tokens.base, ov().baseDec),
+      quoteDec: tokenDecimals(book?.tokens.quote, ov().quoteDec),
       tickMin: m.tick_min,
       tickMax: m.tick_max,
       minLots: m.min_order_lots,
@@ -351,11 +385,12 @@ export function createOrders(opts: {
   }
 
   function find(n: bigint): OpenOrder | undefined {
-    return rows.find((r) => r.nonce === n);
+    return rows().find((r) => r.nonce === n);
   }
 
   function deltaText(d: TokenDelta): string {
-    const m = market();
+    const book = snap();
+    const overrides = ov();
     const base = tokenLabel(book?.tokens.base, overrides.baseSym, book?.base ?? null);
     const quote = tokenLabel(book?.tokens.quote, overrides.quoteSym, book?.quote ?? null);
     const bd = tokenDecimals(book?.tokens.base, overrides.baseDec);
@@ -364,7 +399,6 @@ export function createOrders(opts: {
       const sign = n < 0n ? "−" : "+";
       return `${sign}${formatAtoms(n < 0n ? -n : n, dec)} ${sym}`;
     };
-    void m;
     return `${fmt(d.base, bd, base)} · ${fmt(d.quote, qd, quote)}`;
   }
 
@@ -374,65 +408,9 @@ export function createOrders(opts: {
     return settleAtoms(o, m.lot_size, m.tick_size);
   }
 
-  function structKey(): string {
-    const base = tokenLabel(book?.tokens.base, overrides.baseSym, book?.base ?? null);
-    const quote = tokenLabel(book?.tokens.quote, overrides.quoteSym, book?.quote ?? null);
-    const bd = tokenDecimals(book?.tokens.base, overrides.baseDec);
-    const qd = tokenDecimals(book?.tokens.quote, overrides.quoteDec);
-    return `${rows.map((r) => `${r.nonce}:${r.tick}:${r.qtyLots}:${r.archived}`).join(",")}|${replaceOf}|${confirmSettle}|${[...selected].join(",")}|${replaceTick}|${replaceLots}|${replaceBid}|${replacePostOnly}|${batchOffset}|${base}|${quote}|${bd}|${qd}`;
-  }
-
-  function liveKey(): string {
-    const latest = book?.latestLedger ?? 0;
-    return rows
-      .map((r) => {
-        const age = r.restedLedger != null && latest ? latest - r.restedLedger : "";
-        return `${r.nonce}:${r.filledLots}:${r.refundLots}:${age}`;
-      })
-      .join("|");
-  }
-
-  function paintLive(): void {
+  function renderOrders(): void {
     if (!rootEl) return;
-    const latest = book?.latestLedger ?? 0;
-    for (const r of rows) {
-      const li = rootEl.querySelector(`[data-nonce="${r.nonce.toString()}"]`);
-      if (!li) continue;
-      setText(li.querySelector("[data-live=filled]"), formatInt(r.filledLots));
-      setText(li.querySelector("[data-live=refund]"), formatInt(r.refundLots));
-      const age = r.restedLedger != null && latest ? latest - r.restedLedger : null;
-      if (age != null) setText(li.querySelector("[data-live=age]"), countLabel(age, "ledger"));
-    }
-  }
-
-  function paint(): void {
-    if (!rootEl) return;
-    const next = html();
-    const sk = structKey();
-    const lk = liveKey();
-    if (sk === lastStruct && lk === lastLive) {
-      logRender("orders", "skip");
-      return;
-    }
-    if (sk === lastStruct && lastHtml) {
-      lastLive = lk;
-      lastHtml = next;
-      logRender("orders", "patch");
-      paintLive();
-      return;
-    }
-    const active = typeof document !== "undefined" ? document.activeElement : null;
-    if (active instanceof HTMLElement && rootEl.contains(active) && active.closest("[data-field]")) {
-      lastLive = lk;
-      logRender("orders", "patch");
-      paintLive();
-      return;
-    }
-    lastStruct = sk;
-    lastLive = lk;
-    lastHtml = next;
-    rootEl.innerHTML = next;
-    logRender("orders", "html");
+    cache.write("orders", rootEl, html());
     if (!bound) {
       bind(rootEl);
       bound = true;
@@ -440,18 +418,21 @@ export function createOrders(opts: {
   }
 
   function html(): string {
-    if (!rows.length) return `<section class="orders"><h3>open orders</h3><p class="wallet-muted">— no open orders</p></section>`;
+    const list = rows();
+    if (!list.length) return `<section class="orders"><h3>open orders</h3><p class="wallet-muted">— no open orders</p></section>`;
     const m = market();
+    const book = snap();
+    const o = ui();
     const latest = book?.latestLedger ?? 0;
-    const body = rows
+    const body = list
       .map((r) => {
         const side = r.isBid ? "bid" : "ask";
-        const human = book && m ? priceOf(r.tick, book, overrides) : "";
+        const human = book && m ? priceOf(r.tick, book, ov()) : "";
         const stale = isStaleGeneration(r.generation, levelGeneration(book, r.isBid, r.tick));
         const age = r.restedLedger != null && latest ? latest - r.restedLedger : null;
-        const checked = selected.has(r.nonce.toString()) ? "checked" : "";
-        const expand = replaceOf === r.nonce ? replaceForm(r) : "";
-        const settleBox = confirmSettle === r.nonce ? settleForm(r) : "";
+        const checked = o.selected.includes(r.nonce.toString()) ? "checked" : "";
+        const expand = o.replaceOf === r.nonce.toString() ? replaceForm(r) : "";
+        const settleBox = o.confirmSettle === r.nonce.toString() ? settleForm(r) : "";
         return `<li class="order-row" data-nonce="${r.nonce.toString()}">
           <label class="order-check"><input type="checkbox" data-act="sel" data-nonce="${r.nonce.toString()}" ${checked} /></label>
           <div class="order-main">
@@ -467,18 +448,18 @@ export function createOrders(opts: {
         </li>`;
       })
       .join("");
-    const nsel = selected.size;
+    const nsel = o.selected.length;
     const batch =
       nsel >= 2
         ? `<div class="order-batch">
-            <label>± ticks <input class="wallet-input" data-field="offset" inputmode="numeric" value="${batchOffset}" /></label>
+            <label>± ticks <input class="wallet-input" data-field="offset" inputmode="numeric" value="${o.batchOffset}" /></label>
             <p class="wallet-muted">${batchPreview()}</p>
             <button type="button" data-act="batch" ${nsel > MAX_REPLACE_BATCH ? "disabled" : ""}>replace selected</button>
           </div>`
         : nsel === 1
           ? `<p class="wallet-muted">select 2 or more to batch</p>`
           : "";
-    const strip = phase ? `<p class="ticket-strip">${esc(phase)}${lastHash ? ` ${txLink(lastHash)}` : ""}</p>` : "";
+    const strip = o.phase ? `<p class="ticket-strip">${esc(o.phase)}${o.lastHash ? ` ${txLink(o.lastHash)}` : ""}</p>` : "";
     return `<section class="orders">
       <h3>open orders</h3>
       <ul class="orders-list">${body}</ul>
@@ -499,31 +480,34 @@ export function createOrders(opts: {
     </div>`;
   }
 
-  function replaceForm(o: OpenOrder): string {
+  function replaceForm(order: OpenOrder): string {
     const m = market();
-    const net = m ? replaceNet(o, replaceBid, replaceTick, replaceLots, m.lot_size, m.tick_size) : { base: 0n, quote: 0n };
-    const crossed = replacePostOnly && wouldCross(book, replaceBid, replaceTick);
+    const book = snap();
+    const st = ui();
+    const net = m ? replaceNet(order, st.replaceBid, st.replaceTick, st.replaceLots, m.lot_size, m.tick_size) : { base: 0n, quote: 0n };
+    const crossed = st.replacePostOnly && wouldCross(book, st.replaceBid, st.replaceTick);
     const keys = book?.base && book.quote
-      ? keysForReplace(opts.getMarket(), "00".repeat(32), o.nonce, o.isBid, o.tick, o.seq, replaceBid, replaceTick, 0, "00".repeat(32), "00".repeat(32)).keys.length
+      ? keysForReplace(opts.getMarket(), "00".repeat(32), order.nonce, order.isBid, order.tick, order.seq, st.replaceBid, st.replaceTick, 0, "00".repeat(32), "00".repeat(32)).keys.length
       : 8;
     const fee = estimatePaddedFee(keys);
-    const rent = o.archived ? `restore rent ~ ${formatAtoms(ARCHIVE_RENT_STROOPS, 7)} XLM` : "";
+    const rent = order.archived ? `restore rent ~ ${formatAtoms(ARCHIVE_RENT_STROOPS, 7)} XLM` : "";
     const qn = quant();
+    const overrides = ov();
     const bsym = tokenLabel(book?.tokens.base, overrides.baseSym, book?.base ?? null);
     const qsym = tokenLabel(book?.tokens.quote, overrides.quoteSym, book?.quote ?? null);
-    const snap = qn
-      ? `= tick ${replaceTick} · ${replaceLots.toString()} lots (${lotsToQty(replaceLots, qn)} ${bsym})`
+    const line = qn
+      ? `= tick ${st.replaceTick} · ${st.replaceLots.toString()} lots (${lotsToQty(st.replaceLots, qn)} ${bsym})`
       : "";
     return `<div class="wallet-confirm">
-      <label>price · ${esc(qsym)} per ${esc(bsym)} <input class="wallet-input" data-field="rprice" inputmode="decimal" step="${qn ? esc(oneTickPriceStep(qn)) : "any"}" value="${esc(replacePriceStr)}" /></label>
-      <label>quantity · ${esc(bsym)} <input class="wallet-input" data-field="rqty" inputmode="decimal" step="${qn ? esc(oneLotQtyStep(qn)) : "any"}" value="${esc(replaceQtyStr)}" /></label>
-      <p class="wallet-muted">${esc(snap)}</p>
-      <label class="ticket-flag"><input type="checkbox" data-field="rbid" ${replaceBid ? "checked" : ""} /> bid</label>
-      <label class="ticket-flag"><input type="checkbox" data-field="rpo" ${replacePostOnly ? "checked" : ""} /> post-only</label>
+      <label>price · ${esc(qsym)} per ${esc(bsym)} <input class="wallet-input" data-field="rprice" inputmode="decimal" step="${qn ? esc(oneTickPriceStep(qn)) : "any"}" value="${esc(st.replacePriceStr)}" /></label>
+      <label>quantity · ${esc(bsym)} <input class="wallet-input" data-field="rqty" inputmode="decimal" step="${qn ? esc(oneLotQtyStep(qn)) : "any"}" value="${esc(st.replaceQtyStr)}" /></label>
+      <p class="wallet-muted">${esc(line)}</p>
+      <label class="ticket-flag"><input type="checkbox" data-field="rbid" ${st.replaceBid ? "checked" : ""} /> bid</label>
+      <label class="ticket-flag"><input type="checkbox" data-field="rpo" ${st.replacePostOnly ? "checked" : ""} /> post-only</label>
       <p class="wallet-muted">net ${esc(deltaText(net))} · padded fee ~ ${esc(formatInt(fee))} stroops (${esc(formatAtoms(fee, 7))} XLM)${rent ? ` · ${esc(rent)} (1,100,000 stroops)` : ""}</p>
       ${crossed ? `<p class="wallet-status">${typedErrorHtml("Crossed")}</p>` : ""}
       <div class="wallet-actions">
-        <button type="button" data-act="replace-go" data-nonce="${o.nonce.toString()}" ${crossed ? "disabled" : ""}>replace</button>
+        <button type="button" data-act="replace-go" data-nonce="${order.nonce.toString()}" ${crossed ? "disabled" : ""}>replace</button>
         <button type="button" data-act="replace-cancel">cancel</button>
       </div>
     </div>`;
@@ -532,11 +516,12 @@ export function createOrders(opts: {
   function batchPreview(): string {
     const m = market();
     if (!m) return "";
-    const chosen = rows.filter((r) => selected.has(r.nonce.toString()));
-    const mid = midTick(book);
-    const planned = batchRequoteTicks(chosen, mid, batchOffset);
+    const st = ui();
+    const chosen = rows().filter((r) => st.selected.includes(r.nonce.toString()));
+    const mid = midTick(snap());
+    const planned = batchRequoteTicks(chosen, mid, st.batchOffset);
     const net = sumDeltas(planned.map((p) => replaceNet(p.order, p.order.isBid, p.newTick, p.order.qtyLots, m.lot_size, m.tick_size)));
-    return `requote ±${batchOffset} around ${mid}: net ${deltaText(net)}`;
+    return `requote ±${st.batchOffset} around ${mid}: net ${deltaText(net)}`;
   }
 
   function bind(root: HTMLElement): void {
@@ -545,34 +530,40 @@ export function createOrders(opts: {
       if (!t || !root.contains(t)) return;
       const act = t.dataset.act;
       if (act === "settle-ask") {
-        confirmSettle = BigInt(t.dataset.nonce ?? "0");
-        replaceOf = null;
-        paint();
+        app.update((s) => {
+          s.orders.confirmSettle = t.dataset.nonce ?? "0";
+          s.orders.replaceOf = null;
+        });
       } else if (act === "settle-cancel") {
-        confirmSettle = null;
-        paint();
+        app.update((s) => {
+          s.orders.confirmSettle = null;
+        });
       } else if (act === "settle-go") {
-        if (confirmSettle != null) void runSettle(confirmSettle);
+        const n = ui().confirmSettle;
+        if (n != null) void runSettle(BigInt(n));
       } else if (act === "replace-ask") {
         const n = BigInt(t.dataset.nonce ?? "0");
         const o = find(n);
         if (!o) return;
-        replaceOf = n;
-        confirmSettle = null;
-        replaceTick = o.tick;
-        replaceLots = o.qtyLots;
-        replaceBid = o.isBid;
         const qn = quant();
-        if (qn) {
-          replacePriceStr = tickToPrice(o.tick, qn);
-          replaceQtyStr = lotsToQty(o.qtyLots, qn);
-        }
-        paint();
+        app.update((s) => {
+          s.orders.replaceOf = n.toString();
+          s.orders.confirmSettle = null;
+          s.orders.replaceTick = o.tick;
+          s.orders.replaceLots = o.qtyLots;
+          s.orders.replaceBid = o.isBid;
+          if (qn) {
+            s.orders.replacePriceStr = tickToPrice(o.tick, qn);
+            s.orders.replaceQtyStr = lotsToQty(o.qtyLots, qn);
+          }
+        });
       } else if (act === "replace-cancel") {
-        replaceOf = null;
-        paint();
+        app.update((s) => {
+          s.orders.replaceOf = null;
+        });
       } else if (act === "replace-go") {
-        if (replaceOf != null) void runReplace(replaceOf);
+        const n = ui().replaceOf;
+        if (n != null) void runReplace(BigInt(n));
       } else if (act === "batch") {
         void runBatch();
       }
@@ -583,43 +574,49 @@ export function createOrders(opts: {
       const field = t.dataset.field;
       if (act === "sel") {
         const n = t.dataset.nonce ?? "";
-        if (t.checked) {
-          if (selected.size >= MAX_REPLACE_BATCH) {
-            t.checked = false;
-            return;
+        app.update((s) => {
+          if (t.checked) {
+            if (s.orders.selected.length >= MAX_REPLACE_BATCH) return;
+            if (!s.orders.selected.includes(n)) s.orders.selected.push(n);
+          } else {
+            s.orders.selected = s.orders.selected.filter((x) => x !== n);
           }
-          selected.add(n);
-        } else selected.delete(n);
-        paint();
+        });
+        if (t.checked && ui().selected.length >= MAX_REPLACE_BATCH && !ui().selected.includes(n)) t.checked = false;
       } else if (field === "rbid") {
-        replaceBid = t.checked;
         const qn = quant();
-        const d = parseDecimal(replacePriceStr);
-        if (qn && d) replaceTick = priceToTick(d, qn, replaceBid).tick;
-        paint();
+        const d = parseDecimal(ui().replacePriceStr);
+        app.update((s) => {
+          s.orders.replaceBid = t.checked;
+          if (qn && d) s.orders.replaceTick = priceToTick(d, qn, t.checked).tick;
+        });
       } else if (field === "rpo") {
-        replacePostOnly = t.checked;
-        paint();
+        app.update((s) => {
+          s.orders.replacePostOnly = t.checked;
+        });
       }
     });
     root.addEventListener("input", (e) => {
       const t = e.target as HTMLInputElement;
       const field = t.dataset.field;
       if (field === "rprice") {
-        replacePriceStr = t.value;
         const qn = quant();
-        const d = parseDecimal(replacePriceStr);
-        replaceTick = qn && d ? priceToTick(d, qn, replaceBid).tick : 0;
-        paint();
+        const d = parseDecimal(t.value);
+        app.update((s) => {
+          s.orders.replacePriceStr = t.value;
+          s.orders.replaceTick = qn && d ? priceToTick(d, qn, s.orders.replaceBid).tick : 0;
+        });
       } else if (field === "rqty") {
-        replaceQtyStr = t.value;
         const qn = quant();
-        const d = parseDecimal(replaceQtyStr);
-        replaceLots = qn && d ? qtyToLots(d, qn) : 0n;
-        paint();
+        const d = parseDecimal(t.value);
+        app.update((s) => {
+          s.orders.replaceQtyStr = t.value;
+          s.orders.replaceLots = qn && d ? qtyToLots(d, qn) : 0n;
+        });
       } else if (field === "offset") {
-        batchOffset = Math.max(0, Number(t.value) || 0);
-        paint();
+        app.update((s) => {
+          s.orders.batchOffset = Math.max(0, Number(t.value) || 0);
+        });
       }
     });
   }
@@ -628,10 +625,12 @@ export function createOrders(opts: {
     const secret = opts.getSecret();
     const pub = opts.getPublic();
     const o = find(nonce);
-    if (!secret || !pub || !o || !book?.base || !book.quote || !account?.exists) return;
-    phase = "settling";
-    lastHash = "";
-    paint();
+    const book = snap();
+    if (!secret || !pub || !o || !book?.base || !book.quote || !app.read().wallet.account?.exists) return;
+    app.update((s) => {
+      s.orders.phase = "settling";
+      s.orders.lastHash = "";
+    });
     const keys = keysForSettle(
       opts.getMarket(),
       addrToHex(pub),
@@ -658,15 +657,19 @@ export function createOrders(opts: {
     const secret = opts.getSecret();
     const pub = opts.getPublic();
     const o = find(nonce);
+    const book = snap();
+    const st = ui();
     if (!secret || !pub || !o || !book?.base || !book.quote) return;
-    if (replacePostOnly && wouldCross(book, replaceBid, replaceTick)) {
-      phase = plainError("Crossed");
-      paint();
+    if (st.replacePostOnly && wouldCross(book, st.replaceBid, st.replaceTick)) {
+      app.update((s) => {
+        s.orders.phase = plainError("Crossed");
+      });
       return;
     }
-    phase = "replacing";
-    lastHash = "";
-    paint();
+    app.update((s) => {
+      s.orders.phase = "replacing";
+      s.orders.lastHash = "";
+    });
     const { keys } = keysForReplace(
       opts.getMarket(),
       addrToHex(pub),
@@ -674,8 +677,8 @@ export function createOrders(opts: {
       o.isBid,
       o.tick,
       o.seq,
-      replaceBid,
-      replaceTick,
+      st.replaceBid,
+      st.replaceTick,
       0,
       addrToHex(book.base),
       addrToHex(book.quote),
@@ -686,9 +689,9 @@ export function createOrders(opts: {
       owner: pub,
       market: opts.getMarket(),
       nonce,
-      isBid: replaceBid,
-      tick: replaceTick,
-      qtyLots: replaceLots,
+      isBid: st.replaceBid,
+      tick: st.replaceTick,
+      qtyLots: st.replaceLots,
       window: EMPTY_WINDOW,
       padKeys: keys,
       tokens: padTokens(book),
@@ -700,14 +703,16 @@ export function createOrders(opts: {
     const secret = opts.getSecret();
     const pub = opts.getPublic();
     const m = market();
+    const book = snap();
     if (!secret || !pub || !m || !book?.base || !book.quote) return;
-    const chosen = rows.filter((r) => selected.has(r.nonce.toString())).slice(0, MAX_REPLACE_BATCH);
+    const chosen = rows().filter((r) => ui().selected.includes(r.nonce.toString())).slice(0, MAX_REPLACE_BATCH);
     if (chosen.length < 2) return;
     const mid = midTick(book);
-    const planned = batchRequoteTicks(chosen, mid, batchOffset);
-    phase = "batch replace";
-    lastHash = "";
-    paint();
+    const planned = batchRequoteTicks(chosen, mid, ui().batchOffset);
+    app.update((s) => {
+      s.orders.phase = "batch replace";
+      s.orders.lastHash = "";
+    });
     const items = planned.map((p) => ({
       nonce: p.order.nonce,
       isBid: p.order.isBid,
@@ -744,39 +749,46 @@ export function createOrders(opts: {
 
   function finish(action: string, res: EngineResult, settled?: bigint): void {
     if (res.kind === "ok") {
-      phase = "confirmed";
-      lastHash = res.hash;
+      app.update((s) => {
+        s.orders.phase = "confirmed";
+        s.orders.lastHash = res.hash;
+        s.orders.confirmSettle = null;
+        s.orders.replaceOf = null;
+      });
       opts.onLog(action, res.hash);
-      confirmSettle = null;
-      replaceOf = null;
       if (settled != null) {
         const pub = opts.getPublic();
         if (pub) dropNonce(pub, opts.contract, opts.getMarket(), settled);
       }
       opts.onRefresh();
     } else if (res.kind === "typed") {
-      phase = plainError(res.errorName);
-      lastHash = res.hash ?? "";
+      app.update((s) => {
+        s.orders.phase = plainError(res.errorName);
+        s.orders.lastHash = res.hash ?? "";
+      });
       opts.onLog(`${action} ${res.errorName}`, res.hash);
     } else {
-      phase = res.kind === "footprint" ? "footprint" : res.message;
-      lastHash = res.hash ?? "";
+      app.update((s) => {
+        s.orders.phase = res.kind === "footprint" ? "footprint" : res.message;
+        s.orders.lastHash = res.hash ?? "";
+      });
       opts.onLog(`${action} failed`, res.hash);
     }
-    paint();
   }
+
+  app.register(
+    "orders",
+    () => renderOrders(),
+    () => {
+      const v = app.read().versions;
+      return `${v.book}|${v.wallet}|${v.orders}`;
+    },
+  );
 
   return {
     draw(root) {
       rootEl = root;
-      paint();
-    },
-    setLive(nextBook, nextAccount, nextRows, nextOverrides) {
-      book = nextBook;
-      account = nextAccount;
-      rows = nextRows;
-      overrides = nextOverrides;
-      if (rootEl) paint();
+      renderOrders();
     },
   };
 }

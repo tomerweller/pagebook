@@ -1,3 +1,5 @@
+import { swapPreservingFocus } from "./focus";
+
 export function debugRender(): boolean {
   if (typeof location === "undefined") return false;
   return new URLSearchParams(location.search).get("debug") === "render";
@@ -72,9 +74,12 @@ export class MarkupCache {
       return "skip";
     }
     if (shouldPatch(node) && this.last.has(name)) {
-      logRender(name, "patch");
+      swapPreservingFocus(node, html);
+      this.last.set(name, html);
+      this.lastDom.set(name, ownedHtml(node));
+      logRender(name, "html");
       this.assert(name, node);
-      return "patch";
+      return "html";
     }
     this.last.set(name, html);
     node.innerHTML = html;

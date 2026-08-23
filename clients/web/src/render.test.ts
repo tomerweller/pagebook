@@ -10,6 +10,7 @@ import type { UrlOverrides } from "./view/format";
 import { createStore } from "./store";
 import { emptyBookDomain, registerMarketView, type AppState } from "./view/market";
 import { emptyWalletDomain, mountWallet } from "./wallet/pane";
+import { emptyOrdersDomain } from "./wallet/orders";
 
 const emptyOv: UrlOverrides = { baseSym: null, quoteSym: null, baseDec: null, quoteDec: null };
 
@@ -98,22 +99,16 @@ test("scroll-blocked MarkupCache retries and stays truthful", () => {
   expect(c.write("trades", node, htmlA)).toBe("html");
   expect(c.get("trades")).toBe(node.innerHTML);
   const inner = node.querySelector(".s") as HTMLElement;
-  Object.defineProperty(inner, "scrollTop", { value: 8, configurable: true });
-  expect(c.write("trades", node, htmlB)).toBe("patch");
-  expect(c.get("trades")).toBe(htmlA);
-  expect(node.innerHTML).toBe(htmlA);
-  Object.defineProperty(inner, "scrollTop", { value: 0, configurable: true });
+  Object.defineProperty(inner, "scrollTop", { value: 8, configurable: true, writable: true });
   expect(c.write("trades", node, htmlB)).toBe("html");
-  expect(c.get("trades")).toBe(node.innerHTML);
+  expect(c.get("trades")).toBe(htmlB);
+  expect(node.innerHTML).toBe(htmlB);
   node.remove();
 });
 
-test("orders panel picks up late token symbols", () => {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  const orders = createOrders(ticketOpts(stubRpc({ n: 0 })));
-  const row: OpenOrder = {
-    nonce: 1n,
+function sampleOrder(nonce = 1n): OpenOrder {
+  return {
+    nonce,
     isBid: true,
     tick: 99,
     qtyLots: 2n,
@@ -123,46 +118,87 @@ test("orders panel picks up late token symbols", () => {
     seq: 0,
     archived: false,
   };
-  const bare = bareBook();
-  orders.setLive(bare, null, [row], emptyOv);
+}
+
+async function flush(n = 8): Promise<void> {
+  for (let i = 0; i < n; i++) await Promise.resolve();
+}
+
+function mountOrders(store: ReturnType<typeof createStore<AppState>>) {
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+  const orders = createOrders({ store, ...ticketOpts(stubRpc({ n: 0 })) });
   orders.draw(root);
+  return root;
+}
+
+test("orders panel picks up late token symbols", async () => {
+  const store = createStore<AppState>(emptyApp());
+  const root = mountOrders(store);
+  const row = sampleOrder();
+  store.update((s) => {
+    s.book.snapshot = bareBook();
+    s.wallet.openOrders = [row];
+  });
+  await flush();
   root.querySelector<HTMLButtonElement>("[data-act=replace-ask]")!.click();
+  await flush();
   expect(root.textContent ?? "").not.toMatch(/PBA/);
-  const named = mockSnapshot();
-  orders.setLive(named, null, [row], emptyOv);
+  store.update((s) => {
+    s.book.snapshot = mockSnapshot();
+  });
+  await flush();
   expect(root.textContent ?? "").toMatch(/PBA/);
   root.remove();
 });
 
-test("orders replace price keeps focus and caret across paint", () => {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  const orders = createOrders(ticketOpts(stubRpc({ n: 0 })));
-  const row: OpenOrder = {
-    nonce: 7n,
-    isBid: true,
-    tick: 99,
-    qtyLots: 2n,
-    filledLots: 0n,
-    refundLots: 0n,
-    generation: 1,
-    seq: 0,
-    archived: false,
-  };
-  orders.setLive(mockSnapshot(), null, [row], emptyOv);
-  orders.draw(root);
+test("orders replace price keeps focus and caret across paint", async () => {
+  const store = createStore<AppState>(emptyApp());
+  const root = mountOrders(store);
+  store.update((s) => {
+    s.book.snapshot = mockSnapshot();
+    s.wallet.openOrders = [sampleOrder(7n)];
+  });
+  await flush();
   root.querySelector<HTMLButtonElement>("[data-act=replace-ask]")!.click();
+  await flush();
   const input = root.querySelector<HTMLInputElement>("[data-field=rprice]");
   expect(input).toBeTruthy();
   input!.focus();
   input!.value = "12.5";
   input!.dispatchEvent(new Event("input", { bubbles: true }));
-  input!.setSelectionRange(2, 2);
-  orders.setLive(mockSnapshot(), null, [row], emptyOv);
+  await flush();
+  const typed = root.querySelector<HTMLInputElement>("[data-field=rprice]")!;
+  typed.focus();
+  typed.setSelectionRange(2, 2);
+  store.update((s) => {
+    s.book.snapshot = { ...mockSnapshot(), latestLedger: mockSnapshot().latestLedger + 1 };
+  });
+  await flush();
   const again = root.querySelector<HTMLInputElement>("[data-field=rprice]");
   expect(document.activeElement).toBe(again);
   expect(again?.selectionStart).toBe(2);
   expect(again?.value).toBe("12.5");
+  root.remove();
+});
+
+test("typing in replace price updates net preview while focused", async () => {
+  const store = createStore<AppState>(emptyApp());
+  const root = mountOrders(store);
+  store.update((s) => {
+    s.book.snapshot = mockSnapshot();
+    s.wallet.openOrders = [sampleOrder(7n)];
+  });
+  await flush();
+  root.querySelector<HTMLButtonElement>("[data-act=replace-ask]")!.click();
+  await flush();
+  const input = root.querySelector<HTMLInputElement>("[data-field=rprice]");
+  input!.focus();
+  input!.value = "50";
+  input!.dispatchEvent(new Event("input", { bubbles: true }));
+  await flush();
+  expect(document.activeElement).toBe(root.querySelector("[data-field=rprice]"));
+  expect(root.textContent ?? "").toMatch(/tick 50/);
   root.remove();
 });
 
@@ -232,6 +268,8 @@ function emptyApp(): AppState {
       isTestnet: true,
     }),
     wallet: emptyWalletDomain(null),
+    orders: emptyOrdersDomain(),
+    versions: { book: 0, wallet: 0, orders: 0 },
   };
 }
 
@@ -253,10 +291,6 @@ test("book update renders ladder and kpis via store", async () => {
   expect(document.getElementById("ladder")!.innerHTML).toMatch(/data-tick/);
   expect(document.getElementById("pair")!.textContent).not.toBe("-- / --");
 });
-
-async function flush(n = 8): Promise<void> {
-  for (let i = 0; i < n; i++) await Promise.resolve();
-}
 
 test("wallet section renders from a store mutation", async () => {
   document.body.innerHTML = `<aside id="wallet"></aside>`;
@@ -310,4 +344,37 @@ test("provisioning status line appears and disappears via store", async () => {
   });
   await Promise.resolve();
   expect(document.querySelector("[data-role=provision]")).toBeNull();
+});
+
+test("reveal secret paints immediately while the button is focused", async () => {
+  document.body.innerHTML = `<aside id="wallet"></aside>`;
+  const store = createStore<AppState>(emptyApp());
+  mountWallet({
+    store,
+    el: document.getElementById("wallet")!,
+    rpc: stubRpc({ n: 0 }),
+    getMarket: () => 0,
+    onRefresh: () => {},
+  });
+  await flush();
+  const id = {
+    name: "t",
+    publicKey: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    secret: "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHW4",
+  };
+  store.update((s) => {
+    s.wallet.booted = true;
+    s.wallet.enabled = true;
+    s.wallet.active = id;
+    s.wallet.identities = [id];
+    s.wallet.account = { exists: true, balance: 1n, spendable: 1n, sequence: 1n, numSubEntries: 0 };
+    s.wallet.keysOpen = true;
+  });
+  await flush();
+  const btn = document.querySelector<HTMLButtonElement>("[data-act=reveal]");
+  expect(btn).toBeTruthy();
+  btn!.focus();
+  btn!.click();
+  await flush();
+  expect(document.querySelector(".wallet-secret")?.textContent).toMatch(/SAAA/);
 });

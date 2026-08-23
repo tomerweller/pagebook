@@ -4,6 +4,7 @@ export type RenderFn = () => void;
 export type KeyFn = () => unknown;
 
 const MAX_PASSES = 10;
+const MUT = new Set(["add", "delete", "clear", "unshift", "push", "pop", "shift", "splice", "sort", "reverse"]);
 
 export type Store<S> = {
   read(): S;
@@ -11,6 +12,33 @@ export type Store<S> = {
   register(name: string, fn: RenderFn, keyFn?: KeyFn): void;
   renderAll(): void;
 };
+
+function wrap(value: unknown, touch: () => void): unknown {
+  if (value === null || typeof value !== "object") return value;
+  return new Proxy(value, {
+    get(target, prop, recv) {
+      const val = Reflect.get(target, prop, recv);
+      if (typeof val === "function") {
+        if (MUT.has(String(prop))) {
+          return (...args: unknown[]) => {
+            touch();
+            return (val as (...a: unknown[]) => unknown).apply(target, args);
+          };
+        }
+        return (val as (...a: unknown[]) => unknown).bind(target);
+      }
+      return wrap(val, touch);
+    },
+    set(target, prop, next) {
+      touch();
+      return Reflect.set(target, prop, next);
+    },
+    deleteProperty(target, prop) {
+      touch();
+      return Reflect.deleteProperty(target, prop);
+    },
+  });
+}
 
 export function createStore<S>(initial: S): Store<S> {
   const state = initial;
@@ -26,8 +54,10 @@ export function createStore<S>(initial: S): Store<S> {
         logRender(v.name, "skip");
         return;
       }
+      v.fn();
       v.keyed = true;
       v.lastKey = key;
+      return;
     }
     v.fn();
   }
@@ -66,7 +96,29 @@ export function createStore<S>(initial: S): Store<S> {
   return {
     read: () => state,
     update(fn) {
-      fn(state);
+      const versions = (state as { versions?: Record<string, number> }).versions;
+      const touched = new Set<string>();
+      if (!versions) {
+        fn(state);
+        schedule();
+        return;
+      }
+      const proxy = new Proxy(state as object, {
+        get(target, prop, recv) {
+          if (prop === "versions") return versions;
+          const val = Reflect.get(target, prop, recv);
+          if (val && typeof val === "object" && prop in versions) {
+            return wrap(val, () => touched.add(String(prop)));
+          }
+          return val;
+        },
+        set(target, prop, next) {
+          if (prop !== "versions" && prop in versions) touched.add(String(prop));
+          return Reflect.set(target, prop, next);
+        },
+      }) as S;
+      fn(proxy);
+      for (const k of touched) versions[k] = (versions[k] ?? 0) + 1;
       schedule();
     },
     register(name, fn, keyFn) {
