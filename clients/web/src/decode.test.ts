@@ -72,3 +72,12 @@ test("format integers without floats", () => {
   expect(ticksToPrice(99, 1, 1, 7, 7)).toBe("99");
   expect(ticksToPrice(1, 1, 2, 0, 0)).toBe("0.5");
 });
+
+test("prices pad to the market's tick precision", () => {
+  // market 1 quantization: tick 1000, lot 1e8, 7/7 decimals -> 5 decimals
+  expect(ticksToPrice(19800, 1000n, 100000000n, 7, 7)).toBe("0.19800");
+  expect(ticksToPrice(20000, 1000n, 100000000n, 7, 7)).toBe("0.20000");
+  expect(ticksToPrice(19839, 1000n, 100000000n, 7, 7)).toBe("0.19839");
+  // market 0 quantization: tick 1, lot 1, 7/7 -> step 1, no padding
+  expect(ticksToPrice(100, 1n, 1n, 7, 7)).toBe("100");
+});

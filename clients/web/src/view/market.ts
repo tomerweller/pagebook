@@ -110,6 +110,8 @@ function sideHtml(
   overrides: UrlOverrides,
   own?: OwnTicks,
 ): string {
+  const bsym = tokenLabel(book.tokens?.base, overrides.baseSym, book.base);
+  const qsym = tokenLabel(book.tokens?.quote, overrides.quoteSym, book.quote);
   let cum = 0n;
   const withCum = rows.map((r) => {
     cum += r.open_lots;
@@ -134,7 +136,11 @@ function sideHtml(
     : `<div class="empty">— no ${name} in window</div>`;
   return `<div class="side ${name}">
     <h3>${name}</h3>
-    <div class="cols">${name === "bids" ? "<span>depth</span><span>amount</span><span>price</span>" : "<span>price</span><span>amount</span><span>depth</span>"}</div>
+    <div class="cols">${
+      name === "bids"
+        ? `<span>depth · ${esc(bsym)}</span><span>amount · ${esc(bsym)}</span><span>price · ${esc(qsym)}</span>`
+        : `<span>price · ${esc(qsym)}</span><span>amount · ${esc(bsym)}</span><span>depth · ${esc(bsym)}</span>`
+    }</div>
     ${body}
     ${more ? `<div class="note">more levels beyond the read window</div>` : ""}
   </div>`;

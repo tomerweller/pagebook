@@ -121,7 +121,7 @@ export function formatAtoms(atoms: unknown, decimals: unknown): string {
   return `${neg ? "-" : ""}${formatInt(whole)}.${fracStr}`;
 }
 
-export function formatRatio(num: unknown, den: unknown, maxFrac = 12): string {
+export function formatRatio(num: unknown, den: unknown, maxFrac = 12, minFrac = 0): string {
   let n = toBigInt(num);
   let d = toBigInt(den);
   if (d === 0n) return "?";
@@ -130,7 +130,6 @@ export function formatRatio(num: unknown, den: unknown, maxFrac = 12): string {
   if (d < 0n) d = -d;
   const whole = n / d;
   let rem = n % d;
-  if (rem === 0n) return (neg ? "-" : "") + formatInt(whole);
   let frac = "";
   for (let i = 0; i < maxFrac && rem !== 0n; i++) {
     rem *= 10n;
@@ -138,7 +137,19 @@ export function formatRatio(num: unknown, den: unknown, maxFrac = 12): string {
     rem %= d;
   }
   frac = frac.replace(/0+$/, "");
+  while (frac.length < minFrac) frac += "0";
+  if (!frac.length) return (neg ? "-" : "") + formatInt(whole);
   return `${neg ? "-" : ""}${formatInt(whole)}.${frac}`;
+}
+
+/// Decimal places of one tick in price units: the fixed precision every
+/// price on a market is padded to so columns read uniformly.
+export function priceStepDecimals(tickSize: unknown, lotSize: unknown, baseDecimals: unknown, quoteDecimals: unknown): number {
+  const num = toBigInt(tickSize) * 10n ** toBigInt(baseDecimals);
+  const den = toBigInt(lotSize) * 10n ** toBigInt(quoteDecimals);
+  const s = formatRatio(num, den);
+  const dot = s.indexOf(".");
+  return dot < 0 ? 0 : s.length - dot - 1;
 }
 
 export function ticksToPrice(
@@ -155,7 +166,7 @@ export function ticksToPrice(
   const qd = toBigInt(quoteDecimals);
   const num = t * ts * 10n ** bd;
   const den = ls * 10n ** qd;
-  return formatRatio(num, den);
+  return formatRatio(num, den, 12, priceStepDecimals(tickSize, lotSize, baseDecimals, quoteDecimals));
 }
 
 export function wordOf(tick: number | bigint): number {
