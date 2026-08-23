@@ -292,7 +292,7 @@ section h2 {
 .side.asks h3 { color: var(--ask); }
 .cols, .row {
   display: grid;
-  grid-template-columns: 5.5rem 6.5rem 4.2rem minmax(0, 1fr);
+  grid-template-columns: 5.5rem 6.5rem minmax(0, 1fr);
   gap: 8px;
   align-items: center;
 }
@@ -304,7 +304,6 @@ section h2 {
   text-transform: uppercase;
 }
 .row { padding: 2px 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
-.row .tick { color: var(--muted); font-size: 0.75em; }
 .row > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row .q { font-style: normal; color: var(--muted); }
 .row .bar {
@@ -414,7 +413,6 @@ section h2 {
   .ladder { gap: 8px; }
   .feeds { grid-template-columns: 1fr; }
   .cols, .row { grid-template-columns: 4.6rem 5.2rem minmax(0, 1fr); }
-  .cols .tick, .row .tick { display: none; }
   .facts div.wide { grid-column: span 1; }
   .panel { max-height: 16rem; }
 }
