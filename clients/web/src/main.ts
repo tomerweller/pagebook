@@ -1,8 +1,13 @@
-import { formatInt } from "./decode";
-import { createRpc, walkDepth, pollEvents, listMarkets, mockSnapshot, type BookSnapshot, type ListedMarket } from "./book";
-import { clearPanes, render, renderMeta, type EventState, type MarketViewState, type OwnTicks } from "./view/market";
-import { esc, type UrlOverrides } from "./view/format";
+import { createRpc, walkDepth, pollEvents, listMarkets, mockSnapshot, type BookEvent, type ListedMarket } from "./book";
+import {
+  emptyEventState,
+  emptyOwnTicks,
+  registerMarketView,
+  type AppState,
+} from "./view/market";
+import type { UrlOverrides } from "./view/format";
 import { mountWallet, type WalletHandle } from "./wallet/pane";
+import { createStore } from "./store";
 import "./style.css";
 
 const DEFAULT_CONTRACT = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
@@ -13,8 +18,6 @@ const MARKETS_TTL_MS = 120000;
 
 const q = new URLSearchParams(location.search);
 const contract = q.get("contract") || DEFAULT_CONTRACT;
-let market: number | null = q.get("market") != null ? Number(q.get("market")) : null;
-let marketList: ListedMarket[] = [];
 const rpcUrl = q.get("rpc") || DEFAULT_RPC;
 const depth = Number(q.get("depth") ?? 12);
 const mock = q.get("mock") === "1";
@@ -52,71 +55,45 @@ function isTestnetRpc(): boolean {
   }
 }
 
-let lastGood: BookSnapshot | null = null;
-let lastOkAt = 0;
-let lastError = "";
-let eventState: EventState = { cursor: null, seen: new Set(), historyFrom: null, events: [] };
-let knownBase: string | null = null;
-let knownQuote: string | null = null;
-let eventsLoading = false;
-let marketsLoadedAt = 0;
-let requestRefresh = () => {};
-let wallet: WalletHandle | null = null;
-let ownTicks: OwnTicks = { bid: new Set(), ask: new Set() };
-
-function notifyWallet(book: BookSnapshot): void {
-  wallet?.onBook(book);
-}
-
-function viewState(): MarketViewState {
-  return {
-    contract,
-    market,
-    marketList,
+const store = createStore<AppState>({
+  book: {
+    snapshot: null,
+    eventState: emptyEventState(),
+    marketList: [],
+    market: q.get("market") != null ? Number(q.get("market")) : null,
+    lastOkAt: 0,
+    lastError: "",
+    eventsLoading: false,
+    knownBase: null,
+    knownQuote: null,
+    marketsLoadedAt: 0,
+    ownTicks: emptyOwnTicks(),
     overrides,
+    contract,
     isTestnet: isTestnetRpc(),
-    eventState,
-    eventsLoading,
-    onSwitchMarket: switchMarket,
-    ownTicks,
-  };
-}
+  },
+});
 
-function setFresh(): void {
-  const el = $("fresh");
-  const text = $("fresh-text");
-  const now = Date.now();
-  if (!lastGood && !lastError) {
-    el.className = "fresh";
-    text.textContent = "loading…";
-    return;
-  }
-  if (lastError && !lastGood) {
-    el.className = "fresh err";
-    text.innerHTML = `<span class="err-text">${esc(lastError)}</span>`;
-    return;
-  }
-  const ago = lastOkAt ? Math.max(0, Math.round((now - lastOkAt) / 1000)) : 0;
-  const ledger = formatInt(lastGood!.latestLedger);
-  let cls = "fresh";
-  if (lastError) cls += " err";
-  else if (ago > 15) cls += " stale";
-  el.className = cls;
-  const err = lastError ? ` <span class="err-text">${esc(lastError)}</span>` : "";
-  text.innerHTML = `ledger ${ledger} · ${ago} s ago${err}`;
-}
+let wallet: WalletHandle | null = null;
+let requestRefresh = () => {};
 
-function mergeEvents(incoming: EventState["events"]): void {
-  const byId = new Map(eventState.events.map((e) => [e.id, e]));
+registerMarketView(store, {
+  onSwitchMarket: switchMarket,
+  onBook: (book) => wallet?.onBook(book),
+  onEvents: (events) => wallet?.onEvents(events),
+});
+
+function mergeEvents(into: AppState["book"]["eventState"], incoming: BookEvent[]): void {
+  const byId = new Map(into.events.map((e) => [e.id, e]));
   for (const e of incoming) byId.set(e.id, e);
-  eventState.events = [...byId.values()]
+  into.events = [...byId.values()]
     .sort((a, b) => {
       const ld = (b.ledger || 0) - (a.ledger || 0);
       if (ld) return ld;
       return String(b.id).localeCompare(String(a.id));
     })
     .slice(0, MAX_EVENTS);
-  eventState.seen = new Set(eventState.events.map((e) => e.id).filter((id): id is string => Boolean(id)));
+  into.seen = new Set(into.events.map((e) => e.id).filter((id): id is string => Boolean(id)));
 }
 
 function pickDefaultMarket(list: ListedMarket[]): number {
@@ -126,115 +103,105 @@ function pickDefaultMarket(list: ListedMarket[]): number {
 }
 
 async function ensureMarkets(rpc: ReturnType<typeof createRpc>): Promise<void> {
-  if (marketList.length && Date.now() - marketsLoadedAt < MARKETS_TTL_MS) return;
+  const cur = store.read().book;
+  if (cur.marketList.length && Date.now() - cur.marketsLoadedAt < MARKETS_TTL_MS) return;
   const res = await listMarkets(rpc, { contract });
-  marketList = res.markets;
-  marketsLoadedAt = Date.now();
-  if (market == null) market = pickDefaultMarket(marketList);
-  renderMeta(viewState());
-}
-
-function resetMarketState(): void {
-  eventState = { cursor: null, seen: new Set(), historyFrom: null, events: [] };
-  eventsLoading = false;
-  knownBase = null;
-  knownQuote = null;
-  lastGood = null;
-  lastOkAt = 0;
-  lastError = "";
+  store.update((s) => {
+    s.book.marketList = res.markets;
+    s.book.marketsLoadedAt = Date.now();
+    if (s.book.market == null) s.book.market = pickDefaultMarket(res.markets);
+  });
 }
 
 function switchMarket(id: number): void {
-  if (id === market) return;
-  market = id;
+  if (id === store.read().book.market) return;
+  store.update((s) => {
+    s.book.market = id;
+    s.book.eventState = emptyEventState();
+    s.book.eventsLoading = false;
+    s.book.knownBase = null;
+    s.book.knownQuote = null;
+    s.book.snapshot = null;
+    s.book.lastOkAt = 0;
+    s.book.lastError = "";
+  });
   const url = new URL(location.href);
   url.searchParams.set("market", String(id));
   history.replaceState(null, "", url);
-  resetMarketState();
-  clearPanes();
-  renderMeta(viewState());
-  setFresh();
   requestRefresh();
 }
 
 async function refresh(rpc: ReturnType<typeof createRpc>): Promise<void> {
   await ensureMarkets(rpc);
-  const forMarket = market;
+  const forMarket = store.read().book.market;
+  const known = store.read().book;
   const book = await walkDepth(rpc, {
     contract,
-    market: market ?? 0,
+    market: forMarket ?? 0,
     depth,
-    base: knownBase,
-    quote: knownQuote,
+    base: known.knownBase,
+    quote: known.knownQuote,
   });
-  if (market !== forMarket) return;
-  knownBase = book.base || knownBase;
-  knownQuote = book.quote || knownQuote;
-  lastGood = book;
-  lastOkAt = Date.now();
-  lastError = "";
-  if (!eventState.events.length && !eventState.cursor) eventsLoading = true;
-  render(book, viewState());
-  setFresh();
-  notifyWallet(book);
-  try {
-    const ev = await pollEvents(rpc, {
-      contract,
-      market: market ?? 0,
-      latestLedger: book.latestLedger,
-      cursor: eventState.cursor,
-      seen: eventState.seen,
-      historyFrom: eventState.historyFrom,
-    });
-    if (market !== forMarket) return;
-    eventState.cursor = ev.cursor;
-    if (ev.historyFrom != null) eventState.historyFrom = ev.historyFrom;
-    mergeEvents(ev.events);
-  } finally {
-    if (market === forMarket) eventsLoading = false;
-  }
-  render(book, viewState());
-  setFresh();
-  wallet?.onEvents(eventState.events);
-  notifyWallet(book);
+  if (store.read().book.market !== forMarket) return;
+  const ev = await pollEvents(rpc, {
+    contract,
+    market: forMarket ?? 0,
+    latestLedger: book.latestLedger,
+    cursor: known.eventState.cursor,
+    seen: known.eventState.seen,
+    historyFrom: known.eventState.historyFrom,
+  });
+  if (store.read().book.market !== forMarket) return;
+  store.update((s) => {
+    s.book.knownBase = book.base || s.book.knownBase;
+    s.book.knownQuote = book.quote || s.book.knownQuote;
+    s.book.snapshot = book;
+    s.book.lastOkAt = Date.now();
+    s.book.lastError = "";
+    s.book.eventsLoading = false;
+    s.book.eventState.cursor = ev.cursor;
+    if (ev.historyFrom != null) s.book.eventState.historyFrom = ev.historyFrom;
+    mergeEvents(s.book.eventState, ev.events);
+  });
 }
 
 if (mock) {
   const snap = mockSnapshot();
-  market = 0;
-  marketList = [
-    {
-      id: 0,
-      base: snap.base!,
-      quote: snap.quote!,
-      market: snap.market!,
-      baseMeta: snap.tokens.base,
-      quoteMeta: snap.tokens.quote,
-      baseSym: "PBA",
-      quoteSym: "PBB",
-    },
-  ];
-  eventState.events = snap.events;
-  eventState.historyFrom = snap.historyFrom;
-  lastGood = snap;
-  lastOkAt = Date.now();
-  render(snap, viewState());
-  setFresh();
-  setInterval(setFresh, 1000);
+  store.update((s) => {
+    s.book.market = 0;
+    s.book.marketList = [
+      {
+        id: 0,
+        base: snap.base!,
+        quote: snap.quote!,
+        market: snap.market!,
+        baseMeta: snap.tokens.base,
+        quoteMeta: snap.tokens.quote,
+        baseSym: "PBA",
+        quoteSym: "PBB",
+      },
+    ];
+    s.book.eventState.events = snap.events;
+    s.book.eventState.historyFrom = snap.historyFrom;
+    s.book.snapshot = snap;
+    s.book.lastOkAt = Date.now();
+  });
+  setInterval(() => store.update(() => {}), 1000);
   wallet = mountWallet({
     el: $("wallet"),
     rpc: createRpc(rpcUrl),
     seed: q.get("seed"),
     contract,
-    getMarket: () => market ?? 0,
+    getMarket: () => store.read().book.market ?? 0,
     overrides,
     onRefresh: () => requestRefresh(),
     onOwnTicks: (t) => {
-      ownTicks = t;
-      if (lastGood) render(lastGood, viewState());
+      store.update((s) => {
+        s.book.ownTicks = t;
+      });
     },
   });
-  notifyWallet(snap);
+  store.update(() => {});
 } else {
   const rpc = createRpc(rpcUrl);
   let delay = 2000;
@@ -268,13 +235,12 @@ if (mock) {
         lastSeq = seq;
         await refresh(rpc);
         didFirst = true;
-      } else {
-        setFresh();
       }
       delay = 2000;
     } catch (e) {
-      lastError = formatRpcError(e);
-      setFresh();
+      store.update((s) => {
+        s.book.lastError = formatRpcError(e);
+      });
       delay = Math.min(delay * 2, 10000);
     } finally {
       inflight = false;
@@ -289,19 +255,19 @@ if (mock) {
       tick();
     }
   });
-  setFresh();
-  setInterval(setFresh, 1000);
+  setInterval(() => store.update(() => {}), 1000);
   wallet = mountWallet({
     el: $("wallet"),
     rpc,
     seed: q.get("seed"),
     contract,
-    getMarket: () => market ?? 0,
+    getMarket: () => store.read().book.market ?? 0,
     overrides,
     onRefresh: () => requestRefresh(),
     onOwnTicks: (t) => {
-      ownTicks = t;
-      if (lastGood) render(lastGood, viewState());
+      store.update((s) => {
+        s.book.ownTicks = t;
+      });
     },
   });
   $("ladder").addEventListener("click", (e) => {

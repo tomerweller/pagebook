@@ -7,6 +7,8 @@ import { MarkupCache } from "./view/stable";
 import { createOrders, type OpenOrder } from "./wallet/orders";
 import { createTicket } from "./wallet/ticket";
 import type { UrlOverrides } from "./view/format";
+import { createStore } from "./store";
+import { emptyEventState, emptyOwnTicks, registerMarketView, type AppState } from "./view/market";
 
 const emptyOv: UrlOverrides = { baseSym: null, quoteSym: null, baseDec: null, quoteDec: null };
 
@@ -204,4 +206,58 @@ test("best-ask size change re-runs preview", async () => {
   await new Promise((r) => setTimeout(r, 500));
   expect(sims.n).toBeGreaterThan(afterFirst);
   root.remove();
+});
+
+function mountShell(): void {
+  document.body.innerHTML = `
+    <h1 id="pair">-- / --</h1>
+    <div id="meta"></div>
+    <div id="fresh"><span id="fresh-text"></span></div>
+    <div id="kpis"></div>
+    <div id="ladder"></div>
+    <ol id="trades"></ol>
+    <p id="history-note"></p>
+    <ol id="activity"></ol>
+    <dl id="facts"></dl>
+  `;
+}
+
+function emptyBookDomain(): AppState["book"] {
+  return {
+    snapshot: null,
+    eventState: emptyEventState(),
+    marketList: [],
+    market: 0,
+    lastOkAt: 0,
+    lastError: "",
+    eventsLoading: false,
+    knownBase: null,
+    knownQuote: null,
+    marketsLoadedAt: 0,
+    ownTicks: emptyOwnTicks(),
+    overrides: emptyOv,
+    contract: "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO",
+    isTestnet: true,
+  };
+}
+
+test("book update renders ladder and kpis via store", async () => {
+  mountShell();
+  const store = createStore<AppState>({ book: emptyBookDomain() });
+  registerMarketView(store, {
+    onSwitchMarket: () => {},
+    onBook: () => {},
+    onEvents: () => {},
+  });
+  const snap = mockSnapshot();
+  store.update((s) => {
+    s.book.snapshot = snap;
+    s.book.lastOkAt = Date.now();
+    s.book.eventState.events = snap.events;
+    s.book.eventState.historyFrom = snap.historyFrom;
+  });
+  await Promise.resolve();
+  expect(document.getElementById("kpis")!.innerHTML).toMatch(/best bid/);
+  expect(document.getElementById("ladder")!.innerHTML).toMatch(/data-tick/);
+  expect(document.getElementById("pair")!.textContent).not.toBe("-- / --");
 });

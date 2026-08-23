@@ -14,6 +14,7 @@ import {
   type UrlOverrides,
 } from "./format";
 import { MarkupCache } from "./stable";
+import type { Store } from "../store";
 
 const paneCache = new MarkupCache();
 
@@ -38,6 +39,35 @@ export type MarketViewState = {
   ownTicks?: OwnTicks;
 };
 
+export type BookDomain = {
+  snapshot: BookSnapshot | null;
+  eventState: EventState;
+  marketList: ListedMarket[];
+  market: number | null;
+  lastOkAt: number;
+  lastError: string;
+  eventsLoading: boolean;
+  knownBase: string | null;
+  knownQuote: string | null;
+  marketsLoadedAt: number;
+  ownTicks: OwnTicks;
+  overrides: UrlOverrides;
+  contract: string;
+  isTestnet: boolean;
+};
+
+export type AppState = {
+  book: BookDomain;
+};
+
+export function emptyEventState(): EventState {
+  return { cursor: null, seen: new Set(), historyFrom: null, events: [] };
+}
+
+export function emptyOwnTicks(): OwnTicks {
+  return { bid: new Set(), ask: new Set() };
+}
+
 function $(id: string): HTMLElement {
   const el = document.getElementById(id);
   if (!el) throw new Error(`#${id} missing`);
@@ -48,6 +78,67 @@ function marketLabel(m: ListedMarket): string {
   const b = m.baseSym || shortAddr(m.base);
   const qs = m.quoteSym || shortAddr(m.quote);
   return `${b} / ${qs}`;
+}
+
+export function renderFresh(book: BookDomain, now = Date.now()): void {
+  const el = $("fresh");
+  const text = $("fresh-text");
+  if (!book.snapshot && !book.lastError) {
+    el.className = "fresh";
+    text.textContent = "loading…";
+    return;
+  }
+  if (book.lastError && !book.snapshot) {
+    el.className = "fresh err";
+    text.innerHTML = `<span class="err-text">${esc(book.lastError)}</span>`;
+    return;
+  }
+  const ago = book.lastOkAt ? Math.max(0, Math.round((now - book.lastOkAt) / 1000)) : 0;
+  const ledger = formatInt(book.snapshot!.latestLedger);
+  let cls = "fresh";
+  if (book.lastError) cls += " err";
+  else if (ago > 15) cls += " stale";
+  el.className = cls;
+  const err = book.lastError ? ` <span class="err-text">${esc(book.lastError)}</span>` : "";
+  text.innerHTML = `ledger ${ledger} · ${ago} s ago${err}`;
+}
+
+export function registerMarketView(
+  store: Store<AppState>,
+  opts: {
+    onSwitchMarket: (id: number) => void;
+    onBook: (book: BookSnapshot) => void;
+    onEvents: (events: BookEvent[]) => void;
+  },
+): void {
+  store.register("market", () => {
+    const app = store.read();
+    renderFresh(app.book);
+    const snap = app.book.snapshot;
+    if (!snap) {
+      $("pair").textContent = "-- / --";
+      renderMeta(viewStateFrom(app, opts.onSwitchMarket));
+      clearPanes();
+      return;
+    }
+    render(snap, viewStateFrom(app, opts.onSwitchMarket));
+    opts.onBook(snap);
+    opts.onEvents(app.book.eventState.events);
+  });
+}
+
+function viewStateFrom(app: AppState, onSwitchMarket: (id: number) => void): MarketViewState {
+  return {
+    contract: app.book.contract,
+    market: app.book.market,
+    marketList: app.book.marketList,
+    overrides: app.book.overrides,
+    isTestnet: app.book.isTestnet,
+    eventState: app.book.eventState,
+    eventsLoading: app.book.eventsLoading,
+    onSwitchMarket,
+    ownTicks: app.book.ownTicks,
+  };
 }
 
 export function renderMeta(state: MarketViewState): void {
