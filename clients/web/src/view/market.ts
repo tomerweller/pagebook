@@ -4,6 +4,7 @@ import {
   contractLink,
   countLabel,
   esc,
+  lotsToBase,
   fmtTime,
   midSpread,
   priceOf,
@@ -85,14 +86,14 @@ export function render(book: BookSnapshot, state: MarketViewState): void {
     <div class="kpi ask"><span class="l">best ask</span><span class="v">${ask.empty ? "—" : esc(priceOf(ask.tick, book, state.overrides))}${staleAsk}</span></div>
     <div class="kpi"><span class="l">spread</span><span class="v" title="${ticks == null ? "" : `${esc(ticks)} ticks`}">${spread == null ? "—" : esc(spread)}</span>${pct ? `<span class="sub">(${esc(pct)})</span>` : ""}</div>
     <div class="kpi"><span class="l">mid</span><span class="v">${mid == null ? "—" : esc(mid)}</span></div>
-    <div class="kpi ${lastSide}"><span class="l">last</span><span class="v">${last ? `${esc(priceOf(last.tick, book, state.overrides))} × ${esc(countLabel(last.lots, "lot"))}` : "—"}</span></div>`,
+    <div class="kpi ${lastSide}"><span class="l">last</span><span class="v">${last ? `<span title="${esc(countLabel(last.lots, "lot"))}">${esc(priceOf(last.tick, book, state.overrides))} × ${esc(lotsToBase(last.lots, book, state.overrides))} ${esc(baseSym)}</span>` : "—"}</span></div>`,
   );
 
   paneCache.write(
     "ladder",
     $("ladder"),
-    sideHtml("bids", book.bids, book, book.moreBids, state.overrides, state.ownTicks) +
-      sideHtml("asks", book.asks, book, book.moreAsks, state.overrides, state.ownTicks),
+    sideHtml("bids", book.bids, book, book.moreBids, state.overrides, baseSym, state.ownTicks) +
+      sideHtml("asks", book.asks, book, book.moreAsks, state.overrides, baseSym, state.ownTicks),
   );
   paneCache.write("trades", $("trades"), tradesHtml(book, state));
   paneCache.write("activity", $("activity"), activityHtml(state));
@@ -107,6 +108,7 @@ function sideHtml(
   book: BookSnapshot,
   more: boolean,
   overrides: UrlOverrides,
+  baseSym: string,
   own?: OwnTicks,
 ): string {
   let cum = 0n;
@@ -123,16 +125,16 @@ function sideHtml(
           const mine = own && (side === "bid" ? own.bid.has(r.tick) : own.ask.has(r.tick));
           return `<div class="row${mine ? " own" : ""}" data-tick="${r.tick}" data-side="${side}">
             <span>${esc(priceOf(r.tick, book, overrides))}${mine ? `<i class="own-dot ${side}"></i>` : ""}</span>
-            <span>${esc(formatInt(r.open_lots))} ×${r.queue}</span>
+            <span title="${esc(countLabel(r.open_lots, "lot"))}">${esc(lotsToBase(r.open_lots, book, overrides))} ×${r.queue}</span>
             <span class="tick">${r.tick}</span>
-            <span class="bar"><i style="width:${w}%"></i> ${esc(formatInt(r.cum))}</span>
+            <span class="bar" title="${esc(countLabel(r.cum, "lot"))} cumulative"><i style="width:${w}%"></i> ${esc(lotsToBase(r.cum, book, overrides))}</span>
           </div>`;
         })
         .join("")
     : `<div class="empty">— no ${name} in window</div>`;
   return `<div class="side ${name}">
     <h3>${name}</h3>
-    <div class="cols"><span>price</span><span>lots</span><span class="tick">tick</span><span>cum</span></div>
+    <div class="cols"><span>price</span><span>${esc(baseSym)}</span><span class="tick">tick</span><span>cum</span></div>
     ${body}
     ${more ? `<div class="note">more levels beyond the read window</div>` : ""}
   </div>`;
@@ -152,6 +154,7 @@ function tradesHtml(book: BookSnapshot, state: MarketViewState): string {
   if (!rows.length) return `<li class="empty">— no trades yet</li>`;
   const qdec = tokenDecimals(book.tokens?.quote, state.overrides.quoteDec);
   const qsym = tokenLabel(book.tokens?.quote, state.overrides.quoteSym, book.quote);
+  const bsym = tokenLabel(book.tokens?.base, state.overrides.baseSym, book.base);
   return rows
     .map((e) => {
       const side = e.taker === "buy" ? "buy" : "sell";
@@ -160,7 +163,7 @@ function tradesHtml(book: BookSnapshot, state: MarketViewState): string {
       return `<li${mine ? ` class="own"` : ""}>
         <span title="${esc(t.title)}">${esc(t.text)}</span>
         <span class="${side}">${side}${mine ? `<i class="own-dot ${e.is_bid ? "bid" : "ask"}"></i>` : ""}</span>
-        <span class="detail ${side}" title="${esc(formatInt(e.quote))} atoms">${e.tick} × ${esc(formatInt(e.lots))} · ${esc(formatAtoms(e.quote, qdec))} ${esc(qsym)}</span>
+        <span class="detail ${side}" title="${esc(countLabel(e.lots, "lot"))} · ${esc(formatInt(e.quote))} quote atoms">${esc(priceOf(e.tick, book, state.overrides))} × ${esc(lotsToBase(e.lots, book, state.overrides))} ${esc(bsym)} · ${esc(formatAtoms(e.quote, qdec))} ${esc(qsym)}</span>
         <span title="ledger ${formatInt(e.ledger)}">${txLink(e.txHash)}</span>
       </li>`;
     })

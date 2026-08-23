@@ -1,4 +1,4 @@
-import { formatInt, formatRatio, ticksToPrice } from "../decode";
+import { formatInt, formatRatio, ticksToPrice, formatAtoms } from "../decode";
 import type { BookSnapshot, TokenMeta } from "../book";
 
 export type UrlOverrides = {
@@ -68,6 +68,17 @@ export function priceOf(tick: number, book: BookSnapshot, overrides: UrlOverride
   const bd = tokenDecimals(book.tokens?.base, overrides.baseDec);
   const qd = tokenDecimals(book.tokens?.quote, overrides.quoteDec);
   return ticksToPrice(tick, m.tick_size, m.lot_size, bd, qd);
+}
+
+/// Lots expressed in base units (lots × lot_size atoms at the base token's
+/// decimals). The ladder, tape, and last-KPI quantities read in base units;
+/// exact lots stay in tooltips, like atoms.
+export function lotsToBase(lots: bigint | number, book: BookSnapshot, overrides: UrlOverrides): string {
+  const m = book.market;
+  const n = typeof lots === "bigint" ? lots : BigInt(lots);
+  if (!m) return formatInt(n);
+  const bd = tokenDecimals(book.tokens?.base, overrides.baseDec);
+  return formatAtoms(n * BigInt(m.lot_size), bd);
 }
 
 export function midSpread(
