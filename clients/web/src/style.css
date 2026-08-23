@@ -306,6 +306,7 @@ section h2 {
 .row { padding: 2px 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .row .tick { color: var(--muted); font-size: 0.75em; }
 .row > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .q { font-style: normal; color: var(--muted); }
 .row .bar {
   position: relative;
   height: 0.7rem;

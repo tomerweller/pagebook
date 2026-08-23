@@ -125,7 +125,7 @@ function sideHtml(
           const mine = own && (side === "bid" ? own.bid.has(r.tick) : own.ask.has(r.tick));
           return `<div class="row${mine ? " own" : ""}" data-tick="${r.tick}" data-side="${side}">
             <span>${esc(priceOf(r.tick, book, overrides))}${mine ? `<i class="own-dot ${side}"></i>` : ""}</span>
-            <span title="${esc(countLabel(r.open_lots, "lot"))}">${esc(lotsToBase(r.open_lots, book, overrides))} ×${r.queue}</span>
+            <span title="${esc(countLabel(r.open_lots, "lot"))} · ${esc(countLabel(r.queue, "order"))} queued">${esc(lotsToBase(r.open_lots, book, overrides))}${r.queue > 1 ? ` <i class="q">·${r.queue}</i>` : ""}</span>
             <span class="tick">${r.tick}</span>
             <span class="bar" title="${esc(countLabel(r.cum, "lot"))} cumulative"><i style="width:${w}%"></i> ${esc(lotsToBase(r.cum, book, overrides))}</span>
           </div>`;
