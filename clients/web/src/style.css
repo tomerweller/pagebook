@@ -292,11 +292,11 @@ section h2 {
 .side.asks h3 { color: var(--ask); }
 .cols, .row {
   display: grid;
-  grid-template-columns: 5.5rem 6.5rem minmax(0, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   align-items: center;
 }
-.side.bids .cols, .side.bids .row { grid-template-columns: minmax(0, 1fr) 6.5rem 5.5rem; }
+
 .cols {
   padding: 4px 10px;
   color: var(--muted);
@@ -411,8 +411,7 @@ section h2 {
   .wallet-input, .ticket-fields .wallet-input { font-size: 16px; }
   .ladder { gap: 8px; }
   .feeds { grid-template-columns: 1fr; }
-  .cols, .row { grid-template-columns: 4.6rem 5.2rem minmax(0, 1fr); }
-  .side.bids .cols, .side.bids .row { grid-template-columns: minmax(0, 1fr) 5.2rem 4.6rem; }
+
   .facts div.wide { grid-column: span 1; }
   .panel { max-height: 16rem; }
 }
