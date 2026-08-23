@@ -15,9 +15,29 @@ test("setHtml skips identical markup", () => {
 });
 
 test("MarkupCache skips second identical write", () => {
-  const node = { innerHTML: "", querySelector: () => null, contains: () => false } as unknown as Element;
+  const node = { innerHTML: "", querySelector: () => null, contains: () => false, querySelectorAll: () => [] } as unknown as Element;
   const c = new MarkupCache();
   expect(c.write("kpis", node, "<b>1</b>")).toBe("html");
   expect(c.write("kpis", node, "<b>1</b>")).toBe("skip");
   expect(c.write("kpis", node, "<b>2</b>")).toBe("html");
+});
+
+test("MarkupCache patch does not poison the cache", () => {
+  const node = {
+    innerHTML: "",
+    contains: () => false,
+    querySelector: () => null,
+    querySelectorAll: () => [{ scrollTop: 4, scrollLeft: 0 }],
+  } as unknown as Element;
+  const c = new MarkupCache();
+  node.querySelectorAll = () => [] as unknown as NodeListOf<HTMLElement>;
+  expect(c.write("trades", node, "<p>a</p>")).toBe("html");
+  node.querySelectorAll = () => [{ scrollTop: 4, scrollLeft: 0 }] as unknown as NodeListOf<HTMLElement>;
+  expect(c.write("trades", node, "<p>b</p>")).toBe("patch");
+  expect(c.get("trades")).toBe("<p>a</p>");
+  expect(node.innerHTML).toBe("<p>a</p>");
+  node.querySelectorAll = () => [] as unknown as NodeListOf<HTMLElement>;
+  expect(c.write("trades", node, "<p>b</p>")).toBe("html");
+  expect(c.get("trades")).toBe("<p>b</p>");
+  expect(node.innerHTML).toBe("<p>b</p>");
 });

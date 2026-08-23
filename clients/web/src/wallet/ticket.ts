@@ -181,6 +181,7 @@ export function createTicket(opts: {
   let focusQty = false;
   let previewTimer: ReturnType<typeof setTimeout> | null = null;
   let previewGen = 0;
+  let previewQuoteKey = "";
   let rootEl: HTMLElement | null = null;
   let submitting = false;
 
@@ -315,12 +316,42 @@ export function createTicket(opts: {
     void runPreview();
   }
 
+  function levelsKey(rows: { tick: number; open_lots: bigint }[] | undefined): string {
+    return (rows ?? []).map((r) => `${r.tick}:${r.open_lots}`).join(",");
+  }
+
+  function quoteKey(): string {
+    const bid = book?.bestBid?.empty ? "-" : String(book?.bestBid?.tick ?? "");
+    const ask = book?.bestAsk?.empty ? "-" : String(book?.bestAsk?.tick ?? "");
+    const seq = account?.sequence?.toString() ?? "";
+    const spend = account?.spendable?.toString() ?? "";
+    const b = balances();
+    return [
+      bid,
+      ask,
+      levelsKey(book?.bids),
+      levelsKey(book?.asks),
+      seq,
+      spend,
+      b.baseAtoms.toString(),
+      String(b.quoteAtoms),
+      isBid,
+      String(tick),
+      lots.toString(),
+      flags.post_only,
+      flags.fill_or_kill,
+      flags.no_rest,
+      opts.getMarket(),
+    ].join("|");
+  }
+
   async function runPreview(): Promise<void> {
     const pub = opts.getPublic();
     const m = market();
     const v = validation();
     if (!pub || !m || !book?.base || !book.quote || !v.ok || !account?.exists) {
       preview = { kind: "idle" };
+      previewQuoteKey = quoteKey();
       paintChrome();
       return;
     }
@@ -345,11 +376,13 @@ export function createTicket(opts: {
       const disp = remainderDisposition(q.filledLots, lots, flags);
       if (disp === "crossed") {
         preview = { kind: "typed", name: "Crossed" };
+        previewQuoteKey = quoteKey();
         paintChrome();
         return;
       }
       if (disp === "unfilled") {
         preview = { kind: "typed", name: "Unfilled" };
+        previewQuoteKey = quoteKey();
         paintChrome();
         return;
       }
@@ -381,6 +414,8 @@ export function createTicket(opts: {
       const code = parseContractError(msg);
       preview = code != null ? { kind: "typed", name: errorName(code) } : { kind: "err", message: msg };
     }
+    if (preview.kind === "err") previewQuoteKey = "";
+    else previewQuoteKey = quoteKey();
     paintChrome();
   }
 
@@ -675,7 +710,7 @@ export function createTicket(opts: {
         }
         syncStrFromSnap();
         paintChrome();
-        schedulePreview();
+        if (quoteKey() !== previewQuoteKey) schedulePreview();
       }
     },
   };

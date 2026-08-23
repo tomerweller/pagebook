@@ -375,7 +375,11 @@ export function createOrders(opts: {
   }
 
   function structKey(): string {
-    return `${rows.map((r) => `${r.nonce}:${r.tick}:${r.qtyLots}:${r.archived}`).join(",")}|${replaceOf}|${confirmSettle}|${[...selected].join(",")}|${replaceTick}|${replaceLots}|${replaceBid}|${replacePostOnly}|${batchOffset}`;
+    const base = tokenLabel(book?.tokens.base, overrides.baseSym, book?.base ?? null);
+    const quote = tokenLabel(book?.tokens.quote, overrides.quoteSym, book?.quote ?? null);
+    const bd = tokenDecimals(book?.tokens.base, overrides.baseDec);
+    const qd = tokenDecimals(book?.tokens.quote, overrides.quoteDec);
+    return `${rows.map((r) => `${r.nonce}:${r.tick}:${r.qtyLots}:${r.archived}`).join(",")}|${replaceOf}|${confirmSettle}|${[...selected].join(",")}|${replaceTick}|${replaceLots}|${replaceBid}|${replacePostOnly}|${batchOffset}|${base}|${quote}|${bd}|${qd}`;
   }
 
   function liveKey(): string {
@@ -413,6 +417,13 @@ export function createOrders(opts: {
     if (sk === lastStruct && lastHtml) {
       lastLive = lk;
       lastHtml = next;
+      logRender("orders", "patch");
+      paintLive();
+      return;
+    }
+    const active = typeof document !== "undefined" ? document.activeElement : null;
+    if (active instanceof HTMLElement && rootEl.contains(active) && active.closest("[data-field]")) {
+      lastLive = lk;
       logRender("orders", "patch");
       paintLive();
       return;

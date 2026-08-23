@@ -43,26 +43,61 @@ export function shouldPatch(root: Element): boolean {
 
 export class MarkupCache {
   private last = new Map<string, string>();
+  private lastDom = new Map<string, string>();
 
   forget(name?: string): void {
-    if (name) this.last.delete(name);
-    else this.last.clear();
+    if (name) {
+      this.last.delete(name);
+      this.lastDom.delete(name);
+    } else {
+      this.last.clear();
+      this.lastDom.clear();
+    }
+  }
+
+  get(name: string): string | undefined {
+    return this.last.get(name);
+  }
+
+  patched(name: string, node: Element | null): void {
+    if (!node) return;
+    this.lastDom.set(name, ownedHtml(node));
   }
 
   write(name: string, node: Element | null, html: string): "skip" | "html" | "patch" {
     if (!node) return "skip";
     if (this.last.get(name) === html) {
       logRender(name, "skip");
+      this.assert(name, node);
       return "skip";
     }
     if (shouldPatch(node) && this.last.has(name)) {
-      this.last.set(name, html);
       logRender(name, "patch");
+      this.assert(name, node);
       return "patch";
     }
     this.last.set(name, html);
     node.innerHTML = html;
+    this.lastDom.set(name, ownedHtml(node));
     logRender(name, "html");
+    this.assert(name, node);
     return "html";
   }
+
+  private assert(name: string, node: Element): void {
+    if (!debugRender()) return;
+    const cached = this.lastDom.get(name);
+    if (cached !== undefined && cached !== ownedHtml(node)) {
+      console.error(`[render] INVARIANT ${name}: cache !== innerHTML`);
+    }
+  }
+}
+
+function ownedHtml(node: Element): string {
+  if (typeof node.cloneNode !== "function") return node.innerHTML;
+  const clone = node.cloneNode(true) as Element;
+  if (typeof clone.querySelectorAll === "function") {
+    for (const d of clone.querySelectorAll("details")) d.removeAttribute("open");
+  }
+  return clone.innerHTML;
 }

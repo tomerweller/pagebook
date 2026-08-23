@@ -321,7 +321,11 @@ export function mountWallet(opts: {
     }
     write("identity", identityHtml(id, ids));
     const balAction = write("balances", balancesHtml());
-    if (balAction === "patch") patchBalances();
+    if (balAction === "patch") {
+      patchBalances();
+      const balNode = sec("balances");
+      if (balNode) cache.patched("balances", balNode);
+    }
     write("keys", keysHtml(id));
     write("status", status ? `<p class="wallet-status">${esc(status)}</p>` : "");
     write("log", logHtml());
