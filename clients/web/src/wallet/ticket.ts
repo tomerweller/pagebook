@@ -495,6 +495,10 @@ export function createTicket(opts: {
       setText(why, v.ok ? "" : v.reason);
       setAttr(why, "title", v.ok ? "" : (v.title ?? ""));
     }
+    const buyBtn = rootEl.querySelector<HTMLButtonElement>("[data-act=buy]");
+    const sellBtn = rootEl.querySelector<HTMLButtonElement>("[data-act=sell]");
+    if (buyBtn && buyBtn.className !== (isBid ? "on bid" : "")) buyBtn.className = isBid ? "on bid" : "";
+    if (sellBtn && sellBtn.className !== (!isBid ? "on ask" : "")) sellBtn.className = !isBid ? "on ask" : "";
     const btn = rootEl.querySelector<HTMLButtonElement>("[data-act=place]");
     if (btn) {
       const off = !v.ok || phase === "simulating" || phase === "signing" || phase === "sending" || (preview.kind === "typed" && preview.name === "Crossed");
