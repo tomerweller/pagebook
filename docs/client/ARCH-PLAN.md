@@ -104,3 +104,16 @@ and interactions), the two shipped regressions' tests plus one per latent
 finding green, `?debug=render` invariant clean, and a soak of the UI against
 the live market with the wallet open (no stuck sections, no focus loss, no
 stale panels after scroll).
+
+## Status: executed
+
+A0–A5 landed (commits 81d6239, f5990d3, 32e7418, 562fb96, bd2ef81), each
+through an implement → independent-audit → fix cycle, and the whole passed
+final validation against the live deployment: repo-wide sweep clean, the
+four historical bugs pinned by tests with stable assertions, 0 invariant
+violations and 0 console errors across a 17-minute live session including
+a 12-minute interactive soak, every DOM mutation section-attributable. The
+open-hardening handoff list lives in the final validation report
+(store finally-guard, proxy footgun comment, IME guard in the focus swap);
+the deep-crossing pad key-count cliff is an engine-layer item, not a
+render one.
