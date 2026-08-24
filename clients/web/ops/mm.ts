@@ -49,6 +49,8 @@ export type MmArgs = {
   baseSac: string;
   quoteSac: string;
   usdcIssuer: string;
+  baseCode: string;
+  baseIssuer: string;
   usdcCode: string;
   configDir: string;
   network: string;
@@ -84,6 +86,8 @@ export const MM_SPECS: ArgSpec<keyof MmArgs & string>[] = [
   { flag: "--identity", dest: "identity", default: "pb-mm" },
   { flag: "--base-sac", dest: "baseSac", required: true },
   { flag: "--quote-sac", dest: "quoteSac", required: true },
+  { flag: "--base-code", dest: "baseCode", default: "" },
+  { flag: "--base-issuer", dest: "baseIssuer", default: "" },
   { flag: "--usdc-issuer", dest: "usdcIssuer", required: true },
   { flag: "--usdc-code", dest: "usdcCode", default: "USDC" },
   { flag: "--config-dir", dest: "configDir", default: ".stellar" },
@@ -167,7 +171,7 @@ export class MM {
     this.views = deps.views ?? createViews(this.rpc, { contract: a.contract, source: this.id.address, market: a.market, owner: this.id.address });
     this.log = deps.log ?? openLog(a.log);
     this.state = loadState(a.state);
-    this.tokens = classicTokens({ baseSac: a.baseSac, quoteSac: a.quoteSac, usdcCode: a.usdcCode, usdcIssuer: a.usdcIssuer });
+    this.tokens = classicTokens({ baseSac: a.baseSac, quoteSac: a.quoteSac, usdcCode: a.usdcCode, usdcIssuer: a.usdcIssuer, baseCode: a.baseCode, baseIssuer: a.baseIssuer });
     this.now = deps.now ?? (() => Date.now() / 1000);
     this.sleep = deps.sleep ?? sleep;
     this.balancesFn = deps.balances ?? (() => fetchBalances(a.horizon, this.id.address));

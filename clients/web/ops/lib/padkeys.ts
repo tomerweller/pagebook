@@ -42,8 +42,16 @@ export function classicTokens(opts: {
   quoteSac: string;
   usdcCode: string;
   usdcIssuer: string;
+  baseCode?: string;
+  baseIssuer?: string;
 }): ClassicToken[] {
-  return [{ sac: opts.baseSac }, { sac: opts.quoteSac, code: opts.usdcCode, issuer: opts.usdcIssuer }];
+  // Base defaults to native XLM (caller's balance entry is the account itself);
+  // a classic base (a test-asset market) passes its trustline coordinates.
+  const base: ClassicToken =
+    opts.baseCode && opts.baseIssuer
+      ? { sac: opts.baseSac, code: opts.baseCode, issuer: opts.baseIssuer }
+      : { sac: opts.baseSac };
+  return [base, { sac: opts.quoteSac, code: opts.usdcCode, issuer: opts.usdcIssuer }];
 }
 
 export function tokenXdrKeys(pagebook: string, caller: string, tokens: ClassicToken[]): StellarSdk.xdr.LedgerKey[] {

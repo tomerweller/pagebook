@@ -25,6 +25,8 @@ export type TraderArgs = {
   baseSac: string;
   quoteSac: string;
   usdcIssuer: string;
+  baseCode: string;
+  baseIssuer: string;
   usdcCode: string;
   configDir: string;
   network: string;
@@ -44,6 +46,8 @@ export const TRADER_SPECS: ArgSpec<keyof TraderArgs & string>[] = [
   { flag: "--identity", dest: "identity", default: "pb-trader" },
   { flag: "--base-sac", dest: "baseSac", required: true },
   { flag: "--quote-sac", dest: "quoteSac", required: true },
+  { flag: "--base-code", dest: "baseCode", default: "" },
+  { flag: "--base-issuer", dest: "baseIssuer", default: "" },
   { flag: "--usdc-issuer", dest: "usdcIssuer", required: true },
   { flag: "--usdc-code", dest: "usdcCode", default: "USDC" },
   { flag: "--config-dir", dest: "configDir", default: ".stellar" },
@@ -101,7 +105,7 @@ export class Trader {
     this.sleep = deps.sleep ?? sleep;
     this.rnd = deps.rnd ?? Math.random;
     this.nonce = Math.floor(this.now()) * 1000;
-    this.tokens = classicTokens({ baseSac: a.baseSac, quoteSac: a.quoteSac, usdcCode: a.usdcCode, usdcIssuer: a.usdcIssuer });
+    this.tokens = classicTokens({ baseSac: a.baseSac, quoteSac: a.quoteSac, usdcCode: a.usdcCode, usdcIssuer: a.usdcIssuer, baseCode: a.baseCode, baseIssuer: a.baseIssuer });
     this.hex = tokenHex(a.baseSac, a.quoteSac);
     this.ownerHex = addrToHex(this.id.address);
   }
