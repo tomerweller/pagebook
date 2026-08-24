@@ -796,3 +796,32 @@ test("chip tap opens the sheet toward the order row", async () => {
   expect(store.read().wallet.collapsed).toBe(false);
   expect(store.read().wallet.unseenFills).toBe(0);
 });
+
+test("persisted identity restores on boot without a seed param", async () => {
+  // Post-A3 regression: boot() only synced the keystore inside the ?seed=
+  // branch, so a plain reload showed the intro while localStorage held the
+  // identity.
+  const mem = new Map<string, string>();
+  mem.set(
+    "pagebook.wallet.v1",
+    JSON.stringify({ identities: [{ name: "key 1", publicKey: testId.publicKey, secret: testId.secret }], active: "key 1" }),
+  );
+  const storage = {
+    getItem: (k: string) => mem.get(k) ?? null,
+    setItem: (k: string, v: string) => void mem.set(k, v),
+    removeItem: (k: string) => void mem.delete(k),
+  };
+  document.body.innerHTML = `<aside id="wallet"></aside>`;
+  const store = createStore<AppState>(emptyApp());
+  mountWallet({
+    store,
+    el: document.getElementById("wallet")!,
+    rpc: stubRpc({ n: 0 }),
+    getMarket: () => 0,
+    onRefresh: () => {},
+    storage,
+  });
+  await flush(20);
+  expect(store.read().wallet.active?.name).toBe("key 1");
+  expect(document.getElementById("wallet")!.textContent).not.toMatch(/generate/i);
+});

@@ -11,7 +11,7 @@ import {
   type TrustlineState,
 } from "./account";
 import { addTrustline, fundWithFriendbot, type SubmitResult } from "./classic";
-import { Keystore, type Identity } from "./keystore";
+import { Keystore, type Identity, type StorageLike } from "./keystore";
 import { missingCredits, planProvision, type ProvisionSource } from "./provision";
 import { checkTestnet } from "./network";
 import { createOrders, loadOpenOrders, ownTicksOf, rememberNonce, sessionRestedNonces, type OpenOrder } from "./orders";
@@ -200,6 +200,20 @@ function pushLogInto(s: AppState, item: LogItem): void {
   if (s.wallet.log.length > LOG_CAP) s.wallet.log.length = LOG_CAP;
 }
 
+function defaultStorage(): StorageLike {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) return window.localStorage;
+  } catch {
+    // storage access can throw (privacy modes); fall through to memory
+  }
+  const mem = new Map<string, string>();
+  return {
+    getItem: (k) => mem.get(k) ?? null,
+    setItem: (k, v) => void mem.set(k, v),
+    removeItem: (k) => void mem.delete(k),
+  };
+}
+
 function syncIdentity(s: AppState, ks: Keystore): void {
   s.wallet.identities = ks.list();
   s.wallet.active = ks.active();
@@ -212,9 +226,10 @@ export function mountWallet(opts: {
   rpc: Rpc;
   getMarket: () => number;
   onRefresh: () => void;
+  storage?: StorageLike;
 }): WalletHandle {
   const app = opts.store;
-  const ks = new Keystore(window.localStorage);
+  const ks = new Keystore(opts.storage ?? defaultStorage());
   const el = opts.el;
   let balGen = 0;
   let lastSeenLedger = -1;
@@ -927,11 +942,13 @@ export function mountWallet(opts: {
       s.wallet.enabled = true;
       if (s.wallet.seed) {
         ks.activateSeed(s.wallet.seed);
-        syncIdentity(s, ks);
         s.wallet.autoSource = "seed";
         s.ticket.sideLocked = false;
         resetAwareness(s);
       }
+      // Always sync: persisted identities must restore on a plain reload,
+      // not only when a ?seed= is present (post-A3 boot regression).
+      syncIdentity(s, ks);
       s.wallet.status = "";
     });
     if (app.read().wallet.enabled) await refreshBalances();
