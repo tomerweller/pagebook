@@ -9,7 +9,7 @@ import { toLedgerKey, type ClientKey } from "./clientKeys";
 import { errorName, hostErrorMessage, parseContractError } from "./errors";
 import { pad, restoreMarks, type PadOut, type Quoted, type WindowSpec } from "./pad";
 import { simulate } from "./quote";
-import { applyPad, classicFee, footprintIndexes } from "./txdata";
+import { applyPad, classicFee, footprintIndexes, type ApplyPadSizes } from "./txdata";
 
 export type PlaceFlags = {
   post_only: boolean;
@@ -83,19 +83,19 @@ export function tokenExtraKeys(pagebook: string, caller: string, tokens: Classic
   return keys;
 }
 
-function scvU32(n: number): StellarSdk.xdr.ScVal {
+export function scvU32(n: number): StellarSdk.xdr.ScVal {
   return StellarSdk.xdr.ScVal.scvU32(n);
 }
 
-function scvBool(b: boolean): StellarSdk.xdr.ScVal {
+export function scvBool(b: boolean): StellarSdk.xdr.ScVal {
   return StellarSdk.xdr.ScVal.scvBool(b);
 }
 
-function scvU64(n: bigint): StellarSdk.xdr.ScVal {
+export function scvU64(n: bigint): StellarSdk.xdr.ScVal {
   return StellarSdk.nativeToScVal(n, { type: "u64" });
 }
 
-function scvAddr(a: string): StellarSdk.xdr.ScVal {
+export function scvAddr(a: string): StellarSdk.xdr.ScVal {
   return new StellarSdk.Address(a).toScVal();
 }
 
@@ -230,6 +230,7 @@ export type SubmitArgs = {
   quoted?: Quoted;
   padOut?: PadOut;
   tokens?: ClassicToken[];
+  sizes?: ApplyPadSizes;
 };
 
 export async function submitInvocation(a: SubmitArgs): Promise<EngineResult> {
@@ -292,7 +293,7 @@ async function submitOnce(a: SubmitArgs, kp: StellarSdk.Keypair): Promise<Engine
       archivedIdx = footprintIndexes(existing, markXdr);
     }
   }
-  const padded = applyPad(existing, extraXdr, archivedIdx);
+  const padded = applyPad(existing, extraXdr, archivedIdx, a.sizes);
   const fee = classicFee(padded.resourceFee);
   const finalTx = StellarSdk.TransactionBuilder.cloneFrom(assembled, { fee }).setSorobanData(padded.data).build();
   finalTx.sign(kp);
@@ -349,6 +350,7 @@ export async function submitPlace(
     tokens: ClassicToken[];
     padEnd: number;
     pagesForEmpty?: boolean;
+    sizes?: ApplyPadSizes;
   },
 ): Promise<EngineResult> {
   const out = pad(opts.quoted, opts.padEnd, { pagesForEmpty: opts.pagesForEmpty });
@@ -372,6 +374,7 @@ export async function submitPlace(
     quoted: opts.quoted,
     padOut: out,
     tokens: opts.tokens,
+    sizes: opts.sizes,
   });
 }
 
@@ -385,6 +388,7 @@ export async function submitSettle(
     nonce: bigint;
     padKeys: ClientKey[];
     tokens: ClassicToken[];
+    sizes?: ApplyPadSizes;
   },
 ): Promise<EngineResult> {
   return submitInvocation({
@@ -395,6 +399,7 @@ export async function submitSettle(
     args: [scvAddr(opts.owner), scvU32(opts.market), scvU64(opts.nonce)],
     padKeys: opts.padKeys,
     tokens: opts.tokens,
+    sizes: opts.sizes,
   });
 }
 
@@ -408,6 +413,7 @@ export async function submitReplaceBatch(
     items: { nonce: bigint; isBid: boolean; tick: number; qtyLots: bigint; window: WindowSpec }[];
     padKeys: ClientKey[];
     tokens: ClassicToken[];
+    sizes?: ApplyPadSizes;
   },
 ): Promise<EngineResult> {
   return submitInvocation({
@@ -418,6 +424,7 @@ export async function submitReplaceBatch(
     args: [scvAddr(opts.owner), scvU32(opts.market), StellarSdk.xdr.ScVal.scvVec(opts.items.map(scReplaceItem))],
     padKeys: opts.padKeys,
     tokens: opts.tokens,
+    sizes: opts.sizes,
   });
 }
 
@@ -435,6 +442,7 @@ export async function submitReplace(
     window: WindowSpec;
     padKeys: ClientKey[];
     tokens: ClassicToken[];
+    sizes?: ApplyPadSizes;
   },
 ): Promise<EngineResult> {
   return submitInvocation({
@@ -453,5 +461,6 @@ export async function submitReplace(
     ],
     padKeys: opts.padKeys,
     tokens: opts.tokens,
+    sizes: opts.sizes,
   });
 }

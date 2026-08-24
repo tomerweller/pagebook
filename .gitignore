@@ -10,6 +10,8 @@ __pycache__/
 tools/mm/state.json
 tools/mm/state.json.tmp
 tools/mm/*.log
+clients/web/ops/*.log
+clients/web/ops/state/
 tools/mm/mm.out
 tools/mm/trader.out
 tools/stress/*.log
