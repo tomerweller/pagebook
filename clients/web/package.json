@@ -7,7 +7,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "e2e": "npm run build && playwright test"
+    "e2e": "npm run build && playwright test",
+    "icons": "node scripts/gen-icons.mjs"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "16.2.0"

@@ -587,7 +587,7 @@ section h2 {
   .kpi { flex: 1; min-width: 0; padding: 6px 8px; overflow: hidden; }
   .kpi .v { font-size: 13px; }
   .kpi-bid .v, .kpi-ask .v { white-space: normal; overflow: visible; }
-  .kpi-last .v { overflow: hidden; text-overflow: ellipsis; }
+  .kpi-last .v { white-space: normal; overflow-wrap: anywhere; }
   .page { overflow-x: hidden; }
   .kpi-spread, .kpi-mid { display: none; }
   details.fold > summary {
