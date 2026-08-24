@@ -260,9 +260,10 @@ export async function submitPlace(
     quoted: Quoted;
     tokens: ClassicToken[];
     padEnd: number;
+    pagesForEmpty?: boolean;
   },
 ): Promise<EngineResult> {
-  const out = pad(opts.quoted, opts.padEnd);
+  const out = pad(opts.quoted, opts.padEnd, { pagesForEmpty: opts.pagesForEmpty });
   return submitInvocation({
     rpc,
     contract: opts.contract,

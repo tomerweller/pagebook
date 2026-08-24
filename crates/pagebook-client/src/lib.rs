@@ -81,6 +81,34 @@ pub struct PadOut {
     pub window: WindowSpec,
 }
 
+/// Options for [`pad_opts`]. Defaults match [`pad`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PadOpts {
+    /// When false, skip consume-window `LevelPage` keys for crossed levels
+    /// whose `open_lots` is 0. Window JSON is unchanged (heal walks use this
+    /// to stay under the 200 read-write cap on long phantom trails).
+    pub pages_for_empty: bool,
+}
+
+impl Default for PadOpts {
+    fn default() -> Self {
+        Self {
+            pages_for_empty: true,
+        }
+    }
+}
+
+impl PadOpts {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn pages_for_empty(mut self, v: bool) -> Self {
+        self.pages_for_empty = v;
+        self
+    }
+}
+
 /// Width of the consume window past the simulated head page (§14: "small").
 pub const CONSUME_WIDTH: u32 = 1;
 
@@ -156,6 +184,13 @@ pub fn append_range(tail_seq: u32) -> PageRange {
 /// opposite side, at-or-worse than `start_tick` in the walk direction; the band
 /// is `[start_tick, pad_end]` inclusive, every level key set or not.
 pub fn pad(q: &Quoted, pad_end: u32) -> PadOut {
+    pad_opts(q, pad_end, PadOpts::default())
+}
+
+/// [`pad`] with options. `pages_for_empty: false` skips consume-window page
+/// keys for crossed levels that simulation saw empty; the declared window is
+/// the same either way.
+pub fn pad_opts(q: &Quoted, pad_end: u32, opts: PadOpts) -> PadOut {
     let opp = !q.own_side;
     let m = q.market;
     let mut keys = Vec::new();
@@ -195,7 +230,9 @@ pub fn pad(q: &Quoted, pad_end: u32) -> PadOut {
             first: p,
             last: p.saturating_add(CONSUME_WIDTH),
         };
-        push_pages(&mut keys, m, opp, c.tick, range);
+        if opts.pages_for_empty || c.open_lots != 0 {
+            push_pages(&mut keys, m, opp, c.tick, range);
+        }
         consume.push((c.tick, range));
     }
 
@@ -292,6 +329,35 @@ fn push_pages(keys: &mut Vec<ClientKey>, market: u32, is_bid: bool, tick: u32, r
     }
     // page 0 is always implied by the contract's window rule
     keys.push(ClientKey::LevelPage(market, is_bid, tick, 0));
+}
+
+/// Stable string form shared with the TypeScript client (`keyStr`) and the
+/// pad-conformance fixture.
+pub fn key_str(k: &ClientKey) -> String {
+    match k {
+        ClientKey::Config => "Config".into(),
+        ClientKey::Market(m) => format!("Market({m})"),
+        ClientKey::Level(m, bid, t) => format!("Level({m},{bid},{t})"),
+        ClientKey::LevelPage(m, bid, t, p) => format!("LevelPage({m},{bid},{t},{p})"),
+        ClientKey::Order(m, owner, n) => format!("Order({m},{},{n})", hex32(owner)),
+        ClientKey::FeeAccrual(m, tok) => format!("FeeAccrual({m},{})", hex32(tok)),
+        ClientKey::BestTick(m, bid) => format!("BestTick({m},{bid})"),
+        ClientKey::TickSummary(m, bid) => format!("TickSummary({m},{bid})"),
+        ClientKey::TickWord(m, bid, w) => format!("TickWord({m},{bid},{w})"),
+        ClientKey::VaultBalance(tok) => format!("VaultBalance({})", hex32(tok)),
+        ClientKey::UserBalance(tok) => format!("UserBalance({})", hex32(tok)),
+    }
+}
+
+/// Sorted `key_str` list, the fixture comparison form.
+pub fn sorted_key_strs(keys: &[ClientKey]) -> Vec<String> {
+    let mut s: Vec<String> = keys.iter().map(key_str).collect();
+    s.sort();
+    s
+}
+
+fn hex32(b: &[u8; 32]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
 fn dedup(keys: &mut Vec<ClientKey>) {
@@ -435,30 +501,8 @@ mod tests {
         assert_eq!(n.take(), 2);
     }
 
-    fn hex32(b: &[u8; 32]) -> String {
-        b.iter().map(|x| format!("{x:02x}")).collect()
-    }
-
-    fn key_str(k: &ClientKey) -> String {
-        match k {
-            ClientKey::Config => "Config".into(),
-            ClientKey::Market(m) => format!("Market({m})"),
-            ClientKey::Level(m, bid, t) => format!("Level({m},{bid},{t})"),
-            ClientKey::LevelPage(m, bid, t, p) => format!("LevelPage({m},{bid},{t},{p})"),
-            ClientKey::Order(m, owner, n) => format!("Order({m},{},{n})", hex32(owner)),
-            ClientKey::FeeAccrual(m, tok) => format!("FeeAccrual({m},{})", hex32(tok)),
-            ClientKey::BestTick(m, bid) => format!("BestTick({m},{bid})"),
-            ClientKey::TickSummary(m, bid) => format!("TickSummary({m},{bid})"),
-            ClientKey::TickWord(m, bid, w) => format!("TickWord({m},{bid},{w})"),
-            ClientKey::VaultBalance(tok) => format!("VaultBalance({})", hex32(tok)),
-            ClientKey::UserBalance(tok) => format!("UserBalance({})", hex32(tok)),
-        }
-    }
-
     fn sorted_keys(keys: &[ClientKey]) -> Vec<String> {
-        let mut s: Vec<String> = keys.iter().map(key_str).collect();
-        s.sort();
-        s
+        sorted_key_strs(keys)
     }
 
     fn fixture_quoted() -> Quoted {
@@ -585,5 +629,26 @@ mod tests {
             ClientKey::Level(0, true, 20),
         ];
         assert_eq!(sorted_keys(&restore_marks(&q, &out, &archived)), RESTORE);
+    }
+
+    #[test]
+    fn pages_for_empty_false_skips_empty_crossed_pages() {
+        let mut q = fixture_quoted();
+        q.crossed[1].open_lots = 0;
+        let with = pad(&q, 12);
+        let without = pad_opts(&q, 12, PadOpts::new().pages_for_empty(false));
+        assert_eq!(with.window, without.window);
+        assert!(with.keys.contains(&ClientKey::LevelPage(0, false, 11, 0)));
+        assert!(with.keys.contains(&ClientKey::LevelPage(0, false, 11, 1)));
+        assert!(!without
+            .keys
+            .contains(&ClientKey::LevelPage(0, false, 11, 0)));
+        assert!(!without
+            .keys
+            .contains(&ClientKey::LevelPage(0, false, 11, 1)));
+        assert!(without
+            .keys
+            .contains(&ClientKey::LevelPage(0, false, 10, 0)));
+        assert!(without.keys.contains(&ClientKey::Level(0, false, 11)));
     }
 }

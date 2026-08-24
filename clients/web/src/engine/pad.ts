@@ -39,6 +39,10 @@ export type PadOut = {
   window: WindowSpec;
 };
 
+export type PadOpts = {
+  pagesForEmpty?: boolean;
+};
+
 export function pageOf(seq: number): number {
   return seq < INLINE_SLOTS ? 0 : Math.floor((seq - INLINE_SLOTS) / PAGE_SLOTS);
 }
@@ -96,7 +100,8 @@ export function keysForReplace(
   return { keys, append };
 }
 
-export function pad(q: Quoted, padEnd: number): PadOut {
+export function pad(q: Quoted, padEnd: number, opts?: PadOpts): PadOut {
+  const pagesForEmpty = opts?.pagesForEmpty !== false;
   const opp = !q.ownSide;
   const m = q.market;
   const keys: ClientKey[] = [];
@@ -116,7 +121,9 @@ export function pad(q: Quoted, padEnd: number): PadOut {
   for (const c of q.crossed) {
     const p = pageOf(c.headSeq);
     const range = { first: p, last: p + CONSUME_WIDTH };
-    pushPages(keys, m, opp, c.tick, range);
+    if (pagesForEmpty || c.openLots !== 0n) {
+      pushPages(keys, m, opp, c.tick, range);
+    }
     consume.push({ tick: c.tick, pages: range });
   }
 

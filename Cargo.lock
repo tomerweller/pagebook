@@ -1248,6 +1248,8 @@ name = "pagebook-client"
 version = "0.0.0"
 dependencies = [
  "pagebook-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

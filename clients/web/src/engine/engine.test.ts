@@ -1,9 +1,12 @@
 import { expect, test } from "vitest";
 import * as StellarSdk from "@stellar/stellar-sdk";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ck, instanceKey } from "../keys";
 import { ERROR_CODE_COUNT, ERROR_MESSAGES, ERROR_NAMES, hostErrorMessage, parseContractError } from "./errors";
 import { keysForReplace, keysForSettle, pad, restoreMarks, windowJson, type Quoted } from "./pad";
-import { sortedKeyStrs } from "./clientKeys";
+import { sortedKeyStrs, type ClientKey } from "./clientKeys";
 import { PER_ADDED, WRITE_ENTRY_FEE, applyPad } from "./txdata";
 
 const T1 = "01".repeat(32);
@@ -126,6 +129,152 @@ test("restore_marks fixture matches rust js_fixtures", () => {
     "Level(0,false,11)",
     "Level(0,true,20)",
   ]);
+});
+
+type FixtureCase = {
+  name: string;
+  quoted: {
+    market: number;
+    is_bid: boolean;
+    limit_tick: number;
+    start_tick: number;
+    qty: number;
+    crossed: { tick: number; head_seq: number; open_lots: number }[];
+    tail_seq: number;
+    filled_lots: number;
+  };
+  options: { pad_end: number; pages_for_empty: boolean };
+  settle?: { is_bid: boolean; tick: number; seq: number };
+  replace?: {
+    old_is_bid: boolean;
+    old_tick: number;
+    old_seq: number;
+    new_is_bid: boolean;
+    new_tick: number;
+    new_tail_seq: number;
+  };
+  archived?: string[];
+  expected: {
+    keys: string[];
+    window: { consume: { tick: number; pages: { first: number; last: number } }[]; append: { first: number; last: number } };
+    keys_for_settle?: string[];
+    keys_for_replace?: string[];
+    restore_marks?: string[];
+  };
+};
+
+type FixtureFile = {
+  taker: string;
+  nonce: number;
+  base: string;
+  quote: string;
+  cases: FixtureCase[];
+};
+
+function loadPadFixture(): FixtureFile {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const path = resolve(here, "../../../../crates/pagebook-client/fixtures/pad-conformance.json");
+  return JSON.parse(readFileSync(path, "utf8")) as FixtureFile;
+}
+
+function parseKey(s: string): ClientKey {
+  if (s === "Config") return { t: "Config" };
+  const open = s.indexOf("(");
+  const name = s.slice(0, open);
+  const inner = s.slice(open + 1, -1);
+  const parts = inner.split(",");
+  const n = (i: number) => Number(parts[i]);
+  const b = (i: number) => parts[i] === "true";
+  switch (name) {
+    case "Market":
+      return { t: "Market", market: n(0) };
+    case "Level":
+      return { t: "Level", market: n(0), isBid: b(1), tick: n(2) };
+    case "LevelPage":
+      return { t: "LevelPage", market: n(0), isBid: b(1), tick: n(2), page: n(3) };
+    case "Order":
+      return { t: "Order", market: n(0), owner: parts[1], nonce: BigInt(parts[2]) };
+    case "FeeAccrual":
+      return { t: "FeeAccrual", market: n(0), token: parts[1] };
+    case "BestTick":
+      return { t: "BestTick", market: n(0), isBid: b(1) };
+    case "TickSummary":
+      return { t: "TickSummary", market: n(0), isBid: b(1) };
+    case "TickWord":
+      return { t: "TickWord", market: n(0), isBid: b(1), word: n(2) };
+    case "VaultBalance":
+      return { t: "VaultBalance", token: parts[0] };
+    case "UserBalance":
+      return { t: "UserBalance", token: parts[0] };
+    default:
+      throw new Error(`unknown key ${s}`);
+  }
+}
+
+function quotedFrom(fx: FixtureFile, c: FixtureCase): Quoted {
+  return {
+    market: c.quoted.market,
+    ownSide: c.quoted.is_bid,
+    limitTick: c.quoted.limit_tick,
+    startTick: c.quoted.start_tick,
+    crossed: c.quoted.crossed.map((x) => ({
+      tick: x.tick,
+      headSeq: x.head_seq,
+      openLots: BigInt(x.open_lots),
+    })),
+    tailSeq: c.quoted.tail_seq,
+    taker: fx.taker,
+    nonce: BigInt(fx.nonce),
+    base: fx.base,
+    quote: fx.quote,
+  };
+}
+
+test("pad conformance matches the shared rust fixture", () => {
+  const fx = loadPadFixture();
+  expect(fx.cases.map((c) => c.name)).toEqual([
+    "multi_cross",
+    "page_boundaries",
+    "empty_pages_true",
+    "empty_pages_false",
+    "mixed_empty_skip",
+    "word_boundary",
+    "wide_band",
+    "ask_side",
+    "start_eq_pad_end",
+  ]);
+  for (const c of fx.cases) {
+    const q = quotedFrom(fx, c);
+    const out = pad(q, c.options.pad_end, { pagesForEmpty: c.options.pages_for_empty });
+    expect(sortedKeyStrs(out.keys), c.name).toEqual(c.expected.keys);
+    expect(out.window, c.name).toEqual(c.expected.window);
+    expect(windowJson(q), c.name).toBe(JSON.stringify(c.expected.window));
+    if (c.settle && c.expected.keys_for_settle) {
+      expect(
+        sortedKeyStrs(keysForSettle(c.quoted.market, fx.taker, BigInt(fx.nonce), c.settle.is_bid, c.settle.tick, c.settle.seq, fx.base, fx.quote)),
+        `${c.name} settle`,
+      ).toEqual(c.expected.keys_for_settle);
+    }
+    if (c.replace && c.expected.keys_for_replace) {
+      const { keys } = keysForReplace(
+        c.quoted.market,
+        fx.taker,
+        BigInt(fx.nonce),
+        c.replace.old_is_bid,
+        c.replace.old_tick,
+        c.replace.old_seq,
+        c.replace.new_is_bid,
+        c.replace.new_tick,
+        c.replace.new_tail_seq,
+        fx.base,
+        fx.quote,
+      );
+      expect(sortedKeyStrs(keys), `${c.name} replace`).toEqual(c.expected.keys_for_replace);
+    }
+    if (c.archived && c.expected.restore_marks) {
+      expect(sortedKeyStrs(restoreMarks(q, out, c.archived.map(parseKey))), `${c.name} restore`).toEqual(c.expected.restore_marks);
+    }
+  }
 });
 
 test("window_json matches soak window_json", () => {
