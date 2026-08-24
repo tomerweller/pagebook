@@ -1,9 +1,7 @@
 import { expect, test } from "vitest";
 import * as StellarSdk from "@stellar/stellar-sdk";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { ck, instanceKey } from "../keys";
+import padConformance from "../../../../crates/pagebook-client/fixtures/pad-conformance.json";
 import { ERROR_CODE_COUNT, ERROR_MESSAGES, ERROR_NAMES, hostErrorMessage, parseContractError } from "./errors";
 import { keysForReplace, keysForSettle, pad, restoreMarks, windowJson, type Quoted } from "./pad";
 import { classifySubmit, decodePlaceResult } from "./submit";
@@ -173,9 +171,7 @@ type FixtureFile = {
 };
 
 function loadPadFixture(): FixtureFile {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const path = resolve(here, "../../../../crates/pagebook-client/fixtures/pad-conformance.json");
-  return JSON.parse(readFileSync(path, "utf8")) as FixtureFile;
+  return padConformance as FixtureFile;
 }
 
 function parseKey(s: string): ClientKey {
