@@ -1,0 +1,79 @@
+import { ERROR_NAMES } from "../../src/engine/errors";
+import type { EngineResult } from "../../src/engine/submit";
+
+export const ERR_NAMES: Record<number, string> = { ...ERROR_NAMES };
+
+export type OutcomeInput =
+  | EngineResult
+  | { kind: "build_error"; message?: string }
+  | { kind: "sign_error"; message?: string };
+
+export function outcomeOf(result: OutcomeInput, opts?: { events?: unknown }): string {
+  switch (result.kind) {
+    case "ok":
+      return "ok";
+    case "typed":
+      return result.at === "simulation" ? `sim:typed:${result.errorName}` : `typed:${result.errorName}`;
+    case "footprint":
+      return "footprint";
+    case "txBadSeq":
+      return "bad_seq";
+    case "resourceLimit":
+      return "resource_limit";
+    case "sorobanInvalid":
+      return "soroban_invalid";
+    case "timeout":
+      return "rpc_timeout";
+    case "build_error":
+      return "build_error";
+    case "sign_error":
+      return "sign_error";
+    case "rpc": {
+      if (opts?.events != null) return diagnoseEvents(opts.events);
+      return classifyText(result.message);
+    }
+  }
+}
+
+export function classifyText(text: string, opts?: { sim?: boolean }): string {
+  const inner = classifyBody(text);
+  if (opts?.sim) return `sim:${inner}`;
+  return inner;
+}
+
+function classifyBody(text: string): string {
+  const contract = contractErrorName(text);
+  if (contract) return `typed:${contract}`;
+  if (isFootprint(text)) return "footprint";
+  if (/TxSorobanInvalid/.test(text)) return "soroban_invalid";
+  if (/txBadSeq|BAD_SEQ/.test(text)) return "bad_seq";
+  if (/ResourceLimitExceeded/.test(text)) return "resource_limit";
+  if (/submission timeout/i.test(text) || /timed out/i.test(text)) return "rpc_timeout";
+  return "other";
+}
+
+export function diagnoseEvents(events: unknown): string {
+  const text = typeof events === "string" ? events : JSON.stringify(events);
+  const contract = contractErrorName(text);
+  if (contract) return `typed:${contract}`;
+  if (isFootprint(text) || /"storage"/i.test(text)) return "footprint";
+  return "other";
+}
+
+function contractErrorName(text: string): string | null {
+  const m = text.match(
+    /"contract_error"[^0-9]*(\d+)|Error\(Contract, #(\d+)\)|"error"\s*:\s*\{\s*"contract"\s*:\s*(\d+)\}/,
+  );
+  if (!m) return null;
+  const code = Number(m[1] || m[2] || m[3]);
+  return ERR_NAMES[code] ?? String(code);
+}
+
+function isFootprint(text: string): boolean {
+  if (/TxSorobanInvalid/.test(text)) return false;
+  if (/trying to access contract data key outside of the footprint/i.test(text)) return true;
+  if (/Error\(Storage, /i.test(text)) return true;
+  if (/exceeded_limit/i.test(text) && /storage/i.test(text)) return true;
+  if (/footprint/i.test(text)) return true;
+  return false;
+}
