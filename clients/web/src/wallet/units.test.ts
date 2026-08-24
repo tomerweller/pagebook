@@ -5,6 +5,8 @@ import {
   parseDecimal,
   priceToTick,
   qtyToLots,
+  stepLots,
+  stepTick,
   tickToPrice,
   type Quant,
 } from "./units";
@@ -80,4 +82,19 @@ test("round-trip tick → price → tick for ladder ticks", () => {
 test("lotsToQty formats market 1 lot size", () => {
   expect(lotsToQty(3n, m1)).toBe("30");
   expect(lotsToQty(5n, m0)).toBe("0.0000005");
+});
+
+test("stepTick stays inside the band", () => {
+  expect(stepTick(1, -1, m1)).toBe(1);
+  expect(stepTick(1, 1, m1)).toBe(2);
+  expect(stepTick(m1.tickMax - 1, 1, m1)).toBe(m1.tickMax - 1);
+  expect(stepTick(m1.tickMax, 1, m1)).toBe(m1.tickMax - 1);
+  expect(stepTick(0, -1, m1)).toBe(1);
+});
+
+test("stepLots never drops below minLots", () => {
+  expect(stepLots(1n, -1, m1)).toBe(1n);
+  expect(stepLots(1n, 1, m1)).toBe(2n);
+  expect(stepLots(0n, 1, m1)).toBe(1n);
+  expect(stepLots(0n, -1, m1)).toBe(1n);
 });

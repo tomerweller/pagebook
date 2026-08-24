@@ -118,6 +118,27 @@ function creditAssets(rows: MarketRow[]): CreditAsset[] {
   return rows.map((r) => r.classic).filter((a): a is CreditAsset => a != null && a.type === "credit");
 }
 
+function isSheetWidth(): boolean {
+  try {
+    return window.matchMedia("(max-width: 960px)").matches;
+  } catch {
+    return false;
+  }
+}
+
+function balanceLine(w: WalletDomain, book: BookSnapshot | null): string {
+  const acc = w.account;
+  if (!acc?.exists) return "";
+  const parts = [`${formatAtoms(acc.spendable, 7)} XLM`];
+  for (const row of marketRows(book)) {
+    if (!row.classic || row.classic.type !== "credit") continue;
+    const credit = row.classic;
+    const tl = w.trustlines.find((t) => t.asset.code === credit.code && t.asset.issuer === credit.issuer);
+    if (tl?.exists) parts.push(`${formatAtoms(tl.balance, row.decimals)} ${credit.code}`);
+  }
+  return parts.join(" · ");
+}
+
 function creditsReady(book: BookSnapshot | null): CreditAsset[] | null {
   if (!book) return null;
   if ((book.base && !book.tokens.base?.name) || (book.quote && !book.tokens.quote?.name)) return null;
@@ -329,17 +350,19 @@ export function mountWallet(opts: {
       "brand",
       `<div class="wallet-brand"><a href="../" class="wallet-brand-name">PAGEBOOK</a> <span class="wallet-brand-sub">· STELLAR TESTNET</span></div>`,
     );
+    const id = w.active;
+    const line = id && w.enabled ? balanceLine(w, app.read().book.snapshot) : "";
     write(
       "head",
-      `<div class="wallet-head"><button type="button" class="wallet-toggle" data-act="toggle" aria-expanded="${w.collapsed ? "false" : "true"}">wallet</button></div>`,
+      `<div class="wallet-head">${line ? `<span class="wallet-bal-line">${esc(line)}</span>` : ""}<button type="button" class="wallet-toggle" data-act="toggle" aria-expanded="${w.collapsed ? "false" : "true"}">wallet</button></div>`,
     );
-    const id = w.active;
     if (!w.booted) {
       write("identity", `<p class="wallet-copy">— checking network</p>`);
       write("balances", "");
       write("keys", "");
       write("status", "");
       write("log", "");
+      syncIdFold(false, "");
       return;
     }
     if (!w.enabled) {
@@ -348,6 +371,7 @@ export function mountWallet(opts: {
       write("keys", "");
       write("status", "");
       write("log", "");
+      syncIdFold(false, "");
       return;
     }
     if (!id) {
@@ -356,6 +380,7 @@ export function mountWallet(opts: {
       write("keys", "");
       write("status", w.status ? `<p class="wallet-status">${esc(w.status)}</p>` : "");
       write("log", "");
+      syncIdFold(false, "");
       return;
     }
     write("identity", identityHtml(id, w.identities));
@@ -363,6 +388,34 @@ export function mountWallet(opts: {
     write("keys", keysHtml(id, w));
     write("status", w.status ? `<p class="wallet-status">${esc(w.status)}</p>` : "");
     write("log", logHtml(w.log));
+    syncIdFold(isSheetWidth(), line);
+  }
+
+  function syncIdFold(narrow: boolean, summary: string): void {
+    const ident = sec("identity");
+    const bal = sec("balances");
+    if (!ident || !bal) return;
+    const existing = ident.closest("details.id-fold");
+    if (narrow) {
+      if (existing) {
+        const s = existing.querySelector("summary");
+        if (s) s.textContent = summary || "balances";
+        return;
+      }
+      const d = document.createElement("details");
+      d.className = "id-fold";
+      const s = document.createElement("summary");
+      s.textContent = summary || "balances";
+      ident.parentElement?.insertBefore(d, ident);
+      d.append(s, ident, bal);
+      return;
+    }
+    if (!existing) return;
+    const host = existing.parentElement;
+    if (!host) return;
+    host.insertBefore(ident, existing);
+    host.insertBefore(bal, existing);
+    existing.remove();
   }
 
   function emptyHtml(w: WalletDomain): string {
@@ -506,6 +559,7 @@ export function mountWallet(opts: {
             s.wallet.reveal = true;
             s.wallet.autoSource = "generate";
             s.wallet.status = "";
+            s.ticket.sideLocked = false;
           });
           void refreshBalances();
         } catch (err) {
@@ -526,6 +580,7 @@ export function mountWallet(opts: {
           s.wallet.justCreated = false;
           s.wallet.autoSource = "seed";
           s.wallet.status = "";
+          s.ticket.sideLocked = false;
         });
         void refreshBalances();
       } else if (act === "save-seed") {
@@ -574,6 +629,7 @@ export function mountWallet(opts: {
           s.wallet.account = null;
           s.wallet.trustlines = [];
           s.wallet.status = "";
+          s.ticket.sideLocked = false;
         });
         void refreshBalances();
       } else if (act === "friendbot") {
@@ -606,6 +662,7 @@ export function mountWallet(opts: {
           s.wallet.confirmTrust = null;
           s.wallet.autoSource = null;
           s.wallet.status = "";
+          s.ticket.sideLocked = false;
         });
         void refreshBalances();
       } catch (err) {
@@ -628,6 +685,7 @@ export function mountWallet(opts: {
           s.wallet.reveal = true;
           s.wallet.autoSource = "import";
           s.wallet.status = "";
+          s.ticket.sideLocked = false;
         });
         void refreshBalances();
       } catch (err) {
@@ -807,6 +865,7 @@ export function mountWallet(opts: {
         ks.activateSeed(s.wallet.seed);
         syncIdentity(s, ks);
         s.wallet.autoSource = "seed";
+        s.ticket.sideLocked = false;
       }
       s.wallet.status = "";
     });
@@ -823,8 +882,19 @@ export function mountWallet(opts: {
 
   return {
     prefillFromLadder(side, tick) {
-      if (!app.read().wallet.enabled || !app.read().wallet.active) return;
-      ticket.prefill(side, tick);
+      const sheet = isSheetWidth();
+      app.update((s) => {
+        if (sheet) s.wallet.collapsed = false;
+      });
+      const w = app.read().wallet;
+      if (w.enabled && w.active) ticket.prefill(side, tick);
+      queueMicrotask(() => {
+        const target =
+          w.enabled && w.active
+            ? document.getElementById("ticket-root")
+            : el.querySelector<HTMLElement>("[data-sec=identity]") ?? el;
+        target?.scrollIntoView?.({ block: "nearest" });
+      });
     },
   };
 }

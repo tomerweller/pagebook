@@ -20,6 +20,8 @@ import {
   parseDecimal,
   priceToTick,
   qtyToLots,
+  stepLots,
+  stepTick,
   tickToPrice,
   type Quant,
 } from "./units";
@@ -101,9 +103,10 @@ export function validateTicket(fields: TicketFields, market: MarketInfo, bal: Ti
     if (bal.quoteAtoms == null) return { ok: false, reason: `no ${bal.quoteSymbol} trustline` };
     const need = escrowQuoteAtoms(fields.lots, fields.tick, market.tick_size);
     if (bal.quoteAtoms < need) {
+      const hint = bal.quoteAtoms === 0n ? ` · you hold ${bal.baseSymbol} only — try sell` : "";
       return {
         ok: false,
-        reason: `need ${formatAtoms(need, bal.quoteDec)} ${bal.quoteSymbol} for this bid`,
+        reason: `need ${formatAtoms(need, bal.quoteDec)} ${bal.quoteSymbol} for this bid${hint}`,
         title: `${need.toString()} atoms`,
       };
     }
@@ -169,6 +172,7 @@ export type TicketDomain = {
   previewGen: number;
   previewQuoteKey: string;
   submitting: boolean;
+  sideLocked: boolean;
 };
 
 export function emptyTicketDomain(): TicketDomain {
@@ -190,7 +194,23 @@ export function emptyTicketDomain(): TicketDomain {
     previewGen: 0,
     previewQuoteKey: "",
     submitting: false,
+    sideLocked: false,
   };
+}
+
+export function quoteCanFundMinBid(bal: TicketBalances, market: MarketInfo, tick: number): boolean {
+  if (bal.quoteAtoms == null) return false;
+  return bal.quoteAtoms >= escrowQuoteAtoms(market.min_order_lots, tick, market.tick_size);
+}
+
+export function baseCanFundMinAsk(bal: TicketBalances, market: MarketInfo): boolean {
+  const need = escrowBaseAtoms(market.min_order_lots, market.lot_size);
+  const avail = bal.baseIsNative ? bal.xlmSpendable - XLM_FEE_HEADROOM : bal.baseAtoms;
+  return avail >= need;
+}
+
+export function preferSellSide(bal: TicketBalances, market: MarketInfo, bidTick: number): boolean {
+  return !quoteCanFundMinBid(bal, market, bidTick) && baseCanFundMinAsk(bal, market);
 }
 
 export function createTicket(opts: {
@@ -288,11 +308,20 @@ export function createTicket(opts: {
     };
   }
 
+  function clearDonePhase(s: { ticket: TicketDomain }): void {
+    if (s.ticket.phase === "confirmed" || s.ticket.phase === "failed") {
+      s.ticket.phase = "idle";
+      s.ticket.phaseDetail = "";
+      s.ticket.retryable = false;
+    }
+  }
+
   function applyPrice(raw: string): void {
     const q = quant();
     const d = parseDecimal(raw);
     app.update((s) => {
       s.ticket.priceStr = raw;
+      clearDonePhase(s);
       if (!q || !d) {
         s.ticket.tick = 0;
         s.ticket.priceSnapped = false;
@@ -310,6 +339,7 @@ export function createTicket(opts: {
     app.update((s) => {
       s.ticket.qtyStr = raw;
       s.ticket.lots = q && d ? qtyToLots(d, q) : 0n;
+      clearDonePhase(s);
     });
   }
 
@@ -644,7 +674,7 @@ export function createTicket(opts: {
     </ul>`;
   }
 
-  function stripHtml(): string {
+  function stripInner(): string {
     const t = tkt();
     if (t.phase === "idle") return "";
     const label =
@@ -659,7 +689,7 @@ export function createTicket(opts: {
               : "failed";
     const hash = t.lastHash ? ` ${txLink(t.lastHash)}` : "";
     const retry = t.retryable ? ` <button type="button" data-act="retry">retry</button>` : "";
-    return `<p class="ticket-strip">${esc(label)}${t.phaseDetail ? ` · ${esc(t.phaseDetail)}` : ""}${hash}${retry}</p>`;
+    return `${esc(label)}${t.phaseDetail ? ` · ${esc(t.phaseDetail)}` : ""}${hash}${retry}`;
   }
 
   function fullHtml(): string {
@@ -682,8 +712,20 @@ export function createTicket(opts: {
         <button type="button" data-act="sell" class="${!t.isBid ? "on ask" : ""}">SELL ${esc(sym)}</button>
       </div>
       <div class="ticket-fields">
-        <label><span class="ticket-label" title="price · ${esc(qsym)} per ${esc(sym)}">price · ${esc(qsym)}/${esc(sym)}</span> <input class="wallet-input" data-field="price" inputmode="decimal" step="${esc(pStep)}" value="${esc(priceStr)}" /></label>
-        <label><span class="ticket-label">quantity · ${esc(sym)}</span> <input class="wallet-input" data-field="qty" inputmode="decimal" step="${esc(qStep)}" value="${esc(qtyStr)}" /></label>
+        <label><span class="ticket-label" title="price · ${esc(qsym)} per ${esc(sym)}">price · ${esc(qsym)}/${esc(sym)}</span>
+          <div class="ticket-step">
+            <button type="button" data-act="price-dec" aria-label="one tick down">−</button>
+            <input class="wallet-input" data-field="price" inputmode="decimal" step="${esc(pStep)}" value="${esc(priceStr)}" />
+            <button type="button" data-act="price-inc" aria-label="one tick up">+</button>
+          </div>
+        </label>
+        <label><span class="ticket-label">quantity · ${esc(sym)}</span>
+          <div class="ticket-step">
+            <button type="button" data-act="qty-dec" aria-label="one lot down">−</button>
+            <input class="wallet-input" data-field="qty" inputmode="decimal" step="${esc(qStep)}" value="${esc(qtyStr)}" />
+            <button type="button" data-act="qty-inc" aria-label="one lot up">+</button>
+          </div>
+        </label>
       </div>
       <p class="wallet-muted" data-role="human">${esc(human)}</p>
       <div class="ticket-flags">
@@ -693,8 +735,11 @@ export function createTicket(opts: {
       </div>
       <p class="wallet-muted" data-role="why">${v.ok ? "" : esc(v.reason)}</p>
       <div data-role="preview">${previewHtml()}</div>
-      <button type="button" data-act="place" class="ticket-cta ${t.isBid ? "bid" : "ask"}" ${!v.ok || busy || (t.preview.kind === "typed" && t.preview.name === "Crossed") ? "disabled" : ""}>${t.isBid ? "BUY" : "SELL"} ${esc(sym)}</button>
-      <div data-role="strip">${stripHtml()}</div>
+      ${
+        t.phase === "idle"
+          ? `<button type="button" data-act="place" class="ticket-cta ${t.isBid ? "bid" : "ask"}" ${!v.ok || busy || (t.preview.kind === "typed" && t.preview.name === "Crossed") ? "disabled" : ""}>${t.isBid ? "BUY" : "SELL"} ${esc(sym)}</button>`
+          : `<div class="ticket-cta ticket-status ${t.isBid ? "bid" : "ask"} ${esc(t.phase)}" data-act="status-ack" data-role="strip">${stripInner()}</div>`
+      }
     </section>`;
   }
 
@@ -706,19 +751,48 @@ export function createTicket(opts: {
       if (act === "buy") {
         app.update((s) => {
           s.ticket.isBid = true;
+          s.ticket.sideLocked = true;
+          clearDonePhase(s);
         });
         applyPrice(tkt().priceStr);
         kickPreview();
       } else if (act === "sell") {
         app.update((s) => {
           s.ticket.isBid = false;
+          s.ticket.sideLocked = true;
+          clearDonePhase(s);
         });
         applyPrice(tkt().priceStr);
+        kickPreview();
+      } else if (act === "price-dec" || act === "price-inc") {
+        const q = quant();
+        if (!q) return;
+        const dir = act === "price-inc" ? 1 : -1;
+        app.update((s) => {
+          s.ticket.tick = stepTick(s.ticket.tick, dir, q);
+          s.ticket.priceStr = tickToPrice(s.ticket.tick, q);
+          s.ticket.priceSnapped = false;
+          clearDonePhase(s);
+        });
+        kickPreview();
+      } else if (act === "qty-dec" || act === "qty-inc") {
+        const q = quant();
+        if (!q) return;
+        const dir = act === "qty-inc" ? 1 : -1;
+        app.update((s) => {
+          s.ticket.lots = stepLots(s.ticket.lots, dir, q);
+          s.ticket.qtyStr = lotsToQty(s.ticket.lots, q);
+          clearDonePhase(s);
+        });
         kickPreview();
       } else if (act === "place") {
         void submit(false);
       } else if (act === "retry") {
         void submit(true);
+      } else if (act === "status-ack") {
+        app.update((s) => {
+          clearDonePhase(s);
+        });
       }
     });
     root.addEventListener("input", (e) => {
@@ -738,6 +812,7 @@ export function createTicket(opts: {
       if (!key) return;
       app.update((s) => {
         s.ticket.flags = { ...s.ticket.flags, [key]: el.checked };
+        clearDonePhase(s);
       });
       kickPreview();
     });
@@ -755,6 +830,25 @@ export function createTicket(opts: {
     });
   }
 
+  function maybeDefaultSide(): void {
+    const t = tkt();
+    if (t.sideLocked) return;
+    const m = market();
+    const book = snap();
+    if (!m || !book) return;
+    const bidTick = book.bestAsk.empty ? m.tick_min : book.bestAsk.tick;
+    if (!preferSellSide(balances(), m, bidTick) || !t.isBid) return;
+    const q = quant();
+    app.update((s) => {
+      if (s.ticket.sideLocked || !s.ticket.isBid) return;
+      s.ticket.isBid = false;
+      if (!book.bestBid.empty) {
+        s.ticket.tick = book.bestBid.tick;
+        if (q) s.ticket.priceStr = tickToPrice(s.ticket.tick, q);
+      }
+    });
+  }
+
   function renderTicket(): void {
     if (!rootEl) return;
     const w = app.read().wallet;
@@ -763,16 +857,28 @@ export function createTicket(opts: {
       return;
     }
     maybeDefaultTick();
+    maybeDefaultSide();
     cache.write("ticket", rootEl, fullHtml());
     if (!bound) {
       bind(rootEl);
       bound = true;
     }
     if (tkt().focusQty) {
-      app.update((s) => {
-        s.ticket.focusQty = false;
+      // Focus after the whole render pass: on the tap that OPENS the sheet,
+      // this render can run while .wallet-body is still display:none and
+      // focus() would no-op (B2 audit MF-R1). Only clear the flag once focus
+      // actually lands; a hidden input keeps the flag for the next pass.
+      queueMicrotask(() => {
+        const inp = rootEl?.querySelector<HTMLInputElement>("[data-field=qty]");
+        if (inp && inp.offsetParent !== null) {
+          inp.focus();
+          if (document.activeElement === inp) {
+            app.update((s) => {
+              s.ticket.focusQty = false;
+            });
+          }
+        }
       });
-      rootEl.querySelector<HTMLInputElement>("[data-field=qty]")?.focus();
     }
     if (quoteKey() !== tkt().previewQuoteKey) schedulePreview();
   }
@@ -800,6 +906,7 @@ export function createTicket(opts: {
         if (q) s.ticket.priceStr = tickToPrice(tickN, q);
         s.ticket.focusQty = true;
         s.ticket.phase = "idle";
+        s.ticket.sideLocked = true;
       });
       kickPreview();
     },

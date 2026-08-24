@@ -107,6 +107,7 @@ function switchMarket(id: number): void {
     s.book.snapshot = null;
     s.book.lastOkAt = 0;
     s.book.lastError = "";
+    s.ticket.sideLocked = false;
   });
   const url = new URL(location.href);
   url.searchParams.set("market", String(id));
@@ -173,6 +174,7 @@ if (mock) {
   });
   setInterval(() => store.update(() => {}), 1000);
   wallet = mount();
+  bindLadder();
 } else {
   const rpc = createRpc(rpcUrl);
   let delay = 2000;
@@ -228,6 +230,11 @@ if (mock) {
   });
   setInterval(() => store.update(() => {}), 1000);
   wallet = mount();
+  bindLadder();
+  tick();
+}
+
+function bindLadder(): void {
   $("ladder").addEventListener("click", (e) => {
     const row = (e.target as HTMLElement).closest("[data-tick]");
     if (!row) return;
@@ -235,5 +242,4 @@ if (mock) {
     const tickN = Number(row.getAttribute("data-tick"));
     if ((side === "bid" || side === "ask") && Number.isFinite(tickN)) wallet?.prefillFromLadder(side, tickN);
   });
-  tick();
 }

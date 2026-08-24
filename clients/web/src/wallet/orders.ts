@@ -21,6 +21,8 @@ import {
   parseDecimal,
   priceToTick,
   qtyToLots,
+  stepLots,
+  stepTick,
   tickToPrice,
   type Quant,
 } from "./units";
@@ -58,6 +60,16 @@ export type OrdersDomain = {
   phase: string;
   lastHash: string;
 };
+
+export function ordersBusy(phase: string): boolean {
+  return phase === "settling" || phase === "replacing" || phase === "batch replace";
+}
+
+function clearDoneOrdersPhase(s: { orders: OrdersDomain }): void {
+  if (!s.orders.phase || ordersBusy(s.orders.phase)) return;
+  s.orders.phase = "";
+  s.orders.lastHash = "";
+}
 
 export function emptyOrdersDomain(): OrdersDomain {
   return {
@@ -417,12 +429,21 @@ export function createOrders(opts: {
     }
   }
 
+  function phaseStrip(o: OrdersDomain): string {
+    if (!o.phase) return "";
+    return `<p class="ticket-strip ticket-cta" data-role="ostrip">${esc(o.phase)}${o.lastHash ? ` ${txLink(o.lastHash)}` : ""}</p>`;
+  }
+
   function html(): string {
     const list = rows();
-    if (!list.length) return `<section class="orders"><h3>open orders</h3><p class="wallet-muted">— no open orders</p></section>`;
+    const o = ui();
+    const inForm = ordersBusy(o.phase) && !!(o.replaceOf || o.confirmSettle);
+    const headStrip = o.phase && !inForm ? phaseStrip(o) : "";
+    if (!list.length) {
+      return `<section class="orders"><h3>open orders</h3>${headStrip}<p class="wallet-muted">— no open orders</p></section>`;
+    }
     const m = market();
     const book = snap();
-    const o = ui();
     const latest = book?.latestLedger ?? 0;
     const body = list
       .map((r) => {
@@ -430,20 +451,24 @@ export function createOrders(opts: {
         const human = book && m ? priceOf(r.tick, book, ov()) : "";
         const stale = isStaleGeneration(r.generation, levelGeneration(book, r.isBid, r.tick));
         const age = r.restedLedger != null && latest ? latest - r.restedLedger : null;
-        const checked = o.selected.includes(r.nonce.toString()) ? "checked" : "";
-        const expand = o.replaceOf === r.nonce.toString() ? replaceForm(r) : "";
-        const settleBox = o.confirmSettle === r.nonce.toString() ? settleForm(r) : "";
-        return `<li class="order-row" data-nonce="${r.nonce.toString()}">
-          <label class="order-check"><input type="checkbox" data-act="sel" data-nonce="${r.nonce.toString()}" ${checked} /></label>
+        const key = r.nonce.toString();
+        const checked = o.selected.includes(key) ? "checked" : "";
+        if (o.replaceOf === key) {
+          return `<li class="order-row order-form" data-nonce="${key}">${replaceForm(r)}</li>`;
+        }
+        if (o.confirmSettle === key) {
+          return `<li class="order-row order-form" data-nonce="${key}">${settleForm(r)}</li>`;
+        }
+        return `<li class="order-row" data-nonce="${key}">
+          <label class="order-check"><input type="checkbox" data-act="sel" data-nonce="${key}" ${checked} /></label>
           <div class="order-main">
             <div>${esc(side)} ${r.tick}${human ? ` · ${esc(human)}` : ""} · ${esc(countLabel(r.qtyLots, "lot"))}</div>
             <div class="wallet-muted">filled <span data-live="filled">${esc(formatInt(r.filledLots))}</span> · refund <span data-live="refund">${esc(formatInt(r.refundLots))}</span>${age != null ? ` · <span data-live="age">${esc(countLabel(age, "ledger"))}</span>` : ""}${r.archived ? " · archived" : ""}</div>
             ${stale ? `<p class="wallet-muted">queue swept since this order rested — settle will return filled + refund</p>` : ""}
             <div class="wallet-actions">
-              <button type="button" data-act="settle-ask" data-nonce="${r.nonce.toString()}">settle</button>
-              <button type="button" data-act="replace-ask" data-nonce="${r.nonce.toString()}">replace</button>
+              <button type="button" data-act="settle-ask" data-nonce="${key}">settle</button>
+              <button type="button" data-act="replace-ask" data-nonce="${key}">replace</button>
             </div>
-            ${settleBox}${expand}
           </div>
         </li>`;
       })
@@ -459,24 +484,27 @@ export function createOrders(opts: {
         : nsel === 1
           ? `<p class="wallet-muted">select 2 or more to batch</p>`
           : "";
-    const strip = o.phase ? `<p class="ticket-strip">${esc(o.phase)}${o.lastHash ? ` ${txLink(o.lastHash)}` : ""}</p>` : "";
     return `<section class="orders">
       <h3>open orders</h3>
+      ${headStrip}
       <ul class="orders-list">${body}</ul>
       ${batch}
-      ${strip}
     </section>`;
   }
 
   function settleForm(o: OpenOrder): string {
     const d = settlePreview(o);
+    const st = ui();
     const rent = o.archived ? `restore rent ~ ${formatAtoms(ARCHIVE_RENT_STROOPS, 7)} XLM` : "";
+    const actions = ordersBusy(st.phase)
+      ? phaseStrip(st)
+      : `<div class="wallet-actions">
+        <button type="button" data-act="settle-go" data-nonce="${o.nonce.toString()}">confirm settle</button>
+        <button type="button" data-act="settle-cancel">cancel</button>
+      </div>`;
     return `<div class="wallet-confirm">
       <p>claim ${esc(deltaText(d))}${rent ? ` · ${esc(rent)} (1,100,000 stroops)` : ""}</p>
-      <div class="wallet-actions">
-        <button type="button" data-act="settle-go" data-nonce="${o.nonce.toString()}">settle</button>
-        <button type="button" data-act="settle-cancel">cancel</button>
-      </div>
+      ${actions}
     </div>`;
   }
 
@@ -498,18 +526,33 @@ export function createOrders(opts: {
     const line = qn
       ? `= tick ${st.replaceTick} · ${st.replaceLots.toString()} lots (${lotsToQty(st.replaceLots, qn)} ${bsym})`
       : "";
+    const actions = ordersBusy(st.phase)
+      ? phaseStrip(st)
+      : `<div class="wallet-actions">
+        <button type="button" data-act="replace-go" data-nonce="${order.nonce.toString()}" ${crossed ? "disabled" : ""}>replace</button>
+        <button type="button" data-act="replace-cancel">cancel</button>
+      </div>`;
     return `<div class="wallet-confirm">
-      <label>price · ${esc(qsym)} per ${esc(bsym)} <input class="wallet-input" data-field="rprice" inputmode="decimal" step="${qn ? esc(oneTickPriceStep(qn)) : "any"}" value="${esc(st.replacePriceStr)}" /></label>
-      <label>quantity · ${esc(bsym)} <input class="wallet-input" data-field="rqty" inputmode="decimal" step="${qn ? esc(oneLotQtyStep(qn)) : "any"}" value="${esc(st.replaceQtyStr)}" /></label>
+      <label>price · ${esc(qsym)} per ${esc(bsym)}
+        <div class="ticket-step">
+          <button type="button" data-act="rprice-dec" aria-label="one tick down">−</button>
+          <input class="wallet-input" data-field="rprice" inputmode="decimal" step="${qn ? esc(oneTickPriceStep(qn)) : "any"}" value="${esc(st.replacePriceStr)}" />
+          <button type="button" data-act="rprice-inc" aria-label="one tick up">+</button>
+        </div>
+      </label>
+      <label>quantity · ${esc(bsym)}
+        <div class="ticket-step">
+          <button type="button" data-act="rqty-dec" aria-label="one lot down">−</button>
+          <input class="wallet-input" data-field="rqty" inputmode="decimal" step="${qn ? esc(oneLotQtyStep(qn)) : "any"}" value="${esc(st.replaceQtyStr)}" />
+          <button type="button" data-act="rqty-inc" aria-label="one lot up">+</button>
+        </div>
+      </label>
       <p class="wallet-muted">${esc(line)}</p>
       <label class="ticket-flag"><input type="checkbox" data-field="rbid" ${st.replaceBid ? "checked" : ""} /> bid</label>
       <label class="ticket-flag"><input type="checkbox" data-field="rpo" ${st.replacePostOnly ? "checked" : ""} /> post-only</label>
       <p class="wallet-muted">net ${esc(deltaText(net))} · padded fee ~ ${esc(formatInt(fee))} stroops (${esc(formatAtoms(fee, 7))} XLM)${rent ? ` · ${esc(rent)} (1,100,000 stroops)` : ""}</p>
       ${crossed ? `<p class="wallet-status">${typedErrorHtml("Crossed")}</p>` : ""}
-      <div class="wallet-actions">
-        <button type="button" data-act="replace-go" data-nonce="${order.nonce.toString()}" ${crossed ? "disabled" : ""}>replace</button>
-        <button type="button" data-act="replace-cancel">cancel</button>
-      </div>
+      ${actions}
     </div>`;
   }
 
@@ -531,11 +574,13 @@ export function createOrders(opts: {
       const act = t.dataset.act;
       if (act === "settle-ask") {
         app.update((s) => {
+          clearDoneOrdersPhase(s);
           s.orders.confirmSettle = t.dataset.nonce ?? "0";
           s.orders.replaceOf = null;
         });
       } else if (act === "settle-cancel") {
         app.update((s) => {
+          clearDoneOrdersPhase(s);
           s.orders.confirmSettle = null;
         });
       } else if (act === "settle-go") {
@@ -547,6 +592,7 @@ export function createOrders(opts: {
         if (!o) return;
         const qn = quant();
         app.update((s) => {
+          clearDoneOrdersPhase(s);
           s.orders.replaceOf = n.toString();
           s.orders.confirmSettle = null;
           s.orders.replaceTick = o.tick;
@@ -559,7 +605,24 @@ export function createOrders(opts: {
         });
       } else if (act === "replace-cancel") {
         app.update((s) => {
+          clearDoneOrdersPhase(s);
           s.orders.replaceOf = null;
+        });
+      } else if (act === "rprice-dec" || act === "rprice-inc") {
+        const qn = quant();
+        if (!qn) return;
+        const dir = act === "rprice-inc" ? 1 : -1;
+        app.update((s) => {
+          s.orders.replaceTick = stepTick(s.orders.replaceTick, dir, qn);
+          s.orders.replacePriceStr = tickToPrice(s.orders.replaceTick, qn);
+        });
+      } else if (act === "rqty-dec" || act === "rqty-inc") {
+        const qn = quant();
+        if (!qn) return;
+        const dir = act === "rqty-inc" ? 1 : -1;
+        app.update((s) => {
+          s.orders.replaceLots = stepLots(s.orders.replaceLots, dir, qn);
+          s.orders.replaceQtyStr = lotsToQty(s.orders.replaceLots, qn);
         });
       } else if (act === "replace-go") {
         const n = ui().replaceOf;
@@ -575,6 +638,7 @@ export function createOrders(opts: {
       if (act === "sel") {
         const n = t.dataset.nonce ?? "";
         app.update((s) => {
+          clearDoneOrdersPhase(s);
           if (t.checked) {
             if (s.orders.selected.length >= MAX_REPLACE_BATCH) {
               // Cap rejection cannot be state-driven: the regenerated html is
@@ -780,6 +844,9 @@ export function createOrders(opts: {
       });
       opts.onLog(`${action} failed`, res.hash);
     }
+    queueMicrotask(() => {
+      rootEl?.querySelector("[data-role=ostrip]")?.scrollIntoView?.({ block: "nearest" });
+    });
   }
 
   app.register(

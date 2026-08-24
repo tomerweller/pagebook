@@ -61,6 +61,19 @@ export function oneLotQtyStep(q: Quant): string {
   return lotsToQty(1n, q);
 }
 
+export function stepTick(tick: number, dir: 1 | -1, q: Quant): number {
+  const next = tick + dir;
+  if (next < q.tickMin) return q.tickMin;
+  if (next >= q.tickMax) return q.tickMax - 1;
+  return next;
+}
+
+export function stepLots(lots: bigint, dir: 1 | -1, q: Quant): bigint {
+  const next = lots + BigInt(dir);
+  const min = q.minLots < 1n ? 1n : q.minLots;
+  return next < min ? min : next;
+}
+
 export function minLotLabel(q: Quant, baseSymbol: string): string {
   const n = q.minLots < 1n ? 1n : q.minLots;
   return `min ${n.toString()} lot${n === 1n ? "" : "s"} = ${lotsToQty(n, q)} ${baseSymbol}`;

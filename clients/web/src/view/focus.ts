@@ -7,7 +7,9 @@ export function swapPreservingFocus(node: Element, html: string): void {
   const focused = active instanceof HTMLElement && node.contains(active) ? active : null;
   const key = focused ? identityOf(focused) : null;
   const input = focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement ? focused : null;
-  const value = input && input.type !== "checkbox" && input.type !== "radio" ? input.value : null;
+  const live = input && input.type !== "checkbox" && input.type !== "radio" ? input.value : null;
+  const prevRendered = input && live != null ? (input.getAttribute("value") ?? "") : null;
+  const midEdit = live != null && prevRendered != null && live !== prevRendered;
   const start = input?.selectionStart ?? null;
   const end = input?.selectionEnd ?? null;
   const dir = input?.selectionDirection ?? "none";
@@ -17,9 +19,14 @@ export function swapPreservingFocus(node: Element, html: string): void {
   if (!key) return;
   const next = findByIdentity(node, key);
   if (!next) return;
-  if (value != null && (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement)) next.value = value;
+  if (midEdit && (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement)) next.value = live;
   next.focus();
-  if (start != null && end != null && (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement)) {
+  const keepCaret =
+    midEdit ||
+    (live != null &&
+      (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement) &&
+      next.value === live);
+  if (keepCaret && start != null && end != null && (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement)) {
     try {
       next.setSelectionRange(Math.min(start, end), Math.max(start, end), dir === "none" ? undefined : dir);
     } catch {

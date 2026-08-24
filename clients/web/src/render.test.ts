@@ -12,6 +12,7 @@ import { emptyBookDomain, registerMarketView, type AppState } from "./view/marke
 import { emptyWalletDomain, mountWallet } from "./wallet/pane";
 import { emptyOrdersDomain } from "./wallet/orders";
 import { emptyTicketDomain } from "./wallet/ticket";
+import { assertInSheetViewport, stubRect } from "./view/viewport";
 
 const emptyOv: UrlOverrides = { baseSym: null, quoteSym: null, baseDec: null, quoteDec: null };
 
@@ -446,4 +447,261 @@ test("batch-cap rejection unchecks the box even when html is unchanged", async (
   extra.dispatchEvent(new Event("change", { bubbles: true }));
   await flush();
   expect(extra.checked).toBe(false);
+});
+
+function mockSheet(matches: boolean): void {
+  window.matchMedia = ((q: string) =>
+    ({
+      matches: String(q).includes("960") ? matches : false,
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+      onchange: null,
+    }) as MediaQueryList) as typeof window.matchMedia;
+}
+
+test("narrow ladder tap opens the sheet and prefills", async () => {
+  mockSheet(true);
+  document.body.innerHTML = `<aside id="wallet"></aside>`;
+  const store = createStore<AppState>(emptyApp());
+  const w = mountWallet({
+    store,
+    el: document.getElementById("wallet")!,
+    rpc: stubRpc({ n: 0 }),
+    getMarket: () => 0,
+    onRefresh: () => {},
+  });
+  await flush();
+  store.update((s) => {
+    s.wallet.booted = true;
+    s.wallet.enabled = true;
+    s.wallet.active = testId;
+    s.wallet.identities = [testId];
+    s.wallet.collapsed = true;
+    s.wallet.account = { exists: true, balance: 10n ** 10n, spendable: 10n ** 10n, sequence: 1n, numSubEntries: 0 };
+    s.book.snapshot = namedBook();
+  });
+  await flush();
+  w.prefillFromLadder("ask", 101);
+  await flush();
+  expect(store.read().wallet.collapsed).toBe(false);
+  expect(store.read().ticket.isBid).toBe(true);
+  expect(store.read().ticket.tick).toBe(101);
+  expect(store.read().ticket.sideLocked).toBe(true);
+  expect(document.querySelector("[data-field=qty]")).toBeTruthy();
+  expect(document.querySelector("details.id-fold")).toBeTruthy();
+});
+
+test("narrow tap with no identity opens the intro", async () => {
+  mockSheet(true);
+  document.body.innerHTML = `<aside id="wallet"></aside>`;
+  const store = createStore<AppState>(emptyApp());
+  const w = mountWallet({
+    store,
+    el: document.getElementById("wallet")!,
+    rpc: stubRpc({ n: 0 }),
+    getMarket: () => 0,
+    onRefresh: () => {},
+  });
+  await flush();
+  store.update((s) => {
+    s.wallet.booted = true;
+    s.wallet.enabled = true;
+    s.wallet.active = null;
+    s.wallet.collapsed = true;
+  });
+  await flush();
+  let scrolled = false;
+  const ident = document.querySelector<HTMLElement>("[data-sec=identity]")!;
+  ident.scrollIntoView = () => {
+    scrolled = true;
+  };
+  w.prefillFromLadder("ask", 101);
+  await flush();
+  expect(store.read().wallet.collapsed).toBe(false);
+  expect(document.querySelector("[data-act=generate]")).toBeTruthy();
+  expect(store.read().ticket.tick).toBe(1);
+  expect(scrolled).toBe(true);
+});
+
+test("confirmed phase replaces the place CTA", async () => {
+  const { root, store } = liveTicket({ n: 0 });
+  await flush();
+  store.update((s) => {
+    s.ticket.phase = "confirmed";
+    s.ticket.phaseDetail = "took 1 lots";
+    s.ticket.lastHash = "abcd";
+  });
+  await flush();
+  expect(root.querySelector("[data-act=place]")).toBeNull();
+  expect(root.querySelector("[data-role=strip]")?.textContent).toMatch(/confirmed/);
+  root.querySelector<HTMLElement>("[data-act=status-ack]")!.click();
+  await flush();
+  expect(root.querySelector("[data-act=place]")).toBeTruthy();
+  root.remove();
+});
+
+test("replace form swaps the order row in place", async () => {
+  const store = createStore<AppState>(emptyApp());
+  const root = mountOrders(store);
+  store.update((s) => {
+    s.book.snapshot = mockSnapshot();
+    s.wallet.openOrders = [sampleOrder(7n)];
+  });
+  await flush();
+  root.querySelector<HTMLButtonElement>("[data-act=replace-ask]")!.click();
+  await flush();
+  const row = root.querySelector(".order-row");
+  expect(row?.querySelector("[data-field=rprice]")).toBeTruthy();
+  expect(row?.querySelector(".order-main")).toBeNull();
+  expect(row?.classList.contains("order-form")).toBe(true);
+  root.remove();
+});
+
+test("zero quote defaults the ticket to SELL", async () => {
+  const store = createStore<AppState>(emptyApp());
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+  createTicket(ticketOpts(stubRpc({ n: 0 }), store)).attach(root);
+  liveWallet(store);
+  store.update((s) => {
+    s.book.snapshot = namedBook();
+    s.wallet.account = { exists: true, balance: 10n ** 10n, spendable: 10n ** 10n, sequence: 1n, numSubEntries: 0 };
+    s.wallet.trustlines = [
+      {
+        asset: { type: "credit", code: "USDC", issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5" },
+        exists: true,
+        balance: 0n,
+      },
+    ];
+  });
+  await flush();
+  expect(store.read().ticket.isBid).toBe(false);
+  expect(root.querySelector("[data-act=place]")?.textContent).toMatch(/SELL/);
+  root.remove();
+});
+
+function stubSheetAndStrip(sheet: Element, strip: Element, stripTop: number): void {
+  stubRect(sheet, { top: 399, left: 0, width: 375, height: 413 });
+  stubRect(strip, { top: stripTop, left: 8, width: 350, height: 48 });
+}
+
+test("price stepper moves one tick", async () => {
+  const { root, store } = liveTicket({ n: 0 });
+  await flush();
+  const before = store.read().ticket.tick;
+  root.querySelector<HTMLButtonElement>("[data-act=price-inc]")!.click();
+  await flush();
+  expect(store.read().ticket.tick).toBe(before + 1);
+  root.querySelector<HTMLButtonElement>("[data-act=price-dec]")!.click();
+  await flush();
+  expect(store.read().ticket.tick).toBe(before);
+  root.remove();
+});
+
+test("focused qty stepper updates the visible input", async () => {
+  const { root, store } = liveTicket({ n: 0 });
+  await flush();
+  const qty = root.querySelector<HTMLInputElement>("[data-field=qty]")!;
+  qty.focus();
+  const before = qty.value;
+  root.querySelector<HTMLButtonElement>("[data-act=qty-inc]")!.click();
+  await flush();
+  const again = root.querySelector<HTMLInputElement>("[data-field=qty]")!;
+  expect(again.value).not.toBe(before);
+  expect(store.read().ticket.lots).toBe(2n);
+  again.focus();
+  again.value = "7.5";
+  store.update((s) => {
+    const snap = s.book.snapshot!;
+    s.book.snapshot = { ...snap, latestLedger: snap.latestLedger + 1 };
+  });
+  await flush();
+  expect(root.querySelector<HTMLInputElement>("[data-field=qty]")!.value).toBe("7.5");
+  root.remove();
+});
+
+test("orders phase clears so the next form has buttons", async () => {
+  const store = createStore<AppState>(emptyApp());
+  const root = mountOrders(store);
+  store.update((s) => {
+    s.book.snapshot = mockSnapshot();
+    s.wallet.openOrders = [sampleOrder(7n), sampleOrder(8n)];
+    s.orders.phase = "confirmed";
+    s.orders.lastHash = "deadbeef";
+  });
+  await flush();
+  expect(root.querySelector("[data-role=ostrip]")?.textContent).toMatch(/confirmed/);
+  const list = root.querySelector(".orders-list")!;
+  const strip = root.querySelector("[data-role=ostrip]")!;
+  expect(strip.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  root.querySelector<HTMLButtonElement>("[data-act=settle-ask]")!.click();
+  await flush();
+  expect(root.querySelector("[data-act=settle-go]")).toBeTruthy();
+  expect(root.querySelector("[data-act=settle-cancel]")).toBeTruthy();
+  expect(store.read().orders.phase).toBe("");
+  root.remove();
+});
+
+test("empty orders list keeps the confirmation strip", async () => {
+  const store = createStore<AppState>(emptyApp());
+  const root = mountOrders(store);
+  store.update((s) => {
+    s.book.snapshot = mockSnapshot();
+    s.wallet.openOrders = [];
+    s.orders.phase = "confirmed";
+    s.orders.lastHash = "cafebabe";
+  });
+  await flush();
+  expect(root.textContent ?? "").toMatch(/no open orders/);
+  expect(root.querySelector("[data-role=ostrip]")?.textContent).toMatch(/confirmed/);
+  root.remove();
+});
+
+test("ticket confirmation sits in the sheet viewport", async () => {
+  const { root, store } = liveTicket({ n: 0 });
+  const sheet = document.createElement("div");
+  sheet.className = "wallet-body";
+  sheet.append(root);
+  document.body.appendChild(sheet);
+  store.update((s) => {
+    s.ticket.phase = "confirmed";
+    s.ticket.phaseDetail = "took 1 lots";
+    s.ticket.lastHash = "abcd";
+  });
+  await flush();
+  const strip = root.querySelector("[data-role=strip]")!;
+  expect(strip.classList.contains("ticket-cta")).toBe(true);
+  stubSheetAndStrip(sheet, strip, 714);
+  assertInSheetViewport(strip, sheet);
+  stubSheetAndStrip(sheet, strip, 950);
+  expect(() => assertInSheetViewport(strip, sheet)).toThrow(/below the fold/);
+  sheet.remove();
+});
+
+test("orders confirmation sits in the sheet viewport", async () => {
+  const store = createStore<AppState>(emptyApp());
+  const root = mountOrders(store);
+  const sheet = document.createElement("div");
+  sheet.className = "wallet-body";
+  sheet.append(root);
+  document.body.appendChild(sheet);
+  store.update((s) => {
+    s.book.snapshot = mockSnapshot();
+    s.wallet.openOrders = [sampleOrder(7n)];
+    s.orders.phase = "confirmed";
+    s.orders.lastHash = "abcd";
+  });
+  await flush();
+  const strip = root.querySelector("[data-role=ostrip]")!;
+  const list = root.querySelector(".orders-list")!;
+  expect(strip.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  stubSheetAndStrip(sheet, strip, 420);
+  assertInSheetViewport(strip, sheet);
+  stubSheetAndStrip(sheet, strip, 950);
+  expect(() => assertInSheetViewport(strip, sheet)).toThrow(/below the fold/);
+  sheet.remove();
 });

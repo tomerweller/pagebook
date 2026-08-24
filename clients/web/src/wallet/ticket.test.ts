@@ -3,6 +3,7 @@ import {
   escrowBaseAtoms,
   escrowQuoteAtoms,
   lotsInBounds,
+  preferSellSide,
   remainderDisposition,
   takerFeeAtoms,
   tickInBand,
@@ -86,4 +87,21 @@ test("validateTicket rejects unfunded, band, lots, trustline, escrow", () => {
   expect(validateTicket({ isBid: true, tick: 19200, lots: 2n, flags: { post_only: false, fill_or_kill: false, no_rest: false } }, market, { ...funded, quoteAtoms: null }).ok).toBe(false);
   expect(validateTicket({ isBid: true, tick: 19200, lots: 2n, flags: { post_only: false, fill_or_kill: false, no_rest: false } }, market, { ...funded, quoteAtoms: 1n }).ok).toBe(false);
   expect(validateTicket({ isBid: false, tick: 19200, lots: 5n, flags: { post_only: false, fill_or_kill: false, no_rest: false } }, market, { ...funded, xlmSpendable: XLM_FEE_HEADROOM + 1n }).ok).toBe(false);
+});
+
+test("zero-quote bid hints at sell", () => {
+  const v = validateTicket(
+    { isBid: true, tick: 19200, lots: 2n, flags: { post_only: false, fill_or_kill: false, no_rest: false } },
+    market,
+    { ...funded, quoteAtoms: 0n },
+  );
+  expect(v.ok).toBe(false);
+  if (!v.ok) expect(v.reason).toMatch(/you hold XLM only — try sell/);
+});
+
+test("preferSellSide when quote cannot fund a min bid", () => {
+  expect(preferSellSide(funded, market, 19200)).toBe(false);
+  expect(preferSellSide({ ...funded, quoteAtoms: 0n }, market, 19200)).toBe(true);
+  expect(preferSellSide({ ...funded, quoteAtoms: null }, market, 19200)).toBe(true);
+  expect(preferSellSide({ ...funded, quoteAtoms: 0n, baseAtoms: 0n, xlmSpendable: XLM_FEE_HEADROOM }, market, 19200)).toBe(false);
 });

@@ -4,7 +4,7 @@
 import { expect, test } from "vitest";
 import { swapPreservingFocus } from "./focus";
 
-test("swap restores caret and selection", () => {
+test("swap applies state value when the user was not mid-edit", () => {
   const root = document.createElement("div");
   document.body.appendChild(root);
   root.innerHTML = `<input data-field="rprice" value="12.50" />`;
@@ -14,9 +14,7 @@ test("swap restores caret and selection", () => {
   swapPreservingFocus(root, `<input data-field="rprice" value="99.00" />`);
   const again = root.querySelector("input")!;
   expect(document.activeElement).toBe(again);
-  expect(again.value).toBe("12.50");
-  expect(again.selectionStart).toBe(1);
-  expect(again.selectionEnd).toBe(3);
+  expect(again.value).toBe("99.00");
   root.remove();
 });
 
