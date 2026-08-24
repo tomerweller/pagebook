@@ -193,6 +193,9 @@ test("applyPad unions, promotes, and floors fee per added RW key", () => {
   const bump = resourceFee - (10_000n * 13n) / 10n;
   expect(bump).toBeGreaterThanOrEqual(BigInt(WRITE_ENTRY_FEE * added));
   expect(Number(out.resources().writeBytes())).toBe(50 + 600 * added);
+  // Instruction headroom must match tools/soak apply_pad (ADR-026 hardening):
+  // 1.25x simulated + 120k per added key + 3M flat.
+  expect(Number(out.resources().instructions())).toBe(Math.floor(1_000_000 * 1.25) + 120_000 * added + 3_000_000);
   expect(PER_ADDED).toBeGreaterThanOrEqual(WRITE_ENTRY_FEE);
   expect(out.ext().switch()).toBe(1);
 });

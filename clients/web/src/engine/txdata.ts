@@ -3,16 +3,21 @@ import * as StellarSdk from "@stellar/stellar-sdk";
 export const WRITE_ENTRY_FEE = 2500;
 export const WRITE_BYTES_PER = 600;
 export const DISK_READ_PER = 400;
-export const INSTR_PER = 100_000;
-export const INSTR_FIXED = 300_000;
-export const FEE_ONCE = Math.floor((200_000 * 7) / 10_000);
+// Instruction headroom mirrors tools/soak apply_pad: a walk can do more work
+// at apply than simulation saw (levels appear in flight during a trend);
+// 1.2x + 1M fell short by measured margins during fast rallies (ADR-026,
+// ADR-028 era logs), so the flat part must not depend on the simulated amount.
+export const INSTR_MULT = 1.25;
+export const INSTR_PER = 120_000;
+export const INSTR_FIXED = 3_000_000;
+export const FEE_ONCE = Math.floor((INSTR_FIXED * 7) / 10_000);
 
 export const PER_ADDED =
   WRITE_ENTRY_FEE +
   Math.floor((WRITE_BYTES_PER * 875) / 1024) +
   Math.floor((DISK_READ_PER * 447) / 1024) +
   1_563 +
-  100 * 7 +
+  120 * 7 +
   100;
 
 function keyB64(k: StellarSdk.xdr.LedgerKey): string {
@@ -56,7 +61,7 @@ export function applyPad(
   builder.setReadWrite(nextRw);
 
   const res = data.resources();
-  const instructions = Math.floor(Number(res.instructions()) * 1.2) + INSTR_PER * added + INSTR_FIXED;
+  const instructions = Math.floor(Number(res.instructions()) * INSTR_MULT) + INSTR_PER * added + INSTR_FIXED;
   const writeBytes = Number(res.writeBytes()) + WRITE_BYTES_PER * added;
   const diskReadBytes = Number(res.diskReadBytes()) + DISK_READ_PER * added;
   builder.setResources(instructions, diskReadBytes, writeBytes);
