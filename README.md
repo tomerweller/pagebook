@@ -7,9 +7,11 @@ runtime. It explores how an on-chain order book can work within Soroban's
 declared footprints, write-byte limits, storage rent, and parallel execution
 model.
 
-The repository contains a Rust contract, shared data types, a small Rust client
-helper crate, and tests. Use it to study the design or run local experiments. It
-is not a finished exchange, SDK, indexer, or wallet integration.
+The repository contains a Rust contract, shared data types, a Rust client
+helper crate, a TypeScript web trading client, testnet tooling (soak driver,
+market maker, stress fleet), and tests. Use it to study the design or run local
+experiments. It is not a finished exchange, SDK, indexer, or wallet
+integration.
 
 The quickest way in is the executive explainer at
 [tomerweller.com/pagebook](https://tomerweller.com/pagebook/). The deeper
@@ -41,7 +43,8 @@ Prices and quantities are integers:
 
 - A lot is a fixed number of base-token atoms.
 - A tick is a fixed quote-token price per base lot.
-- A fill is calculated as `lots × tick × tick_size` with checked integer math.
+- A take's quote amount is calculated as `lots × tick × tick_size` with checked
+  integer math.
 - The taker fee is rounded up. Matching itself does not round.
 
 Each side of a market has price levels. A level stores a FIFO queue of maker
@@ -118,14 +121,16 @@ These are the main limits and behaviors behind the design:
   contain at most four legs, with the matching budget shared across the legs.
 - The default queue has 32 inline slots and one 32-slot overflow page. A market
   can raise its page count within the contract's hard ceiling.
-- Persistent entries have a minimum TTL of about 120 days. Empty `Level` entries
+- Persistent entries have a minimum TTL of about 120 days on mainnet (about 7
+  days on testnet). Empty `Level` entries
   are not deleted because their generation counters are part of settlement.
 - The contract moves tokens through SAC transfers to and from its own vault
   balances. Asset authorization and issuer clawback settings remain external
   trust assumptions.
-- Current design estimates use 400 footprint entries, 200 writes, and 132 KB of
-  transaction write bytes. A maximal 32-level take is estimated at about 85
-  footprint entries plus padding, 72 writes, and about 27 KB of writes.
+- The network caps each transaction at 400 footprint entries, 200 written
+  entries, and 132 KB of write bytes. A measured maximal 32-level take declared
+  77 read/write entries and 38.6 KB of writes (15.4 KB metered) and cost
+  0.0357 XLM ([measurements](docs/09-resource-utilization.md)).
 
 ## Testnet deployment
 
@@ -141,7 +146,7 @@ That page is now a trading client (`clients/web/`): the market view plus
 an in-page testnet wallet that can fund, add a trustline, place, settle, and
 replace. Keys stay in the browser. A Node soak of the TypeScript padding
 engine on market 0 recorded 217 submissions and no footprint failure
-(ADR-027).
+(ADR-029).
 
 The market has run real rests, takes, and settles, plus a 2,000-ledger
 multi-account soak through the full padding protocol (simulate, pad, submit),
@@ -162,13 +167,13 @@ same ADR).
 | `tools/soak/` | Testnet soak driver: padded footprints through the stellar CLI, outcome classification (ADR-025) |
 | `tools/mm/` | XLM/USDC market maker for testnet market 1, quoted off the spot price, a trader that generates traffic against it, and their external health check (ADR-026) |
 | `tools/stress/` | Ledger-limit saturation fleet: near-cap batches oversubscribing the write-byte cap (ADR-027) |
+| `clients/web/` | TypeScript trading client (Vite): market view plus in-page testnet wallet, published at [tomerweller.com/pagebook/client](https://tomerweller.com/pagebook/client/) |
+| `docs/03-soroban-constraints.md` | Soroban storage, footprint, and resource background |
 | `docs/04-architecture.md` | Full technical specification |
+| `docs/07-classic-dex-comparison.md` | Comparison with the classic Stellar DEX |
 | `docs/09-resource-utilization.md` | Measured declared-vs-metered resource ranges per invocation, from live testnet traffic |
 | `docs/index.html` | Executive explainer, the site's front page, rendered at [tomerweller.com/pagebook](https://tomerweller.com/pagebook/) |
 | `docs/design.html` | Visual companion to the technical specification, rendered at [tomerweller.com/pagebook/design.html](https://tomerweller.com/pagebook/design.html) |
-| `clients/web/` | TypeScript trading client (Vite): market view plus in-page testnet wallet, published at [tomerweller.com/pagebook/client](https://tomerweller.com/pagebook/client/) |
-| `docs/03-soroban-constraints.md` | Soroban storage, footprint, and resource background |
-| `docs/07-classic-dex-comparison.md` | Comparison with the classic Stellar DEX |
 
 ## Build and test
 
@@ -182,6 +187,8 @@ make lint
 
 `make build` produces the optimized contract WASM with `stellar contract build`.
 `make lint` runs formatting checks and Clippy with warnings treated as errors.
+`make web-build` and `make web-test` build and test the TypeScript client in
+`clients/web/`.
 
 ## Read more
 
