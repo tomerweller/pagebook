@@ -63,7 +63,7 @@ test("diagnoseEvents classifies a Trapped diagnostic JSON path", () => {
       error: { storage: "exceeded_limit" },
     }),
   ).toBe("footprint");
-  expect(diagnoseEvents({ note: "Trapped with no contract code" })).toBe("other");
+  expect(diagnoseEvents({ note: "Trapped with no contract code" })).toBe("trapped:unknown");
   expect(
     outcomeOf({ kind: "rpc", message: "Trapped", hash: "ab" }, { events: typed }),
   ).toBe("typed:RetryRest");

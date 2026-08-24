@@ -57,7 +57,9 @@ export function diagnoseEvents(events: unknown): string {
   const contract = contractErrorName(text);
   if (contract) return `typed:${contract}`;
   if (isFootprint(text) || /"storage"/i.test(text)) return "footprint";
-  return "other";
+  // A trapped transaction whose events match nothing known is the one outcome
+  // the watchdog must never mistake for benign noise (check.py's bad set).
+  return "trapped:unknown";
 }
 
 function contractErrorName(text: string): string | null {
