@@ -8,7 +8,7 @@ balances, a place ticket, and open-order settle/replace.
 This is a testnet experiment. Keys are disposable. Do not use it with real
 funds.
 
-Published at [blob.tomerweller.com/pagebook/client](https://blob.tomerweller.com/pagebook/client/).
+Published at [tomerweller.com/pagebook/client](https://tomerweller.com/pagebook/client/).
 
 ## Quickstart
 

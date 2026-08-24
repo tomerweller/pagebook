@@ -75,7 +75,7 @@ Two things worth recording from the first hour:
    of heal. Not changed here.
 
 The live book is at
-`https://blob.tomerweller.com/pagebook/client/?market=1` (the dashboard
+`https://tomerweller.com/pagebook/client/?market=1` (the dashboard
 labels a phantom recorded best "stale best").
 
 ## The trader (`tools/mm/trader.py`)
