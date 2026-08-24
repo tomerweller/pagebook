@@ -13,10 +13,15 @@ This document assumes familiarity with order books, SDEX, and basic Soroban conc
 
 ## Why is a Soroban order book not trivial?
 
-Two Soroban constraints shape the design:
+Several Soroban constraints shape the design. Two dominate:
 
 - A transaction's read/write set, or footprint, must be declared before execution. A naive one-entry-per-order design makes the matching footprint depend on the live queue. A Soroban order book needs predictable keys and footprints that clients can safely pad.
 - Ledger resources are metered and capped. Write bytes are especially scarce, so a Soroban order book needs small entries and bounded writes on the matching path.
+
+Two more set hard ceilings:
+
+- Each transaction may touch a bounded number of ledger entries. A single SDEX crossing can walk through a thousand offers — roughly two thousand ledger entries — in one operation; no Soroban transaction can. Matching must do more per entry, which is why levels aggregate orders instead of storing one entry each.
+- Each ledger entry has a maximum size, so entries cannot simply grow to aggregate more. Every PageBook entry type carries an explicit byte budget, enforced by tests.
 
 ## "Good enough" concessions
 
@@ -26,6 +31,7 @@ PageBook does not reproduce SDEX behavior exactly. It accepts the following trad
   - SDEX: rational prices with no market configuration.
   - PageBook: admin-configured lot size, tick size, and tick range.
   - USDC/XLM example: one lot is 10 XLM and one tick is `0.00001 USDC/XLM`. Tick `15,800` is `0.15800 USDC/XLM`, so one lot costs `1.58 USDC`.
+  - Quantization is what makes matching exact. A tick fixes an exact per-lot price, so every matched amount is an integer multiplication: `25` lots at tick `15,800` is exactly `25 × 1.58 = 39.50 USDC`. Matching contains no division and nothing to round. The only division anywhere is the taker fee, which rounds up; that dust accrues to fees.
 
 - **Maker settlement**
   - SDEX: both sides are credited during execution.
@@ -38,6 +44,10 @@ PageBook does not reproduce SDEX behavior exactly. It accepts the following trad
 - **Footprint construction**
   - Typical Soroban invocation: submit the footprint returned by simulation.
   - PageBook: pad the simulated footprint with a tick band and queue page windows.
+
+- **Per-market throughput**
+  - Soroban executes non-conflicting transactions in parallel.
+  - PageBook: every settling transaction on a market touches shared book state and the vault's token balances, so activity on one market serializes. A market's throughput is what one ledger's serial resources allow, not what parallelism could add. This is a smaller loss than it sounds: PageBook is IO-bound, not compute-bound — the heaviest sampled sweep used under 8% of the instruction cap — so the write-byte ceiling binds a market well before serialized execution does.
 
 
 ## PageBook design
@@ -84,11 +94,15 @@ Each queue is split across two packed entry types:
 - `Level` stores queue counters, total open lots, and the first 32 quantity slots in a 285-byte payload.
 - `LevelPage` adds 32 quantity slots in a 257-byte payload when the inline slots are full.
 
+Together they give each level a hard capacity of `64` resting orders. A rest against a full level fails with a typed error rather than degrading the queue. `LevelPage` is declared in footprints but written only when an order actually spills past the inline slots; on a thin level it is never touched.
+
+The capacity limit is also the flood defense. Every slot costs real escrowed funds at the market's minimum order size, plus metered rent on the order record — and the rent, unlike an SDEX base reserve, is spent rather than refunded. A flooded level also clears cheaply: consuming all `64` orders is one `Level` sweep for any taker who wants the price.
+
 Each quantity is written to one slot. Filled slots remain as history; cancelled slots become tombstones. Neither is moved or compacted.
 
 `open_lots` tracks aggregate supply at the level. A taker that consumes the whole level can price and sweep it with one `Level` write, without reading each maker slot. Partial consumption walks slots from the head under a fixed scan limit.
 
-`Level` entries are never deleted. When a queue is swept empty, or an empty queue is reused, the generation increments and sequence numbers restart. The generation preserves settlement correctness for makers from the previous queue.
+`Level` entries are never deleted; the same fixed slots are reused queue lifetime after queue lifetime, like a ring buffer whose cycle is one generation. Whenever the level empties — a taker sweeps it, or the last resting order is cancelled — the generation increments, sequence numbers restart, and all `64` slots are available again. The generation preserves settlement correctness for makers from the previous queue: an order from an older generation settles as fully filled, never confused with the new occupants of its slot.
 
 ### Order Record
 
@@ -139,6 +153,8 @@ A taker bids for `35` lots with a limit of tick `15,805`:
 The client simulates the take to get its starting tick and expected queue positions, then pads the footprint with a tick band and queue page windows.
 
 During execution, the walk alternates between the tick index and level queues. A full-level sweep uses `open_lots` and does not read individual slots. Partial consumption reads from the queue head under a fixed slot limit.
+
+The consequence is the design's central scaling property: taker cost grows with levels crossed, not orders crossed. Sweeping a level is one `Level` write whether the level holds one maker or sixty-four. At current defaults — `32` levels crossed per invocation, `64` orders per level — a single `place` can clear up to `2,048` resting orders. The flip side is that write bytes still grow with each level crossed, and the padded footprint declares them before execution, so a deep sweep reserves meaningful ledger write capacity even when most of it goes unused.
 
 The walk stops when it fills the requested quantity, reaches the limit price, hits a configured work limit, or reaches the edge of a declared queue window. Depending on the order flags, any remainder rests at the limit price or is refunded. Walking beyond the padded tick band is the remaining footprint failure case.
 
