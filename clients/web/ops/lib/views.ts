@@ -45,8 +45,9 @@ function asNum(v: unknown): number {
   return Number(v ?? 0);
 }
 
-function parseLevel(native: unknown): LevelView {
-  const r = (native ?? {}) as Record<string, unknown>;
+export function parseLevel(native: unknown): LevelView {
+  if (native == null || typeof native !== "object") throw new Error("empty Level view");
+  const r = native as Record<string, unknown>;
   return {
     generation: asNum(r.generation),
     head_seq: asNum(r.head_seq ?? r.headSeq),
@@ -56,8 +57,9 @@ function parseLevel(native: unknown): LevelView {
   };
 }
 
-function parseOrder(native: unknown): OrderView {
-  const r = (native ?? {}) as Record<string, unknown>;
+export function parseOrder(native: unknown): OrderView {
+  if (native == null || typeof native !== "object") throw new Error("empty Order view");
+  const r = native as Record<string, unknown>;
   return {
     is_bid: !!(r.is_bid ?? r.isBid),
     tick: asNum(r.tick),
