@@ -255,14 +255,23 @@ def rest_keys(contract, market, is_bid, tick):
     return keys
 
 
-def token_keys(pagebook, sacs, caller, issuer, codes):
-    """Both tokens' entries a place may touch whatever the book does in flight:
-    the SAC instance, the vault's SAC balance, the caller's classic trustline.
-    Simulation lists only the tokens it happened to move."""
+def sac_keys(pagebook, sacs):
+    """Both tokens' SAC entries a place may touch whatever the book does in
+    flight: the instance and the vault's balance. Simulation lists only the
+    tokens it happened to move. The caller's own balance entry differs per
+    deployment (a classic trustline, or the account itself for native XLM)
+    and stays with the caller."""
     keys = []
-    for sac, code in zip(sacs, codes):
+    for sac in sacs:
         keys.append({"contract_data": {"contract": sac, "key": "ledger_key_contract_instance", "durability": "persistent"}})
         keys.append({"contract_data": {"contract": sac, "key": {"vec": [{"symbol": "Balance"}, {"address": pagebook}]}, "durability": "persistent"}})
+    return keys
+
+
+def token_keys(pagebook, sacs, caller, issuer, codes):
+    """sac_keys plus the caller's classic trustline for each token."""
+    keys = sac_keys(pagebook, sacs)
+    for code in codes:
         keys.append({"trustline": {"account_id": caller, "asset": {"credit_alphanum4": {"asset_code": code, "issuer": issuer}}}})
     return keys
 

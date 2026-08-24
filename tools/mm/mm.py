@@ -125,10 +125,7 @@ class MM:
         balance entry (the account itself for native XLM, the trustline for
         USDC). Simulation lists only the token it moved."""
         a = self.a
-        keys = []
-        for sac in (a.base_sac, a.quote_sac):
-            keys.append({"contract_data": {"contract": sac, "key": "ledger_key_contract_instance", "durability": "persistent"}})
-            keys.append({"contract_data": {"contract": sac, "key": {"vec": [{"symbol": "Balance"}, {"address": a.contract}]}, "durability": "persistent"}})
+        keys = soak.sac_keys(a.contract, (a.base_sac, a.quote_sac))
         keys.append({NATIVE_ACCOUNT_KEY: {"account_id": self.addr}})
         keys.append({"trustline": {"account_id": self.addr, "asset": {"credit_alphanum4": {"asset_code": a.usdc_code, "issuer": a.usdc_issuer}}}})
         keys.append(soak.ck(a.contract, "FeeAccrual", a.market, a.base_sac))

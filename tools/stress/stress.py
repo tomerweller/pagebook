@@ -63,11 +63,7 @@ class Stress:
             self.log.flush()
 
     def token_keys(self, addr):
-        keys = []
-        for sac, code in ((BASE_SAC, "PBA"), (QUOTE_SAC, "PBB")):
-            keys.append({"contract_data": {"contract": sac, "key": "ledger_key_contract_instance", "durability": "persistent"}})
-            keys.append({"contract_data": {"contract": sac, "key": {"vec": [{"symbol": "Balance"}, {"address": CONTRACT}]}, "durability": "persistent"}})
-            keys.append({"trustline": {"account_id": addr, "asset": {"credit_alphanum4": {"asset_code": code, "issuer": ISSUER}}}})
+        keys = soak.token_keys(CONTRACT, (BASE_SAC, QUOTE_SAC), addr, ISSUER, ("PBA", "PBB"))
         keys.append(soak.ck(CONTRACT, "FeeAccrual", MARKET, BASE_SAC))
         keys.append(soak.ck(CONTRACT, "FeeAccrual", MARKET, QUOTE_SAC))
         return keys
