@@ -31,7 +31,7 @@ export async function simulate(rpc: Rpc, txXdr: string): Promise<SimResult> {
   };
 }
 
-export type QuoteOpts = {
+export type QuotePlaceOpts = {
   contract: string;
   source: string;
   sequence: string;
@@ -39,6 +39,9 @@ export type QuoteOpts = {
   isBid: boolean;
   limitTick: number;
   qty: bigint;
+};
+
+export type QuoteOpts = QuotePlaceOpts & {
   taker: string;
   nonce: bigint;
   base: string;
@@ -75,7 +78,10 @@ export function parseQuoteResult(native: unknown): {
   };
 }
 
-export async function simulatePlace(rpc: Rpc, opts: QuoteOpts): Promise<{ quoted: Quoted; sim: SimResult; filledLots: bigint; quoteAtoms: bigint }> {
+export async function simulateQuotePlace(
+  rpc: Rpc,
+  opts: QuotePlaceOpts,
+): Promise<{ parsed: ReturnType<typeof parseQuoteResult>; sim: SimResult }> {
   const contract = new StellarSdk.Contract(opts.contract);
   const account = new StellarSdk.Account(opts.source, opts.sequence);
   const op = contract.call(
@@ -97,7 +103,11 @@ export async function simulatePlace(rpc: Rpc, opts: QuoteOpts): Promise<{ quoted
   const retval = sim.results?.[0]?.xdr;
   if (!retval) throw new Error("quote_place returned no value");
   const scv = StellarSdk.xdr.ScVal.fromXDR(retval, "base64");
-  const parsed = parseQuoteResult(StellarSdk.scValToNative(scv) as unknown);
+  return { parsed: parseQuoteResult(StellarSdk.scValToNative(scv) as unknown), sim };
+}
+
+export async function simulatePlace(rpc: Rpc, opts: QuoteOpts): Promise<{ quoted: Quoted; sim: SimResult; filledLots: bigint; quoteAtoms: bigint }> {
+  const { parsed, sim } = await simulateQuotePlace(rpc, opts);
   return {
     quoted: {
       market: opts.market,

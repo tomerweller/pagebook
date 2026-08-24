@@ -474,47 +474,78 @@ async function archivedTouched(
   return restoreMarks(quoted, out, missing);
 }
 
+export type PlaceArgParams = {
+  taker: string;
+  market: number;
+  isBid: boolean;
+  limitTick: number;
+  qtyLots: bigint;
+  startTick: number;
+  nonce: bigint;
+  window: WindowSpec;
+  flags: PlaceFlags;
+};
+
+export function buildPlaceArgs(opts: PlaceArgParams): StellarSdk.xdr.ScVal[] {
+  return [
+    scvAddr(opts.taker),
+    scvU32(opts.market),
+    scvBool(opts.isBid),
+    scvU32(opts.limitTick),
+    scvU64(opts.qtyLots),
+    scvU32(opts.startTick),
+    scvU64(opts.nonce),
+    scSlotWindow(opts.window),
+    scPlaceFlags(opts.flags),
+  ];
+}
+
 export async function submitPlace(
   rpc: Rpc,
-  opts: {
+  opts: PlaceArgParams & {
     contract: string;
     secret: string;
-    taker: string;
-    market: number;
-    isBid: boolean;
-    limitTick: number;
-    qtyLots: bigint;
-    startTick: number;
-    nonce: bigint;
-    window: WindowSpec;
-    flags: PlaceFlags;
     quoted: Quoted;
     tokens: ClassicToken[];
     padEnd: number;
     pagesForEmpty?: boolean;
+    extraPadKeys?: ClientKey[];
     sizes?: ApplyPadSizes;
   },
 ): Promise<EngineResult> {
   const out = pad(opts.quoted, opts.padEnd, { pagesForEmpty: opts.pagesForEmpty });
+  const padKeys = opts.extraPadKeys ? [...out.keys, ...opts.extraPadKeys] : out.keys;
   return submitInvocation({
     rpc,
     contract: opts.contract,
     sourceSecret: opts.secret,
     fn: "place",
-    args: [
-      scvAddr(opts.taker),
-      scvU32(opts.market),
-      scvBool(opts.isBid),
-      scvU32(opts.limitTick),
-      scvU64(opts.qtyLots),
-      scvU32(opts.startTick),
-      scvU64(opts.nonce),
-      scSlotWindow(opts.window),
-      scPlaceFlags(opts.flags),
-    ],
-    padKeys: out.keys,
+    args: buildPlaceArgs(opts),
+    padKeys,
     quoted: opts.quoted,
     padOut: out,
+    tokens: opts.tokens,
+    sizes: opts.sizes,
+  });
+}
+
+export async function submitPostOnlyPlace(
+  rpc: Rpc,
+  opts: PlaceArgParams & {
+    contract: string;
+    secret: string;
+    padKeys: ClientKey[];
+    tokens: ClassicToken[];
+    sizes?: ApplyPadSizes;
+  },
+): Promise<EngineResult> {
+  return submitInvocation({
+    rpc,
+    contract: opts.contract,
+    sourceSecret: opts.secret,
+    fn: "place",
+    args: buildPlaceArgs(opts),
+    padKeys: opts.padKeys,
     tokens: opts.tokens,
     sizes: opts.sizes,
   });

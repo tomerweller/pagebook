@@ -1,7 +1,7 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
 import type { Rpc } from "../../src/book";
 import { parseContractError } from "../../src/engine/errors";
-import { parseQuoteResult, simulate, type SimResult } from "../../src/engine/quote";
+import { simulate, simulateQuotePlace, type SimResult } from "../../src/engine/quote";
 import type { CrossedLevel } from "../../src/engine/pad";
 import { scvAddr, scvBool, scvU32, scvU64 } from "../../src/engine/submit";
 import { NETWORK_PASSPHRASE } from "../../src/wallet/network";
@@ -134,14 +134,21 @@ export function createViews(
       }
     },
     async quotePlace(isBid, limitTick, qty) {
-      const native = await call("quote_place", [scvU32(opts.market), scvBool(isBid), scvU32(limitTick), scvU64(BigInt(qty))]);
-      const p = parseQuoteResult(native);
+      const { parsed } = await simulateQuotePlace(rpc, {
+        contract: opts.contract,
+        source: opts.source,
+        sequence: "0",
+        market: opts.market,
+        isBid,
+        limitTick,
+        qty: BigInt(qty),
+      });
       return {
-        start_tick: p.startTick,
-        crossed: p.crossed,
-        filled_lots: Number(p.filledLots),
-        quote_atoms: p.quoteAtoms,
-        tail_seq: p.tailSeq,
+        start_tick: parsed.startTick,
+        crossed: parsed.crossed,
+        filled_lots: Number(parsed.filledLots),
+        quote_atoms: parsed.quoteAtoms,
+        tail_seq: parsed.tailSeq,
       };
     },
   };

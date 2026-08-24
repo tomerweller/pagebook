@@ -4,13 +4,8 @@ import { createRpc, type Rpc } from "../src/book";
 import { addrToHex } from "../src/engine/clientKeys";
 import { pad } from "../src/engine/pad";
 import {
-  scPlaceFlags,
-  scSlotWindow,
-  scvAddr,
-  scvBool,
-  scvU32,
-  scvU64,
-  submitInvocation,
+  submitPlace,
+  submitPostOnlyPlace,
   submitReplace,
   submitReplaceBatch,
   submitSettle,
@@ -149,7 +144,8 @@ export type MmDeps = {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   balances?: () => Promise<Record<string, number>>;
-  submit?: typeof submitInvocation;
+  place?: typeof submitPlace;
+  postOnlyPlace?: typeof submitPostOnlyPlace;
 };
 
 type ReplaceItem = { nonce: number; isBid: boolean; tick: number; lots: number; slot: number };
@@ -170,7 +166,8 @@ export class MM {
   private now: () => number;
   private sleep: (ms: number) => Promise<void>;
   private balancesFn: () => Promise<Record<string, number>>;
-  private submitFn: typeof submitInvocation;
+  private placeFn: typeof submitPlace;
+  private postOnlyFn: typeof submitPostOnlyPlace;
   private hex: { base: ReturnType<typeof addrToHex>; quote: ReturnType<typeof addrToHex> };
   private ownerHex: ReturnType<typeof addrToHex>;
 
@@ -191,7 +188,8 @@ export class MM {
     this.now = deps.now ?? (() => Date.now() / 1000);
     this.sleep = deps.sleep ?? sleep;
     this.balancesFn = deps.balances ?? (() => fetchBalances(a.horizon, this.id.address));
-    this.submitFn = deps.submit ?? submitInvocation;
+    this.placeFn = deps.place ?? submitPlace;
+    this.postOnlyFn = deps.postOnlyPlace ?? submitPostOnlyPlace;
     this.hex = tokenHex(a.baseSac, a.quoteSac);
     this.ownerHex = addrToHex(this.id.address);
   }
@@ -251,30 +249,10 @@ export class MM {
     this.sizes = await sweepPadSizes(this.rpc, keys, { growth: 32, chunk: 100 });
   }
 
-  async submit(
-    fn: string,
-    args: Parameters<typeof submitInvocation>[0]["args"],
-    padKeys: Parameters<typeof submitInvocation>[0]["padKeys"],
-    label: string,
-    extra: Record<string, unknown> = {},
-    useSizes: boolean,
-    quoted?: Parameters<typeof submitInvocation>[0]["quoted"],
-    padOut?: Parameters<typeof submitInvocation>[0]["padOut"],
-  ): Promise<string> {
+  async submit(label: string, extra: Record<string, unknown>, run: () => Promise<EngineResult>): Promise<string> {
     let res: EngineResult;
     try {
-      res = await this.submitFn({
-        rpc: this.rpc,
-        contract: this.a.contract,
-        sourceSecret: this.id.secret,
-        fn,
-        args,
-        padKeys,
-        tokens: this.tokens,
-        sizes: useSizes ? this.padSizes() : undefined,
-        quoted,
-        padOut,
-      });
+      res = await run();
     } catch (e) {
       const msg = repr(e);
       this.record(label, "build_error", { detail: msg.slice(-300), ...extra });
@@ -292,23 +270,29 @@ export class MM {
     const start = startTickForPostOnly(isBid);
     const window = emptyRestWindow();
     const flags = { post_only: true, fill_or_kill: false, no_rest: false };
-    const args = [
-      scvAddr(this.id.address),
-      scvU32(this.a.market),
-      scvBool(isBid),
-      scvU32(tick),
-      scvU64(BigInt(lots)),
-      scvU32(start),
-      scvU64(BigInt(nonce)),
-      scSlotWindow(window),
-      scPlaceFlags(flags),
-    ];
     const padKeys = [
       ...restKeys(this.a.market, isBid, tick),
       orderClientKey(this.a.market, this.ownerHex, BigInt(nonce)),
       ...feeKeys(this.a.market, this.hex.base, this.hex.quote),
     ];
-    const out = await this.submit("place", args, padKeys, "place", {}, true);
+    const out = await this.submit("place", {}, () =>
+      this.postOnlyFn(this.rpc, {
+        contract: this.a.contract,
+        secret: this.id.secret,
+        taker: this.id.address,
+        market: this.a.market,
+        isBid,
+        limitTick: tick,
+        qtyLots: BigInt(lots),
+        startTick: start,
+        nonce: BigInt(nonce),
+        window,
+        flags,
+        padKeys,
+        tokens: this.tokens,
+        sizes: this.padSizes(),
+      }),
+    );
     if (out === "ok") {
       this.state.quotes[String(nonce)] = { side: isBid ? "bid" : "ask", tick, lots, slot, t: this.now() };
       this.save();
@@ -434,26 +418,27 @@ export class MM {
     };
     const outPad = pad(quoted, healTarget, { pagesForEmpty: false });
     const flags = { post_only: false, fill_or_kill: false, no_rest: true };
-    const args = [
-      scvAddr(this.id.address),
-      scvU32(this.a.market),
-      scvBool(isBid),
-      scvU32(healTarget),
-      scvU64(1n),
-      scvU32(q.start_tick),
-      scvU64(BigInt(nonce)),
-      scSlotWindow(outPad.window),
-      scPlaceFlags(flags),
-    ];
     return this.submit(
-      "place",
-      args,
-      [...outPad.keys, ...feeKeys(this.a.market, this.hex.base, this.hex.quote)],
       "heal",
       { side: isBid ? "bid" : "ask", phantom_tick: b, target: healTarget, phantoms: q.crossed.length },
-      false,
-      quoted,
-      outPad,
+      () =>
+        this.placeFn(this.rpc, {
+          contract: this.a.contract,
+          secret: this.id.secret,
+          taker: this.id.address,
+          market: this.a.market,
+          isBid,
+          limitTick: healTarget,
+          qtyLots: 1n,
+          startTick: q.start_tick,
+          nonce: BigInt(nonce),
+          window: outPad.window,
+          flags,
+          quoted,
+          tokens: this.tokens,
+          padEnd: healTarget,
+          pagesForEmpty: false,
+        }),
     );
   }
 

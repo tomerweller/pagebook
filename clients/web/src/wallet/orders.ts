@@ -839,7 +839,7 @@ export function createOrders(opts: {
       opts.onLog(`${action} ${res.errorName}`, res.hash);
     } else {
       app.update((s) => {
-        s.orders.phase = res.kind === "footprint" ? "footprint" : res.message;
+        s.orders.phase = res.kind === "footprint" ? "footprint" : "message" in res && res.message ? res.message : res.kind;
         s.orders.lastHash = res.hash ?? "";
       });
       opts.onLog(`${action} failed`, res.hash);

@@ -5,13 +5,7 @@ import { addrToHex } from "../src/engine/clientKeys";
 import { pad } from "../src/engine/pad";
 import {
   decodePlaceResult,
-  scPlaceFlags,
-  scSlotWindow,
-  scvAddr,
-  scvBool,
-  scvU32,
-  scvU64,
-  submitInvocation,
+  submitPlace,
   submitSettle,
   type ClassicToken,
   type EngineResult,
@@ -183,26 +177,21 @@ export class Trader {
     };
     let res: EngineResult;
     try {
-      res = await submitInvocation({
-        rpc: this.rpc,
+      res = await submitPlace(this.rpc, {
         contract: this.a.contract,
-        sourceSecret: this.id.secret,
-        fn: "place",
-        args: [
-          scvAddr(this.id.address),
-          scvU32(this.a.market),
-          scvBool(isBid),
-          scvU32(limit),
-          scvU64(BigInt(lots)),
-          scvU32(q.start_tick),
-          scvU64(BigInt(nonce)),
-          scSlotWindow(outPad.window),
-          scPlaceFlags(flags),
-        ],
-        padKeys: [...outPad.keys, ...feeKeys(this.a.market, this.hex.base, this.hex.quote)],
+        secret: this.id.secret,
+        taker: this.id.address,
+        market: this.a.market,
+        isBid,
+        limitTick: limit,
+        qtyLots: BigInt(lots),
+        startTick: q.start_tick,
+        nonce: BigInt(nonce),
+        window: outPad.window,
+        flags,
         quoted,
-        padOut: outPad,
         tokens: this.tokens,
+        padEnd: limit,
       });
     } catch (e) {
       this.record(label, "build_error", { detail: repr(e).slice(-300), ...extra });

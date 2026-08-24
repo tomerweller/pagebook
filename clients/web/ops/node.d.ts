@@ -35,6 +35,7 @@ declare module "node:os" {
 declare const process: {
   argv: string[];
   env: Record<string, string | undefined>;
+  cwd(): string;
   on(event: string, fn: () => void): void;
   stderr: { write(s: string): void };
   exit(code: number): never;

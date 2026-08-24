@@ -644,7 +644,7 @@ export function createTicket(opts: {
     } else {
       app.update((s) => {
         s.ticket.phase = "failed";
-        s.ticket.phaseDetail = res.message;
+        s.ticket.phaseDetail = "message" in res && res.message ? res.message : res.kind;
         s.ticket.lastHash = res.hash ?? "";
       });
       opts.onLog("place failed", res.hash);
