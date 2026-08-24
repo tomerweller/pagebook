@@ -97,6 +97,7 @@ test("opslog JSON-lines flush per line with Python field names", () => {
   const path = join(dir, "mm.log");
   const log = openLog(path, () => 12.5);
   log.record("feed", "stale", { age: 300, action: "cancel_all" });
+  log.close();
   const line = JSON.parse(readFileSync(path, "utf8").trim()) as Record<string, unknown>;
   expect(line).toEqual({ t: 12.5, action: "cancel_all", outcome: "stale", age: 300 });
 });

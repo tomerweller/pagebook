@@ -7,7 +7,9 @@ declare module "node:child_process" {
 }
 
 declare module "node:fs" {
-  export function appendFileSync(path: string, data: string): void;
+  export function appendFileSync(path: string | number, data: string): void;
+  export function openSync(path: string, flags: string): number;
+  export function closeSync(fd: number): void;
   export function mkdirSync(path: string, opts?: { recursive?: boolean }): string | undefined;
   export function readFileSync(path: string, encoding: string): string;
   export function renameSync(a: string, b: string): void;
