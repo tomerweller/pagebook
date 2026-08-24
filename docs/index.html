@@ -322,6 +322,7 @@
   <p>Two Soroban constraints shape the design.</p>
   <p>First, a transaction must declare its read/write set, its <em>footprint</em>, before execution. A naive one-entry-per-order design makes the matching footprint depend on the live queue. A Soroban order book needs predictable keys and footprints that clients can safely pad.</p>
   <p>Second, ledger resources are metered and capped. Write bytes are especially scarce, so a Soroban order book needs small entries and bounded writes on the matching path.</p>
+  <p>Soroban has other hard limits too: a transaction gets a bounded instruction budget, can only touch so many entries, and no entry can grow past a fixed size. Those turned out to be budgets to stay under, not forces that shaped the design.</p>
 </section>
 
 <section id="concessions">
@@ -449,10 +450,10 @@
   <p>Each active tick has one FIFO queue per market side. Each slot stores one maker order's quantity in lots. New maker orders append at the tail; takers consume from the head. The queue stores quantities only: maker identity and settlement data live in the order record.</p>
   <p>At tick <code>15,800</code>, every slot trades at <code>0.15800 USDC/XLM</code>. A slot containing <code>25</code> represents 25 lots, or 250&nbsp;XLM. A taker consumes older slots before newer ones at the same price.</p>
   <h3>Implementation</h3>
-  <p>The FIFO never moves data. It uses fixed-size quantity vectors and advances head and tail coordinates through them. Each queue is split across two packed entry types: <code>Level</code> stores queue counters, total open lots, and the first 32 quantity slots in a 285-byte payload; <code>LevelPage</code> adds 32 slots in a 257-byte payload when the inline slots are full.</p>
+  <p>The FIFO never moves data. It uses fixed-size quantity vectors and advances head and tail coordinates through them. Each queue is split across two packed entry types: <code>Level</code> stores queue counters, total open lots, and the first 32 quantity slots in a 285-byte payload; <code>LevelPage</code> adds 32 slots in a 257-byte payload when the inline slots are full. Together they cap a level at 64 resting orders; a rest against a full level fails with a typed error. <code>LevelPage</code> is declared in footprints but written only when an order actually spills past the inline slots.</p>
   <p>Each quantity is written to one slot. Filled slots remain as history; cancelled slots become tombstones. Neither is moved or compacted.</p>
   <p><code>open_lots</code> tracks aggregate supply at the level. A taker that consumes the whole level can price and sweep it with one <code>Level</code> write, without reading each maker slot. Partial consumption walks slots from the head under a fixed scan limit.</p>
-  <p><code>Level</code> entries are never deleted. When a queue is swept empty, or an empty queue is reused, the generation increments and sequence numbers restart. The generation preserves settlement correctness for makers from the previous queue.</p>
+  <p><code>Level</code> entries are never deleted; a level's slots are reused across generations. Whenever the level empties &mdash; swept by a taker, or vacated by cancels &mdash; the generation increments and sequence numbers restart, reopening all 64 slots. The generation preserves settlement correctness for makers from the previous queue.</p>
 
   <figure>
     <div class="fig">
@@ -735,6 +736,12 @@
   <p>During execution, the walk alternates between the tick index and level queues. A full-level sweep uses <code>open_lots</code> and does not read individual slots. Partial consumption reads from the queue head under a fixed slot limit.</p>
   <p>The walk stops when it fills the requested quantity, reaches the limit price, hits a configured work limit, or reaches the edge of a declared queue window. Depending on the order flags, any remainder rests at the limit price or is refunded. Walking beyond the padded tick band is the remaining footprint failure case.</p>
   <p>Liquidity added at a better price after simulation is outside this walk. Covered changes inside the padded range are handled at execution without adding maker-specific entries to the footprint.</p>
+
+  <h3>Observations</h3>
+  <ul>
+    <li>Taker cost scales with levels crossed, not orders crossed: sweeping a level is one <code>Level</code> write whether it clears one maker or sixty-four. At current caps &mdash; 32 levels per invocation, 64 orders per level &mdash; a single take can clear up to 2,048 resting orders. The tradeoff is that write bytes grow with each level crossed and are declared upfront, so a deep sweep reserves write capacity it may not use.</li>
+    <li>Take amounts are exact: quantization makes every quote amount an integer multiplication of lots consumed by the tick's per-lot price, so matching contains no division and nothing to round. The only division is the taker fee, which rounds up; the dust accrues to fees.</li>
+  </ul>
 </section>
 
 <section id="results">
