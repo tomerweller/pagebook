@@ -13,14 +13,20 @@ test("outcomeOf maps engine result kinds", () => {
   expect(outcomeOf({ kind: "typed", errorCode: 11, errorName: "LevelFull", at: "apply" })).toBe("typed:LevelFull");
   expect(outcomeOf({ kind: "typed", errorCode: 11, errorName: "LevelFull", at: "simulation" })).toBe("sim:typed:LevelFull");
   expect(outcomeOf({ kind: "footprint" })).toBe("footprint");
+  expect(outcomeOf({ kind: "footprint", at: "simulation" })).toBe("sim:footprint");
   expect(outcomeOf({ kind: "txBadSeq", message: "txBadSeq" })).toBe("bad_seq");
+  expect(outcomeOf({ kind: "txBadSeq", message: "txBadSeq", at: "simulation" })).toBe("sim:bad_seq");
   expect(outcomeOf({ kind: "resourceLimit", message: "ResourceLimitExceeded" })).toBe("resource_limit");
+  expect(outcomeOf({ kind: "resourceLimit", message: "ResourceLimitExceeded", at: "simulation" })).toBe("sim:resource_limit");
   expect(outcomeOf({ kind: "sorobanInvalid", message: "TxSorobanInvalid" })).toBe("soroban_invalid");
+  expect(outcomeOf({ kind: "sorobanInvalid", message: "TxSorobanInvalid", at: "simulation" })).toBe("sim:soroban_invalid");
   expect(outcomeOf({ kind: "timeout", message: "timed out", hash: "ff" })).toBe("rpc_timeout");
   expect(outcomeOf({ kind: "build_error" })).toBe("build_error");
   expect(outcomeOf({ kind: "sign_error" })).toBe("sign_error");
   expect(outcomeOf({ kind: "rpc", message: "nope" })).toBe("other");
+  expect(outcomeOf({ kind: "rpc", message: "nope", at: "simulation" })).toBe("sim:other");
   expect(outcomeOf({ kind: "trapped" })).toBe("trapped:unknown");
+  expect(outcomeOf({ kind: "trapped", at: "simulation" })).toBe("sim:trapped:unknown");
   expect(outcomeOf({ kind: "typed", errorCode: 15, errorName: "UnknownOrder", at: "apply" })).toBe("typed:UnknownOrder");
 });
 

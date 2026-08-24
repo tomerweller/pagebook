@@ -458,6 +458,19 @@ test("classifySubmit splits send and apply failures", () => {
   expect(classifySubmit("InvokeHostFunction(ResourceLimitExceeded)", "apply").kind).toBe("resourceLimit");
   expect(classifySubmit("status: TxSorobanInvalid", "send").kind).toBe("sorobanInvalid");
   expect(classifySubmit("trying to access contract data key outside of the footprint", "apply").kind).toBe("footprint");
+  expect(classifySubmit("trying to access contract data key outside of the footprint", "simulation")).toMatchObject({
+    kind: "footprint",
+    at: "simulation",
+  });
+  expect(classifySubmit("InvokeHostFunction(ResourceLimitExceeded)", "simulation")).toMatchObject({
+    kind: "resourceLimit",
+    at: "simulation",
+  });
+  expect(classifySubmit("status: TxSorobanInvalid", "simulation")).toMatchObject({
+    kind: "sorobanInvalid",
+    at: "simulation",
+  });
+  expect(classifySubmit("connection reset", "simulation")).toMatchObject({ kind: "rpc", at: "simulation" });
 });
 
 test("decodePlaceResult reads the place 3-tuple from TransactionMeta", () => {

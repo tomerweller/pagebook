@@ -8,20 +8,24 @@ export type OutcomeInput =
   | { kind: "build_error"; message?: string }
   | { kind: "sign_error"; message?: string };
 
+function withSim(at: string | undefined, name: string): string {
+  return at === "simulation" ? `sim:${name}` : name;
+}
+
 export function outcomeOf(result: OutcomeInput, opts?: { events?: unknown }): string {
   switch (result.kind) {
     case "ok":
       return "ok";
     case "typed":
-      return result.at === "simulation" ? `sim:typed:${result.errorName}` : `typed:${result.errorName}`;
+      return withSim(result.at, `typed:${result.errorName}`);
     case "footprint":
-      return "footprint";
+      return withSim(result.at, "footprint");
     case "txBadSeq":
-      return "bad_seq";
+      return withSim(result.at, "bad_seq");
     case "resourceLimit":
-      return "resource_limit";
+      return withSim(result.at, "resource_limit");
     case "sorobanInvalid":
-      return "soroban_invalid";
+      return withSim(result.at, "soroban_invalid");
     case "timeout":
       return "rpc_timeout";
     case "build_error":
@@ -29,10 +33,10 @@ export function outcomeOf(result: OutcomeInput, opts?: { events?: unknown }): st
     case "sign_error":
       return "sign_error";
     case "trapped":
-      return "trapped:unknown";
+      return withSim(result.at, "trapped:unknown");
     case "rpc": {
-      if (opts?.events != null) return diagnoseEvents(opts.events);
-      return classifyText(result.message);
+      if (opts?.events != null) return withSim(result.at, diagnoseEvents(opts.events));
+      return classifyText(result.message, { sim: result.at === "simulation" });
     }
   }
 }

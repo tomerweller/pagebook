@@ -21,7 +21,7 @@ export type EnginePhase = "simulation" | "apply" | "send";
 export type EngineOk = { kind: "ok"; hash: string; ledger?: number; fee?: string; resultMetaXdr?: string };
 export type EngineTyped = { kind: "typed"; errorCode: number; errorName: string; at: "simulation" | "apply"; hash?: string };
 export type EngineFootprint = { kind: "footprint"; missingKey?: string; hash?: string; at?: EnginePhase };
-export type EngineBadSeq = { kind: "txBadSeq"; message: string; hash?: string; reachedLedger?: boolean };
+export type EngineBadSeq = { kind: "txBadSeq"; message: string; hash?: string; reachedLedger?: boolean; at?: EnginePhase };
 export type EngineResourceLimit = { kind: "resourceLimit"; message: string; hash?: string; at?: EnginePhase };
 export type EngineSorobanInvalid = { kind: "sorobanInvalid"; message: string; hash?: string; at?: EnginePhase };
 export type EngineTimeout = { kind: "timeout"; message: string; hash: string };
@@ -170,7 +170,7 @@ export function classifySubmit(
     return { kind: "typed", errorCode: code, errorName: errorName(code), at: typedAt, hash };
   }
   if (/txBadSeq|BAD_SEQ/.test(text)) {
-    return { kind: "txBadSeq", message: text.slice(0, 400), hash, reachedLedger: at === "apply" };
+    return { kind: "txBadSeq", message: text.slice(0, 400), hash, reachedLedger: at === "apply", at };
   }
   if (/ResourceLimitExceeded/.test(text)) return { kind: "resourceLimit", message: text.slice(0, 400), hash, at };
   if (/TxSorobanInvalid/.test(text)) return { kind: "sorobanInvalid", message: text.slice(0, 400), hash, at };
