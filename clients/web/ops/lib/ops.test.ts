@@ -1,10 +1,10 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { parseArgs } from "./args";
 import { Feed } from "./feed";
-import { loadIdentity } from "./identity";
+import { findConfigDir, loadIdentity } from "./identity";
 import { secretEnvName } from "./math";
 import { openLog } from "./opslog";
 import { parseMmArgs } from "../mm";
@@ -23,6 +23,30 @@ test("identity env override PB_SECRET_<NAME>", async () => {
   expect(id.address.startsWith("G")).toBe(true);
   expect(secretEnvName("pb-mm")).toBe("PB_SECRET_PB_MM");
   expect(() => loadIdentity("x", "/nope", { env: { PB_SECRET_X: "S" + "A".repeat(55) } })).toThrow();
+});
+
+test("findConfigDir walks up to a .stellar/identity directory", () => {
+  const root = mkdtempSync(join(tmpdir(), "pb-cfg-"));
+  const nested = join(root, "a", "b");
+  mkdirSync(join(root, ".stellar", "identity"), { recursive: true });
+  mkdirSync(nested, { recursive: true });
+  expect(findConfigDir({ start: nested, env: {} })).toBe(join(root, ".stellar"));
+  expect(findConfigDir({ start: nested, env: { STELLAR_CONFIG_DIR: "/explicit" } })).toBe("/explicit");
+});
+
+test("missing stellar binary is distinct from missing identity", () => {
+  expect(() =>
+    loadIdentity("pb-mm", "/nope", {
+      env: {},
+      spawn: () => ({ stdout: "", stderr: "", status: null, error: { code: "ENOENT", message: "spawn stellar ENOENT" } }),
+    }),
+  ).toThrow(/stellar CLI not found/);
+  expect(() =>
+    loadIdentity("pb-mm", "/nope", {
+      env: {},
+      spawn: () => ({ stdout: "", stderr: "no such identity", status: 1 }),
+    }),
+  ).toThrow(/could not load identity pb-mm/);
 });
 
 test("feed uses last-good, coinbase then kraken, fixed-mid", async () => {

@@ -3,7 +3,7 @@ declare module "node:child_process" {
     command: string,
     args: string[],
     options: { encoding: string },
-  ): { stdout: string; stderr: string; status: number | null };
+  ): { stdout: string; stderr: string; status: number | null; error?: { code?: string; message: string } };
 }
 
 declare module "node:fs" {
@@ -13,6 +13,7 @@ declare module "node:fs" {
   export function renameSync(a: string, b: string): void;
   export function writeFileSync(path: string, data: string): void;
   export function mkdtempSync(prefix: string): string;
+  export function existsSync(path: string): boolean;
 }
 
 declare module "node:path" {

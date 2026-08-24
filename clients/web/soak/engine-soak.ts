@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { findConfigDir } from "../ops/lib/identity";
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { createRpc } from "../src/book";
 import { addrToHex } from "../src/engine/clientKeys";
@@ -25,20 +26,6 @@ const BASE = "CDAHSKHBGFENTV3XGWRWVIWE3ISAEYIZQNGD4GCWRDDIOIW4DVZ26FQG";
 const QUOTE = "CBEC6J5RWWWC7CYCHJTXIBDFTFRK6GTMLK4E47BECO5BDXVM7YHATUIK";
 const ISSUER = "GCBMNFRU74KLBUCVHJVQXRRMGEWUWC2WZ5KXLYABNFLXGCFTJPKBT4IB";
 const RPC_URL = "https://soroban-testnet.stellar.org";
-function findConfigDir(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const tries = [
-    process.env.STELLAR_CONFIG_DIR,
-    resolve(here, "../../../../.stellar"),
-    resolve(here, "../../../../../.stellar"),
-    join(process.env.HOME ?? "", "code/pagebook/.stellar"),
-  ].filter((x): x is string => !!x);
-  for (const t of tries) {
-    if (existsSync(join(t, "identity/pb-maker.toml"))) return t;
-  }
-  return tries[0] ?? ".stellar";
-}
-
 const CONFIG_DIR = findConfigDir();
 const LOG = resolve(dirname(fileURLToPath(import.meta.url)), "engine-soak.log");
 const MIN_LEDGERS = 150;
