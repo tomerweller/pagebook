@@ -28,6 +28,8 @@ export function outcomeOf(result: OutcomeInput, opts?: { events?: unknown }): st
       return "build_error";
     case "sign_error":
       return "sign_error";
+    case "trapped":
+      return "trapped:unknown";
     case "rpc": {
       if (opts?.events != null) return diagnoseEvents(opts.events);
       return classifyText(result.message);

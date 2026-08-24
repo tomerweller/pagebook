@@ -4,7 +4,8 @@ import { ck, instanceKey } from "../keys";
 import padConformance from "../../../../crates/pagebook-client/fixtures/pad-conformance.json";
 import { ERROR_CODE_COUNT, ERROR_MESSAGES, ERROR_NAMES, hostErrorMessage, parseContractError } from "./errors";
 import { keysForReplace, keysForSettle, pad, restoreMarks, windowJson, type Quoted } from "./pad";
-import { classifySubmit, decodePlaceResult } from "./submit";
+import { outcomeOf } from "../../ops/lib/outcomes";
+import { classifyFailedTx, classifySubmit, decodePlaceResult } from "./submit";
 import { sortedKeyStrs, type ClientKey } from "./clientKeys";
 import { DEFAULT_GROWTH, PER_ADDED, WRITE_ENTRY_FEE, applyPad, type ApplyPadSizes } from "./txdata";
 
@@ -374,6 +375,80 @@ test("applyPad sizes covers a nonexistent key at zero", () => {
   const map = new Map([[a.toXDR("base64"), { exists: false, actualSize: 404 }]]);
   const { data: out } = applyPad(data, [a], [], sizesOf(map, 16, 0));
   expect(Number(out.resources().writeBytes())).toBe(50);
+});
+
+function contractErrorEvent(code: number): string {
+  const errVal = StellarSdk.xdr.ScVal.scvError(StellarSdk.xdr.ScError.sceContract(code));
+  const v0 = new StellarSdk.xdr.ContractEventV0({
+    topics: [StellarSdk.xdr.ScVal.scvSymbol("error"), errVal],
+    data: errVal,
+  });
+  return new StellarSdk.xdr.DiagnosticEvent({
+    inSuccessfulContractCall: false,
+    event: new StellarSdk.xdr.ContractEvent({
+      ext: new StellarSdk.xdr.ExtensionPoint(0),
+      contractId: null,
+      type: StellarSdk.xdr.ContractEventType.diagnostic(),
+      body: new StellarSdk.xdr.ContractEventBody(0, v0),
+    }),
+  }).toXDR("base64");
+}
+
+function storageLimitEvent(): string {
+  const errVal = StellarSdk.xdr.ScVal.scvError(
+    StellarSdk.xdr.ScError.sceStorage(StellarSdk.xdr.ScErrorCode.scecExceededLimit()),
+  );
+  const v0 = new StellarSdk.xdr.ContractEventV0({
+    topics: [StellarSdk.xdr.ScVal.scvSymbol("error"), errVal],
+    data: StellarSdk.xdr.ScVal.scvString("trying to access contract data key outside of the footprint"),
+  });
+  return new StellarSdk.xdr.DiagnosticEvent({
+    inSuccessfulContractCall: false,
+    event: new StellarSdk.xdr.ContractEvent({
+      ext: new StellarSdk.xdr.ExtensionPoint(0),
+      contractId: null,
+      type: StellarSdk.xdr.ContractEventType.diagnostic(),
+      body: new StellarSdk.xdr.ContractEventBody(0, v0),
+    }),
+  }).toXDR("base64");
+}
+
+function failedTx(code: "trapped" | "resource"): string {
+  const ihf =
+    code === "resource"
+      ? StellarSdk.xdr.InvokeHostFunctionResult.invokeHostFunctionResourceLimitExceeded()
+      : StellarSdk.xdr.InvokeHostFunctionResult.invokeHostFunctionTrapped();
+  return new StellarSdk.xdr.TransactionResult({
+    feeCharged: new StellarSdk.xdr.Int64(100),
+    result: StellarSdk.xdr.TransactionResultResult.txFailed([
+      StellarSdk.xdr.OperationResult.opInner(StellarSdk.xdr.OperationResultTr.invokeHostFunction(ihf)),
+    ]),
+    ext: new StellarSdk.xdr.TransactionResultExt(0),
+  }).toXDR("base64");
+}
+
+test("classifyFailedTx decodes real XDR fixtures", () => {
+  expect(classifyFailedTx(failedTx("trapped"), [contractErrorEvent(15)])).toMatchObject({
+    kind: "typed",
+    errorCode: 15,
+    errorName: "UnknownOrder",
+    at: "apply",
+  });
+  expect(classifyFailedTx(failedTx("trapped"), [storageLimitEvent()])).toMatchObject({
+    kind: "footprint",
+    at: "apply",
+  });
+  expect(classifyFailedTx(failedTx("resource"), [])).toMatchObject({
+    kind: "resourceLimit",
+    at: "apply",
+  });
+  expect(classifyFailedTx(failedTx("trapped"), [])).toMatchObject({
+    kind: "trapped",
+    at: "apply",
+  });
+  expect(outcomeOf(classifyFailedTx(failedTx("trapped"), [contractErrorEvent(15)]))).toBe("typed:UnknownOrder");
+  expect(outcomeOf(classifyFailedTx(failedTx("trapped"), [storageLimitEvent()]))).toBe("footprint");
+  expect(outcomeOf(classifyFailedTx(failedTx("trapped"), []))).toBe("trapped:unknown");
 });
 
 test("classifySubmit splits send and apply failures", () => {

@@ -20,6 +20,8 @@ test("outcomeOf maps engine result kinds", () => {
   expect(outcomeOf({ kind: "build_error" })).toBe("build_error");
   expect(outcomeOf({ kind: "sign_error" })).toBe("sign_error");
   expect(outcomeOf({ kind: "rpc", message: "nope" })).toBe("other");
+  expect(outcomeOf({ kind: "trapped" })).toBe("trapped:unknown");
+  expect(outcomeOf({ kind: "typed", errorCode: 15, errorName: "UnknownOrder", at: "apply" })).toBe("typed:UnknownOrder");
 });
 
 test("classifyText matches canned RPC and SDK strings", () => {

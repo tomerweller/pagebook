@@ -17,14 +17,16 @@ export type PlaceFlags = {
   no_rest: boolean;
 };
 
+export type EnginePhase = "simulation" | "apply" | "send";
 export type EngineOk = { kind: "ok"; hash: string; ledger?: number; fee?: string; resultMetaXdr?: string };
 export type EngineTyped = { kind: "typed"; errorCode: number; errorName: string; at: "simulation" | "apply"; hash?: string };
-export type EngineFootprint = { kind: "footprint"; missingKey?: string; hash?: string };
+export type EngineFootprint = { kind: "footprint"; missingKey?: string; hash?: string; at?: EnginePhase };
 export type EngineBadSeq = { kind: "txBadSeq"; message: string; hash?: string; reachedLedger?: boolean };
-export type EngineResourceLimit = { kind: "resourceLimit"; message: string; hash?: string };
-export type EngineSorobanInvalid = { kind: "sorobanInvalid"; message: string; hash?: string };
+export type EngineResourceLimit = { kind: "resourceLimit"; message: string; hash?: string; at?: EnginePhase };
+export type EngineSorobanInvalid = { kind: "sorobanInvalid"; message: string; hash?: string; at?: EnginePhase };
 export type EngineTimeout = { kind: "timeout"; message: string; hash: string };
-export type EngineRpc = { kind: "rpc"; message: string; hash?: string };
+export type EngineRpc = { kind: "rpc"; message: string; hash?: string; at?: EnginePhase };
+export type EngineTrapped = { kind: "trapped"; message?: string; hash?: string; at?: EnginePhase };
 export type EngineResult =
   | EngineOk
   | EngineTyped
@@ -33,7 +35,8 @@ export type EngineResult =
   | EngineResourceLimit
   | EngineSorobanInvalid
   | EngineTimeout
-  | EngineRpc;
+  | EngineRpc
+  | EngineTrapped;
 
 export type PlaceReturn = {
   rested: boolean;
@@ -156,25 +159,165 @@ export function scReplaceItem(item: {
 
 export function classifySubmit(
   text: string,
-  at: "simulation" | "apply" | "send",
+  at: EnginePhase,
   hash?: string,
 ): EngineResult {
+  const typedAt = at === "send" ? "apply" : at;
   const host = hostErrorMessage(text);
-  if (host) return { kind: "rpc", message: host, hash };
+  if (host) return { kind: "rpc", message: host, hash, at };
   const code = parseContractError(text);
   if (code != null) {
-    const typedAt = at === "send" ? "apply" : at;
     return { kind: "typed", errorCode: code, errorName: errorName(code), at: typedAt, hash };
   }
   if (/txBadSeq|BAD_SEQ/.test(text)) {
     return { kind: "txBadSeq", message: text.slice(0, 400), hash, reachedLedger: at === "apply" };
   }
-  if (/ResourceLimitExceeded/.test(text)) return { kind: "resourceLimit", message: text.slice(0, 400), hash };
-  if (/TxSorobanInvalid/.test(text)) return { kind: "sorobanInvalid", message: text.slice(0, 400), hash };
+  if (/ResourceLimitExceeded/.test(text)) return { kind: "resourceLimit", message: text.slice(0, 400), hash, at };
+  if (/TxSorobanInvalid/.test(text)) return { kind: "sorobanInvalid", message: text.slice(0, 400), hash, at };
   if (/footprint|ExceededLimit|storage.*exceeded/i.test(text)) {
-    return { kind: "footprint", hash };
+    return { kind: "footprint", hash, at };
   }
-  return { kind: "rpc", message: text.slice(0, 400), hash };
+  return { kind: "rpc", message: text.slice(0, 400), hash, at };
+}
+
+type FailedHints = {
+  contract?: number;
+  footprint: boolean;
+  resource: boolean;
+};
+
+function walkScVal(val: StellarSdk.xdr.ScVal, hints: FailedHints, texts: string[]): void {
+  let sw: string;
+  try {
+    sw = val.switch().name;
+  } catch {
+    return;
+  }
+  if (sw === "scvError") {
+    try {
+      const err = val.error();
+      const kind = err.switch().name;
+      if (kind === "sceContract") hints.contract = err.contractCode();
+      else if (kind === "sceStorage" && err.code().name === "scecExceededLimit") hints.footprint = true;
+      else if (kind === "sceBudget") hints.resource = true;
+    } catch {
+      /* ignore */
+    }
+  }
+  if (sw === "scvString" || sw === "scvSymbol") {
+    try {
+      texts.push(String(StellarSdk.scValToNative(val)));
+    } catch {
+      /* ignore */
+    }
+  }
+  if (sw === "scvVec") {
+    try {
+      for (const child of val.vec() ?? []) walkScVal(child, hints, texts);
+    } catch {
+      /* ignore */
+    }
+  }
+  if (sw === "scvMap") {
+    try {
+      for (const entry of val.map() ?? []) {
+        walkScVal(entry.key(), hints, texts);
+        walkScVal(entry.val(), hints, texts);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function contractCodeFromNative(n: unknown): number | undefined {
+  if (n && typeof n === "object") {
+    const rec = n as Record<string, unknown>;
+    if (rec.type === "contract" && rec.code != null) {
+      const code = Number(rec.code);
+      if (Number.isFinite(code)) return code;
+    }
+    if (rec.contract != null && (typeof rec.contract === "number" || typeof rec.contract === "string")) {
+      const code = Number(rec.contract);
+      if (Number.isFinite(code)) return code;
+    }
+    if (rec.error != null) {
+      const inner = contractCodeFromNative(rec.error);
+      if (inner != null) return inner;
+    }
+    if (Array.isArray(n)) {
+      for (const item of n) {
+        const inner = contractCodeFromNative(item);
+        if (inner != null) return inner;
+      }
+    }
+  }
+  return undefined;
+}
+
+function diagnoseEvent(b64: string, hints: FailedHints, texts: string[]): void {
+  try {
+    const ev = StellarSdk.xdr.DiagnosticEvent.fromXDR(b64, "base64");
+    const v0 = ev.event().body().v0();
+    for (const topic of v0.topics()) {
+      walkScVal(topic, hints, texts);
+      try {
+        const native = StellarSdk.scValToNative(topic);
+        const code = contractCodeFromNative(native);
+        if (code != null) hints.contract = code;
+      } catch {
+        /* ignore */
+      }
+    }
+    walkScVal(v0.data(), hints, texts);
+    try {
+      const native = StellarSdk.scValToNative(v0.data());
+      const code = contractCodeFromNative(native);
+      if (code != null) hints.contract = code;
+    } catch {
+      /* ignore */
+    }
+  } catch {
+    /* raw base64 is not searchable */
+  }
+}
+
+function diagnoseResultXdr(b64: string, hints: FailedHints): void {
+  try {
+    const tr = StellarSdk.xdr.TransactionResult.fromXDR(b64, "base64");
+    const name = tr.result().switch().name;
+    if (name === "txFailed" || name === "txSuccess") {
+      for (const op of tr.result().results()) {
+        try {
+          const ihf = op.tr().invokeHostFunctionResult().switch().name;
+          if (ihf === "invokeHostFunctionResourceLimitExceeded") hints.resource = true;
+        } catch {
+          /* not an invoke-host op */
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+export function classifyFailedTx(
+  resultXdr: string | undefined,
+  diagnosticEventsXdr: string[] | undefined,
+  hash?: string,
+): EngineResult {
+  const hints: FailedHints = { footprint: false, resource: false };
+  const texts: string[] = [];
+  if (resultXdr) diagnoseResultXdr(resultXdr, hints);
+  for (const b64 of diagnosticEventsXdr ?? []) diagnoseEvent(b64, hints, texts);
+  const blob = texts.join("\n");
+  if (/trying to access contract data key outside of the footprint/i.test(blob)) hints.footprint = true;
+  if (hints.contract != null) {
+    return { kind: "typed", errorCode: hints.contract, errorName: errorName(hints.contract), at: "apply", hash };
+  }
+  if (hints.footprint) return { kind: "footprint", hash, at: "apply" };
+  if (hints.resource) return { kind: "resourceLimit", message: "ResourceLimitExceeded", hash, at: "apply" };
+  return { kind: "trapped", hash, at: "apply" };
 }
 
 function sendFailureText(sent: { status: string; message?: string; errorResultXdr?: string }): string {
@@ -212,8 +355,7 @@ async function waitTx(rpc: Rpc, hash: string): Promise<EngineResult> {
       return { kind: "ok", hash, ledger: r.ledger, fee: chargedFee(r), resultMetaXdr: r.resultMetaXdr };
     }
     if (r.status === "FAILED") {
-      const text = [r.resultXdr, ...(r.diagnosticEventsXdr ?? [])].filter(Boolean).join("\n");
-      return classifySubmit(text || "transaction failed", "apply", hash);
+      return classifyFailedTx(r.resultXdr, r.diagnosticEventsXdr, hash);
     }
     delay = Math.min(Math.round(delay * 1.4), 2000);
   }
