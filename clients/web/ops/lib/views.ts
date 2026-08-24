@@ -4,7 +4,6 @@ import { parseContractError } from "../../src/engine/errors";
 import { parseQuoteResult, simulate, type SimResult } from "../../src/engine/quote";
 import type { CrossedLevel } from "../../src/engine/pad";
 import { scvAddr, scvBool, scvU32, scvU64 } from "../../src/engine/submit";
-import { readAccount } from "../../src/wallet/account";
 import { NETWORK_PASSPHRASE } from "../../src/wallet/network";
 
 export type LevelView = {
@@ -99,17 +98,11 @@ export function createViews(
   rpc: Rpc,
   opts: { contract: string; source: string; market: number; owner: string },
 ): Views {
-  async function seq(): Promise<string> {
-    const a = await readAccount(rpc, opts.source);
-    if (!a.exists) throw new Error("account not funded");
-    return a.sequence.toString();
-  }
-
   async function call(fn: string, args: StellarSdk.xdr.ScVal[]): Promise<unknown> {
     const { native } = await simulateView(rpc, {
       contract: opts.contract,
       source: opts.source,
-      sequence: await seq(),
+      sequence: "0",
       fn,
       args,
     });
