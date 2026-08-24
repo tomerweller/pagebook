@@ -30,8 +30,8 @@ export function crosses(takerIsBid: boolean, oppTick: number, limitTick: number)
   return takerIsBid ? oppTick <= limitTick : oppTick >= limitTick;
 }
 
-export function inTickBand(tick: number): boolean {
-  return tick >= TICK_MIN + 1 && tick < TICK_MAX - 1;
+export function inTickBand(tick: number, tickMin = TICK_MIN, tickMax = TICK_MAX): boolean {
+  return tick >= tickMin + 1 && tick < tickMax - 1;
 }
 
 export type LadderParams = {
@@ -183,8 +183,11 @@ export type LoopLine = {
   usdc: number | null;
 };
 
-export function startTickForPostOnly(isBid: boolean): number {
-  return isBid ? TICK_MAX - 1 : TICK_MIN;
+export function startTickForPostOnly(isBid: boolean, tickMin = TICK_MIN, tickMax = TICK_MAX): number {
+  // The worst tick of the MARKET's band, so the walk's loop condition is false
+  // on entry (a post-only never walks). Market 1's band spans the whole index;
+  // a narrower market must pass its own bounds or place fails BadStartTick.
+  return isBid ? tickMax - 1 : tickMin;
 }
 
 export function emptyRestWindow(): { consume: []; append: { first: number; last: number } } {

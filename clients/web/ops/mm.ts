@@ -49,6 +49,8 @@ export type MmArgs = {
   baseSac: string;
   quoteSac: string;
   usdcIssuer: string;
+  tickMin: number;
+  tickMax: number;
   baseCode: string;
   baseIssuer: string;
   usdcCode: string;
@@ -86,6 +88,8 @@ export const MM_SPECS: ArgSpec<keyof MmArgs & string>[] = [
   { flag: "--identity", dest: "identity", default: "pb-mm" },
   { flag: "--base-sac", dest: "baseSac", required: true },
   { flag: "--quote-sac", dest: "quoteSac", required: true },
+  { flag: "--tick-min", dest: "tickMin", type: "int", default: 1 },
+  { flag: "--tick-max", dest: "tickMax", type: "int", default: 4194304 },
   { flag: "--base-code", dest: "baseCode", default: "" },
   { flag: "--base-issuer", dest: "baseIssuer", default: "" },
   { flag: "--usdc-issuer", dest: "usdcIssuer", required: true },
@@ -245,7 +249,7 @@ export class MM {
 
   async place(isBid: boolean, tick: number, lots: number, slot: number): Promise<string> {
     const nonce = this.nextNonce();
-    const start = startTickForPostOnly(isBid);
+    const start = startTickForPostOnly(isBid, this.a.tickMin, this.a.tickMax);
     const window = emptyRestWindow();
     const flags = { post_only: true, fill_or_kill: false, no_rest: false };
     const padKeys = [
@@ -526,7 +530,7 @@ export class MM {
     for (const [sideName, isBid, sideLadder] of sides) {
       for (let slot = 0; slot < sideLadder.length; slot++) {
         let { tick, lots } = sideLadder[slot];
-        if (!inTickBand(tick)) continue;
+        if (!inTickBand(tick, this.a.tickMin, this.a.tickMax)) continue;
         tick = stepAwayFromBanned(isBid, tick, this.badTicks, now);
         const cur = bySlot.get(`${sideName}:${slot}`);
         if (!cur) {
