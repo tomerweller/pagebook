@@ -124,6 +124,16 @@ test("state round-trips a real-shape fixture", () => {
   expect(Object.keys(again)).toEqual(["quotes", "next_nonce", "fills", "volume_lots", "inv0"]);
 });
 
+test("loadState defaults only when the file is missing", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pb-state-"));
+  const missing = join(dir, "nope.json");
+  const fresh = loadState(missing, 1000);
+  expect(fresh.quotes).toEqual({});
+  expect(fresh.next_nonce).toBe(1_000_000);
+  writeFileSync(join(dir, "bad.json"), "{not json");
+  expect(() => loadState(join(dir, "bad.json"))).toThrow();
+});
+
 test("band-guard skips ticks at the edges", () => {
   expect(inTickBand(1)).toBe(false);
   expect(inTickBand(2)).toBe(true);

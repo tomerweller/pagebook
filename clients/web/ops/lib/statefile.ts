@@ -25,18 +25,21 @@ export function emptyState(now = Date.now() / 1000): MmState {
 
 export function loadState(path: string, now = Date.now() / 1000): MmState {
   const base = emptyState(now);
+  let text: string;
   try {
-    const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<MmState>;
-    return {
-      quotes: raw.quotes ?? base.quotes,
-      next_nonce: raw.next_nonce ?? base.next_nonce,
-      fills: raw.fills ?? base.fills,
-      volume_lots: raw.volume_lots ?? base.volume_lots,
-      ...(raw.inv0 ? { inv0: raw.inv0 } : {}),
-    };
-  } catch {
-    return base;
+    text = readFileSync(path, "utf8");
+  } catch (e) {
+    if (e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "ENOENT") return base;
+    throw e;
   }
+  const raw = JSON.parse(text) as Partial<MmState>;
+  return {
+    quotes: raw.quotes ?? base.quotes,
+    next_nonce: raw.next_nonce ?? base.next_nonce,
+    fills: raw.fills ?? base.fills,
+    volume_lots: raw.volume_lots ?? base.volume_lots,
+    ...(raw.inv0 ? { inv0: raw.inv0 } : {}),
+  };
 }
 
 export function saveState(path: string, state: MmState): void {
