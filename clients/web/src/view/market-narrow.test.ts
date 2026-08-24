@@ -127,3 +127,61 @@ test("tape keeps hash in the detail tooltip and marks the hash column", async ()
   expect(tx.querySelector("a")).toBeTruthy();
   expect(detail.getAttribute("title") ?? "").toMatch(/[a-f0-9]{8,}/i);
 });
+
+test("edge chip appears for an own ask beyond the window and leaves when in-window", async () => {
+  mount();
+  resetPaneCache();
+  const store = createStore<AppState>(emptyApp());
+  registerMarketView(store, { onSwitchMarket: () => {} });
+  const snap = mockSnapshot();
+  const far = {
+    nonce: 9n,
+    isBid: false,
+    tick: 200,
+    qtyLots: 1n,
+    filledLots: 0n,
+    refundLots: 0n,
+    generation: 1,
+    seq: 0,
+    archived: false,
+  };
+  store.update((s) => {
+    s.book.snapshot = snap;
+    s.book.eventState.events = snap.events;
+    s.book.lastOkAt = Date.now();
+    s.wallet.openOrders = [far];
+  });
+  await Promise.resolve();
+  const chip = document.querySelector(".own-chip.above");
+  expect(chip?.textContent).toMatch(/1 ask above/);
+  expect(chip?.getAttribute("data-own-chip")).toBe("9");
+  store.update((s) => {
+    s.wallet.openOrders = [{ ...far, tick: 102 }];
+  });
+  await Promise.resolve();
+  expect(document.querySelector(".own-chip.above")).toBeNull();
+});
+
+test("tape own-marking uses session hashes not resting ticks", async () => {
+  mount();
+  resetPaneCache();
+  const store = createStore<AppState>(emptyApp());
+  registerMarketView(store, { onSwitchMarket: () => {} });
+  const snap = mockSnapshot();
+  const ownHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  store.update((s) => {
+    s.book.snapshot = snap;
+    s.book.eventState.events = snap.events;
+    s.book.lastOkAt = Date.now();
+    s.book.ownTicks = { bid: new Set([100]), ask: new Set() };
+  });
+  await Promise.resolve();
+  expect(document.querySelector("#trades li.own")).toBeNull();
+  store.update((s) => {
+    s.wallet.ownHashes.add(ownHash);
+  });
+  await Promise.resolve();
+  const mine = [...document.querySelectorAll("#trades li")].filter((li) => li.classList.contains("own"));
+  expect(mine.length).toBeGreaterThan(0);
+  expect(mine[0].querySelector(".tx a")?.getAttribute("href") ?? "").toContain(ownHash);
+});

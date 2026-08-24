@@ -108,6 +108,8 @@ function switchMarket(id: number): void {
     s.book.lastOkAt = 0;
     s.book.lastError = "";
     s.ticket.sideLocked = false;
+    s.wallet.lastFilled = {};
+    s.wallet.unseenFills = 0;
   });
   const url = new URL(location.href);
   url.searchParams.set("market", String(id));
@@ -236,6 +238,12 @@ if (mock) {
 
 function bindLadder(): void {
   $("ladder").addEventListener("click", (e) => {
+    const chip = (e.target as HTMLElement).closest("[data-own-chip]");
+    if (chip) {
+      const nonce = chip.getAttribute("data-own-chip");
+      if (nonce) wallet?.openToOrder(nonce);
+      return;
+    }
     const row = (e.target as HTMLElement).closest("[data-tick]");
     if (!row) return;
     const side = row.getAttribute("data-side");

@@ -81,6 +81,26 @@ a:hover { text-decoration: underline; }
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
+.wallet-instrument { display: none; }
+[data-sec="sheet-brand"] { display: none; }
+.own-chip {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  min-height: 40px;
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  cursor: pointer;
+}
+.own-chip.above { border-bottom: 0; }
+.own-chip.below { border-top: 0; }
 .wallet-toggle {
   font: inherit;
   color: var(--ink);
@@ -432,8 +452,45 @@ section h2 {
     gap: 8px;
     padding-top: 6px;
   }
+  .wallet:not(.open) [data-sec="brand"] { display: none; }
   .wallet:not(.open) .wallet-brand { margin: 0; }
-  .wallet:not(.open) .wallet-head { margin: 0; }
+  .wallet:not(.open) [data-sec="head"] {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .wallet:not(.open) .wallet-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    width: 100%;
+    min-width: 0;
+  }
+  .wallet:not(.open) .wallet-instrument {
+    display: block;
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin: 0;
+    padding: 0 8px 0 0;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+    text-align: left;
+    cursor: pointer;
+  }
+  .wallet:not(.open) .wallet-instrument .bid { color: var(--bid); }
+  .wallet:not(.open) .wallet-instrument .ask { color: var(--ask); }
+  .wallet:not(.open) .wallet-instrument .fill-dot { color: var(--accent); font-style: normal; }
+  .wallet:not(.open) .wallet-toggle { flex: 0 0 auto; }
+  .wallet:not(.open) .wallet-bal-line { display: none; }
+  .wallet.open [data-sec="brand"] { display: none; }
+  .wallet.open [data-sec="sheet-brand"] { display: block; }
+  .wallet.open [data-sec="sheet-brand"] { order: 0; }
   .wallet:not(.open) .wallet-body { display: none; }
   .wallet.open .wallet-body {
     display: flex;

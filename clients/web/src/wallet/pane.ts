@@ -15,13 +15,16 @@ import { Keystore, type Identity } from "./keystore";
 import { missingCredits, planProvision, type ProvisionSource } from "./provision";
 import { checkTestnet } from "./network";
 import { createOrders, loadOpenOrders, ownTicksOf, rememberNonce, sessionRestedNonces, type OpenOrder } from "./orders";
+import { instrumentExtra, noteFills } from "./awareness";
 import { createTicket } from "./ticket";
+import { priceOf } from "../view/format";
 import type { AppState } from "../view/market";
 import type { Store } from "../store";
 import { MarkupCache } from "../view/stable";
 
 export type WalletHandle = {
   prefillFromLadder(side: "bid" | "ask", tick: number): void;
+  openToOrder(nonce: string): void;
 };
 
 export type LogItem = { text: string; hash?: string };
@@ -50,6 +53,9 @@ export type WalletDomain = {
   active: Identity | null;
   ephemeral: boolean;
   seed: string | null;
+  lastFilled: Record<string, string>;
+  unseenFills: number;
+  ownHashes: Set<string>;
 };
 
 type MarketRow = {
@@ -85,7 +91,20 @@ export function emptyWalletDomain(seed: string | null, collapsed = false): Walle
     active: null,
     ephemeral: false,
     seed,
+    lastFilled: {},
+    unseenFills: 0,
+    ownHashes: new Set(),
   };
+}
+
+function resetFills(s: AppState): void {
+  s.wallet.lastFilled = {};
+  s.wallet.unseenFills = 0;
+}
+
+function resetAwareness(s: AppState): void {
+  resetFills(s);
+  s.wallet.ownHashes = new Set();
 }
 
 function classicFromMeta(meta: TokenMeta | null | undefined): ClassicAsset | null {
@@ -177,6 +196,7 @@ function accountLink(pubkey: string): string {
 
 function pushLogInto(s: AppState, item: LogItem): void {
   s.wallet.log.unshift(item);
+  if (item.hash) s.wallet.ownHashes.add(item.hash);
   if (s.wallet.log.length > LOG_CAP) s.wallet.log.length = LOG_CAP;
 }
 
@@ -270,6 +290,9 @@ export function mountWallet(opts: {
       events,
     );
     app.update((s) => {
+      const noted = noteFills(s.wallet.lastFilled, openOrders);
+      s.wallet.lastFilled = noted.next;
+      s.wallet.unseenFills += noted.added;
       s.wallet.openOrders = openOrders;
       s.book.ownTicks = ownTicksOf(openOrders);
     });
@@ -314,6 +337,7 @@ export function mountWallet(opts: {
       <div data-sec="brand"></div>
       <div data-sec="head"></div>
       <div class="wallet-body">
+        <div data-sec="sheet-brand"></div>
         <div data-sec="identity"></div>
         <div data-sec="balances"></div>
         <div data-sec="ticket" id="ticket-root"></div>
@@ -341,20 +365,49 @@ export function mountWallet(opts: {
     return cache.write(name, sec(name), html);
   }
 
+  function instrumentHtml(): string {
+    const { wallet: w, book } = app.read();
+    const snap = book.snapshot;
+    const ov = book.overrides;
+    const bid = snap && !snap.bestBid.empty ? priceOf(snap.bestBid.tick, snap, ov) : "—";
+    const ask = snap && !snap.bestAsk.empty ? priceOf(snap.bestAsk.tick, snap, ov) : "—";
+    const extra = instrumentExtra(w.openOrders.length, w.unseenFills);
+    const fill = w.unseenFills > 0 ? ` <i class="fill-dot" aria-hidden="true">●</i>` : "";
+    return `<button type="button" class="wallet-instrument" data-act="strip" aria-label="market position">
+      <span class="bid">${esc(bid)}</span><span class="inst-slash"> / </span><span class="ask">${esc(ask)}</span>${
+        extra ? `<span class="inst-rest"> · ${esc(extra)}${fill}</span>` : ""
+      }
+    </button>`;
+  }
+
+  function openSheet(toOrders: boolean, nonce?: string): void {
+    app.update((s) => {
+      s.wallet.collapsed = false;
+      if (toOrders) s.wallet.unseenFills = 0;
+    });
+    queueMicrotask(() => {
+      const target = nonce
+        ? el.querySelector<HTMLElement>(`[data-nonce="${nonce}"]`)
+        : toOrders
+          ? document.getElementById("orders-root")
+          : null;
+      target?.scrollIntoView?.({ block: "nearest" });
+    });
+  }
+
   function renderWallet(): void {
     ensureShell();
     const w = app.read().wallet;
     const cls = `wallet${w.collapsed ? "" : " open"}`;
     if (el.className !== cls) el.className = cls;
-    write(
-      "brand",
-      `<div class="wallet-brand"><a href="../" class="wallet-brand-name">PAGEBOOK</a> <span class="wallet-brand-sub">· STELLAR TESTNET</span></div>`,
-    );
+    const brand = `<div class="wallet-brand"><a href="../" class="wallet-brand-name">PAGEBOOK</a> <span class="wallet-brand-sub">· STELLAR TESTNET</span></div>`;
+    write("brand", brand);
+    write("sheet-brand", brand);
     const id = w.active;
     const line = id && w.enabled ? balanceLine(w, app.read().book.snapshot) : "";
     write(
       "head",
-      `<div class="wallet-head">${line ? `<span class="wallet-bal-line">${esc(line)}</span>` : ""}<button type="button" class="wallet-toggle" data-act="toggle" aria-expanded="${w.collapsed ? "false" : "true"}">wallet</button></div>`,
+      `<div class="wallet-head">${instrumentHtml()}${line ? `<span class="wallet-bal-line">${esc(line)}</span>` : ""}<button type="button" class="wallet-toggle" data-act="toggle" aria-expanded="${w.collapsed ? "false" : "true"}">wallet</button></div>`,
     );
     if (!w.booted) {
       write("identity", `<p class="wallet-copy">— checking network</p>`);
@@ -546,10 +599,16 @@ export function mountWallet(opts: {
       const t = (e.target as HTMLElement).closest("[data-act]") as HTMLElement | null;
       if (!t || !el.contains(t)) return;
       const act = t.dataset.act;
-      if (act === "toggle") {
-        app.update((s) => {
-          s.wallet.collapsed = !s.wallet.collapsed;
-        });
+      if (act === "toggle" || act === "strip") {
+        const w = app.read().wallet;
+        const opening = w.collapsed;
+        const toOrders = opening && w.unseenFills > 0;
+        if (opening) openSheet(toOrders);
+        else {
+          app.update((s) => {
+            s.wallet.collapsed = true;
+          });
+        }
       } else if (act === "generate") {
         try {
           ks.create();
@@ -560,6 +619,7 @@ export function mountWallet(opts: {
             s.wallet.autoSource = "generate";
             s.wallet.status = "";
             s.ticket.sideLocked = false;
+            resetAwareness(s);
           });
           void refreshBalances();
         } catch (err) {
@@ -581,6 +641,7 @@ export function mountWallet(opts: {
           s.wallet.autoSource = "seed";
           s.wallet.status = "";
           s.ticket.sideLocked = false;
+          resetAwareness(s);
         });
         void refreshBalances();
       } else if (act === "save-seed") {
@@ -630,6 +691,7 @@ export function mountWallet(opts: {
           s.wallet.trustlines = [];
           s.wallet.status = "";
           s.ticket.sideLocked = false;
+          resetAwareness(s);
         });
         void refreshBalances();
       } else if (act === "friendbot") {
@@ -663,6 +725,7 @@ export function mountWallet(opts: {
           s.wallet.autoSource = null;
           s.wallet.status = "";
           s.ticket.sideLocked = false;
+          resetAwareness(s);
         });
         void refreshBalances();
       } catch (err) {
@@ -686,6 +749,7 @@ export function mountWallet(opts: {
           s.wallet.autoSource = "import";
           s.wallet.status = "";
           s.ticket.sideLocked = false;
+          resetAwareness(s);
         });
         void refreshBalances();
       } catch (err) {
@@ -866,6 +930,7 @@ export function mountWallet(opts: {
         syncIdentity(s, ks);
         s.wallet.autoSource = "seed";
         s.ticket.sideLocked = false;
+        resetAwareness(s);
       }
       s.wallet.status = "";
     });
@@ -881,6 +946,9 @@ export function mountWallet(opts: {
   void boot();
 
   return {
+    openToOrder(nonce) {
+      openSheet(true, nonce);
+    },
     prefillFromLadder(side, tick) {
       const sheet = isSheetWidth();
       app.update((s) => {

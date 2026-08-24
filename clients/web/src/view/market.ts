@@ -17,7 +17,9 @@ import { MarkupCache } from "./stable";
 import type { Store } from "../store";
 import type { WalletDomain } from "../wallet/pane";
 import type { OrdersDomain } from "../wallet/orders";
+import type { OpenOrder } from "../wallet/orders";
 import type { TicketDomain } from "../wallet/ticket";
+import { closestBeyond, ordersBeyondWindow, tapeIsOwn } from "../wallet/awareness";
 
 const paneCache = new MarkupCache();
 
@@ -39,6 +41,8 @@ export type MarketViewState = {
   eventState: EventState;
   onSwitchMarket: (id: number) => void;
   ownTicks?: OwnTicks;
+  openOrders?: OpenOrder[];
+  ownHashes?: Set<string>;
 };
 
 export type BookDomain = {
@@ -155,7 +159,10 @@ export function registerMarketView(
       }
       render(snap, viewStateFrom(app, opts.onSwitchMarket));
     },
-    () => store.read().versions.book,
+    () => {
+      const v = store.read().versions;
+      return `${v.book}|${v.wallet}`;
+    },
   );
 }
 
@@ -169,6 +176,8 @@ function viewStateFrom(app: AppState, onSwitchMarket: (id: number) => void): Mar
     eventState: app.book.eventState,
     onSwitchMarket,
     ownTicks: app.book.ownTicks,
+    openOrders: app.wallet.openOrders,
+    ownHashes: app.wallet.ownHashes,
   };
 }
 
@@ -317,12 +326,32 @@ function narrowBookHtml(
   const qsym = tokenLabel(book.tokens?.quote, state.overrides.quoteSym, book.quote);
   const asks = stackedRows("asks", book.asks, book, state.overrides, state.ownTicks, true);
   const bids = stackedRows("bids", book.bids, book, state.overrides, state.ownTicks, false);
+  const beyond = ordersBeyondWindow(state.openOrders ?? [], book);
   return `<div class="book-narrow">
+    ${ownChipHtml("above", beyond.above, book, state)}
     <div class="cols"><span>price<i class="unit"> · ${esc(qsym)}</i></span><span>amount<i class="unit"> · ${esc(bsym)}</i></span><span>depth<i class="unit"> · ${esc(bsym)}</i></span></div>
     <div class="side asks">${asks}${book.moreAsks ? `<div class="note">more levels beyond the read window</div>` : ""}</div>
     ${spreadRowHtml(ms.spread, ms.mid, ms.pct)}
     <div class="side bids">${bids}${book.moreBids ? `<div class="note">more levels beyond the read window</div>` : ""}</div>
+    ${ownChipHtml("below", beyond.below, book, state)}
   </div>`;
+}
+
+function ownChipHtml(
+  edge: "above" | "below",
+  rows: OpenOrder[],
+  book: BookSnapshot,
+  state: MarketViewState,
+): string {
+  const hit = closestBeyond(rows, edge === "above" ? "ask" : "bid");
+  if (!hit) return "";
+  const n = rows.length;
+  const price = priceOf(hit.tick, book, state.overrides);
+  const label =
+    edge === "above"
+      ? `▲ ${n} ask${n === 1 ? "" : "s"} above · ${price}`
+      : `▼ ${n} bid${n === 1 ? "" : "s"} below · ${price}`;
+  return `<button type="button" class="own-chip ${edge}" data-own-chip="${hit.nonce.toString()}">${esc(label)}</button>`;
 }
 
 function txLink(hash: string): string {
@@ -341,7 +370,7 @@ function tradesHtml(book: BookSnapshot, state: MarketViewState): string {
     .map((e) => {
       const side = e.taker === "buy" ? "buy" : "sell";
       const t = fmtTime(e.ledgerClosedAt);
-      const mine = state.ownTicks && (state.ownTicks.bid.has(e.tick) || state.ownTicks.ask.has(e.tick));
+      const mine = tapeIsOwn(e.txHash, state.ownHashes);
       const hashTip = e.txHash ? ` · ${e.txHash}` : "";
       const clock = t.text.length >= 8 ? `${esc(t.text.slice(0, 5))}<span class="sec">${esc(t.text.slice(5))}</span>` : esc(t.text);
       return `<li${mine ? ` class="own"` : ""}>

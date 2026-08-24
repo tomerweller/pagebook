@@ -705,3 +705,94 @@ test("orders confirmation sits in the sheet viewport", async () => {
   expect(() => assertInSheetViewport(strip, sheet)).toThrow(/below the fold/);
   sheet.remove();
 });
+
+test("instrument strip shows bests, order count, and fill badge from store", async () => {
+  mockSheet(true);
+  document.body.innerHTML = `<aside id="wallet"></aside>`;
+  const store = createStore<AppState>(emptyApp());
+  mountWallet({
+    store,
+    el: document.getElementById("wallet")!,
+    rpc: stubRpc({ n: 0 }),
+    getMarket: () => 0,
+    onRefresh: () => {},
+  });
+  await flush();
+  store.update((s) => {
+    s.wallet.booted = true;
+    s.wallet.enabled = true;
+    s.wallet.active = testId;
+    s.wallet.identities = [testId];
+    s.wallet.collapsed = true;
+    s.book.snapshot = namedBook();
+  });
+  await flush();
+  await new Promise((r) => setTimeout(r, 30));
+  store.update((s) => {
+    s.wallet.openOrders = [sampleOrder(1n), sampleOrder(2n)];
+    s.wallet.unseenFills = 1;
+  });
+  await flush();
+  const inst = document.querySelector(".wallet-instrument")!;
+  expect(inst.textContent ?? "").toMatch(/\/ /);
+  expect(inst.textContent ?? "").toMatch(/2 orders/);
+  expect(inst.textContent ?? "").toMatch(/1 fill/);
+  expect(inst.querySelector(".fill-dot")).toBeTruthy();
+});
+
+test("opening the sheet to orders clears the fill badge", async () => {
+  mockSheet(true);
+  document.body.innerHTML = `<aside id="wallet"></aside>`;
+  const store = createStore<AppState>(emptyApp());
+  mountWallet({
+    store,
+    el: document.getElementById("wallet")!,
+    rpc: stubRpc({ n: 0 }),
+    getMarket: () => 0,
+    onRefresh: () => {},
+  });
+  await flush();
+  store.update((s) => {
+    s.wallet.booted = true;
+    s.wallet.enabled = true;
+    s.wallet.active = testId;
+    s.wallet.identities = [testId];
+    s.wallet.collapsed = true;
+    s.wallet.unseenFills = 2;
+    s.book.snapshot = namedBook();
+  });
+  await flush();
+  document.querySelector<HTMLButtonElement>("[data-act=strip]")!.click();
+  await flush();
+  expect(store.read().wallet.collapsed).toBe(false);
+  expect(store.read().wallet.unseenFills).toBe(0);
+});
+
+test("chip tap opens the sheet toward the order row", async () => {
+  mockSheet(true);
+  document.body.innerHTML = `<aside id="wallet"></aside>`;
+  const store = createStore<AppState>(emptyApp());
+  const w = mountWallet({
+    store,
+    el: document.getElementById("wallet")!,
+    rpc: stubRpc({ n: 0 }),
+    getMarket: () => 0,
+    onRefresh: () => {},
+  });
+  await flush();
+  store.update((s) => {
+    s.wallet.booted = true;
+    s.wallet.enabled = true;
+    s.wallet.active = testId;
+    s.wallet.identities = [testId];
+    s.wallet.collapsed = true;
+    s.wallet.unseenFills = 1;
+    s.wallet.openOrders = [sampleOrder(9n)];
+    s.book.snapshot = namedBook();
+  });
+  await flush();
+  w.openToOrder("9");
+  await flush();
+  expect(store.read().wallet.collapsed).toBe(false);
+  expect(store.read().wallet.unseenFills).toBe(0);
+});

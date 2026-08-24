@@ -60,6 +60,12 @@ test("place → replace → settle confirmations stay in the sheet at 375", asyn
   await ticket.locator("button[data-act=place]").click();
   await expect(ticket.locator("[data-role=strip]")).toContainText(/· rests/, { timeout: 90_000 });
   await expect(page.locator(".orders")).toContainText(`bid ${restTick}`);
+  await page.locator("[data-act=toggle]").click();
+  await expect(page.locator("#wallet")).not.toHaveClass(/open/);
+  await expect(page.locator(".wallet-instrument")).toContainText(/1 order/);
+  await page.screenshot({ path: "test-results/b3-strip-one-order.png" });
+  await page.locator("[data-act=toggle]").click();
+  await expect(page.locator("#wallet")).toHaveClass(/open/);
 
   await page.locator("button[data-act=replace-ask]").first().click();
   await expect(page.locator("[data-act=replace-go]")).toBeVisible();
