@@ -22,11 +22,14 @@ export async function fetchBalances(
     const acc = (await get(`${horizon.replace(/\/$/, "")}/accounts/${addr}`, {
       timeoutMs: HORIZON_TIMEOUT_MS,
       userAgent: FEED_UA,
-    })) as { balances?: { asset_code?: string; balance?: string }[] };
+    })) as { balances?: { asset_code?: string; asset_type?: string; balance?: string }[] };
     const out: Record<string, number> = {};
     for (const b of acc.balances ?? []) {
+      if (!b.asset_code && b.asset_type !== "native") continue;
+      const n = Number(b.balance);
+      if (!Number.isFinite(n)) continue;
       const code = b.asset_code ?? "XLM";
-      out[code] = Number(b.balance);
+      out[code] = n;
     }
     return out;
   } catch {

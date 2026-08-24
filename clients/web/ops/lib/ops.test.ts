@@ -79,6 +79,19 @@ test("feed uses last-good, coinbase then kraken, fixed-mid", async () => {
   expect(p).not.toBeNull();
 });
 
+test("horizon skips non-native rows without asset_code and NaN balances", async () => {
+  const { fetchBalances } = await import("./horizon");
+  const bal = await fetchBalances("https://horizon.test", "G1", async () => ({
+    balances: [
+      { asset_type: "native", balance: "12.5" },
+      { asset_type: "credit_alphanum4", balance: "9" },
+      { asset_code: "USDC", asset_type: "credit_alphanum4", balance: "3.25" },
+      { asset_code: "BAD", asset_type: "credit_alphanum4", balance: "nope" },
+    ],
+  }));
+  expect(bal).toEqual({ XLM: 12.5, USDC: 3.25 });
+});
+
 test("opslog JSON-lines flush per line with Python field names", () => {
   const dir = mkdtempSync(join(tmpdir(), "pb-log-"));
   const path = join(dir, "mm.log");
