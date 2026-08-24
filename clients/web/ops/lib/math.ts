@@ -183,10 +183,6 @@ export type LoopLine = {
   usdc: number | null;
 };
 
-export function loopLine(fields: Omit<LoopLine, "t" | "action"> & { t?: number }): LoopLine {
-  return { t: fields.t ?? Date.now() / 1000, action: "loop", ...fields };
-}
-
 export function startTickForPostOnly(isBid: boolean): number {
   return isBid ? TICK_MAX - 1 : TICK_MIN;
 }

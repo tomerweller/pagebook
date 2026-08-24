@@ -15,12 +15,12 @@ import {
   inventorySkew,
   ladder,
   LOOP_LINE_KEYS,
-  loopLine,
   stepAwayFromBanned,
   takeLimit,
   tickOf,
 } from "./math";
 import { loadState, saveState, type MmState } from "./statefile";
+import { makeLoopLine } from "../mm";
 
 test("halfEvenRound matches Python round on .5 boundaries", () => {
   expect(halfEvenRound(0.5)).toBe(0);
@@ -180,8 +180,8 @@ test("take-mix bounds over 1000 draws", () => {
 });
 
 test("loop-line field set is the exact key list", () => {
-  const line = loopLine({
-    outcome: "ok",
+  const line = makeLoopLine({
+    t: 1,
     loop: 3,
     mid: 0.158,
     src: "coinbase",

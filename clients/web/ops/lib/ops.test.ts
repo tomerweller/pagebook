@@ -7,8 +7,8 @@ import { Feed } from "./feed";
 import { findConfigDir, loadIdentity } from "./identity";
 import { secretEnvName } from "./math";
 import { openLog } from "./opslog";
-import { parseMmArgs } from "../mm";
-import { parseTraderArgs } from "../trader";
+import { main as mmMain, parseMmArgs } from "../mm";
+import { main as traderMain, parseTraderArgs } from "../trader";
 
 test("identity env override PB_SECRET_<NAME>", async () => {
   const { Keypair } = await import("@stellar/stellar-sdk");
@@ -136,6 +136,15 @@ test("mm and trader argparse flags and defaults", () => {
   expect(tr.maxResting).toBe(3);
   expect(tr.restMinS).toBe(120);
   expect(tr.restMaxS).toBe(360);
+});
+
+test("ops entry points reject a non-testnet network", async () => {
+  await expect(
+    mmMain(["--contract", "C1", "--market", "1", "--base-sac", "B", "--quote-sac", "Q", "--usdc-issuer", "G", "--network", "mainnet"]),
+  ).rejects.toThrow(/only testnet is supported/);
+  await expect(
+    traderMain(["--contract", "C1", "--market", "1", "--base-sac", "B", "--quote-sac", "Q", "--usdc-issuer", "G", "--network", "pubnet"]),
+  ).rejects.toThrow(/only testnet is supported/);
 });
 
 test("parseArgs rejects missing required", () => {

@@ -8,14 +8,14 @@ import {
   submitPlace,
   submitSettle,
   type ClassicToken,
-  type EngineResult,
 } from "../src/engine/submit";
 import { parseArgs, type ArgSpec } from "./lib/args";
 import { loadIdentity, type Identity } from "./lib/identity";
 import { bandTooWide, drawTake, randInt, repr, takeLimit } from "./lib/math";
 import { openLog, type OpsLog } from "./lib/opslog";
 import { classicTokens, feeKeys, settlePageKeys, tokenHex } from "./lib/padkeys";
-import { outcomeOf } from "./lib/outcomes";
+import { recordSubmit, runSubmit, sleep } from "./lib/submitlog";
+import type { OutcomeInput } from "./lib/outcomes";
 import { createViews, type Views } from "./lib/views";
 
 export type TraderArgs = {
@@ -60,23 +60,6 @@ export const TRADER_SPECS: ArgSpec<keyof TraderArgs & string>[] = [
 
 export function parseTraderArgs(argv: string[]): TraderArgs {
   return parseArgs<TraderArgs>(argv, TRADER_SPECS);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-function detailOf(text: string, outcome: string): string {
-  if (outcome === "ok") return "";
-  return text.length > 460 ? text.slice(0, 300) + " ... " + text.slice(-160) : text;
-}
-
-function resultText(res: EngineResult): string {
-  if (res.kind === "ok") return "";
-  if ("message" in res && res.message) return res.message;
-  if (res.kind === "typed") return `${res.errorName}@${res.at}`;
-  if (res.kind === "footprint") return res.missingKey ?? "footprint";
-  return res.kind;
 }
 
 type Resting = { tCancel: number; nonce: number; isBid: boolean; tick: number };
@@ -146,7 +129,12 @@ export class Trader {
     lots: number,
     noRest: boolean,
     label: string,
-  ): Promise<{ out: string; ret: { rested: boolean; filled_lots: number; quote_atoms: number } | null; nonce: number | null }> {
+  ): Promise<{
+    out: string;
+    res?: OutcomeInput;
+    ret: { rested: boolean; filled_lots: number; quote_atoms: number } | null;
+    nonce: number | null;
+  }> {
     const q = await this.views.quotePlace(isBid, limit, lots);
     if (bandTooWide(limit, q.start_tick)) {
       this.record(label, "skip:band_too_wide", { band: Math.abs(limit - q.start_tick) });
@@ -175,7 +163,7 @@ export class Trader {
       crossed: q.crossed.length,
       band: Math.abs(limit - q.start_tick) + 1,
     };
-    let res: EngineResult;
+    let res: OutcomeInput;
     try {
       res = await submitPlace(this.rpc, {
         contract: this.a.contract,
@@ -194,12 +182,10 @@ export class Trader {
         padEnd: limit,
       });
     } catch (e) {
-      this.record(label, "build_error", { detail: repr(e).slice(-300), ...extra });
-      return { out: "build_error", ret: null, nonce };
+      res = { kind: "build_error", message: repr(e) };
     }
-    const out = outcomeOf(res);
     let ret: { rested: boolean; filled_lots: number; quote_atoms: number } | null = null;
-    if (out === "ok" && res.kind === "ok" && res.resultMetaXdr) {
+    if (res.kind === "ok" && res.resultMetaXdr) {
       try {
         const d = decodePlaceResult(res.resultMetaXdr);
         ret = { rested: d.rested, filled_lots: Number(d.filledLots), quote_atoms: Number(d.quoteAtoms) };
@@ -207,30 +193,23 @@ export class Trader {
         ret = null;
       }
     }
-    const text = resultText(res);
-    const tx = "hash" in res ? res.hash ?? "" : "";
-    this.record(label, out, { tx, ret, detail: detailOf(text, out), ...extra });
-    return { out, ret, nonce };
+    const out = recordSubmit(this.log, label, res, { ret, ...extra });
+    return { out, res, ret, nonce };
   }
 
   async settle(nonce: number, isBid: boolean, tick: number): Promise<string> {
     const padKeys = [...feeKeys(this.a.market, this.hex.base, this.hex.quote), ...settlePageKeys(this.a.market, isBid, tick)];
-    const res = await submitSettle(this.rpc, {
-      contract: this.a.contract,
-      secret: this.id.secret,
-      owner: this.id.address,
-      market: this.a.market,
-      nonce: BigInt(nonce),
-      padKeys,
-      tokens: this.tokens,
-    }).catch((e: unknown) => {
-      this.record("settle", "build_error", { detail: repr(e).slice(-300), nonce });
-      return { kind: "build_error" as const };
-    });
-    const out = outcomeOf(res);
-    const text = resultText(res as EngineResult);
-    const tx = "hash" in res ? res.hash ?? "" : "";
-    this.record("settle", out, { tx, nonce, detail: detailOf(text, out) });
+    const { out } = await runSubmit(this.log, "settle", { nonce }, () =>
+      submitSettle(this.rpc, {
+        contract: this.a.contract,
+        secret: this.id.secret,
+        owner: this.id.address,
+        market: this.a.market,
+        nonce: BigInt(nonce),
+        padKeys,
+        tokens: this.tokens,
+      }),
+    );
     return out;
   }
 
@@ -256,7 +235,7 @@ export class Trader {
       const tick = randInt(bb + 1, ba - 1, this.rnd);
       const lots = randInt(1, 5, this.rnd);
       const placed = await this.place(isBid, tick, lots, false, "rest");
-      if (placed.out === "ok" && placed.ret?.rested && placed.nonce != null) {
+      if (placed.res?.kind === "ok" && placed.ret?.rested && placed.nonce != null) {
         this.stats.rests += 1;
         const delay = a.restMinS + this.rnd() * (a.restMaxS - a.restMinS);
         this.resting.push({ tCancel: this.now() + delay, nonce: placed.nonce, isBid, tick });
@@ -266,7 +245,7 @@ export class Trader {
     const mix = drawTake(this.rnd(), this.rnd);
     const limit = takeLimit(isBid, touch, mix.depth);
     const placed = await this.place(isBid, limit, mix.lots, true, "take");
-    if (placed.out === "ok") {
+    if (placed.res?.kind === "ok") {
       this.stats.takes += 1;
       if (placed.ret) this.stats.lots_taken += placed.ret.filled_lots;
     }
@@ -296,6 +275,7 @@ function aUniform(lo: number, hi: number, rnd: () => number): number {
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const a = parseTraderArgs(argv);
+  if (a.network !== "testnet") throw new Error("only testnet is supported by the ops entry points today");
   await new Trader(a).run();
 }
 

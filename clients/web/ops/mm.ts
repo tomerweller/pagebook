@@ -23,13 +23,12 @@ import {
   crosses,
   emptyRestWindow,
   HEAL_DEBOUNCE_S,
+  healTargetFromQuote,
   inTickBand,
   halfEvenRound,
   inventorySkew,
   ladder,
   LEVEL_FULL_BAN_S,
-  loopLine,
-  MAX_LEVELS_CROSSED,
   repr,
   startTickForPostOnly,
   stepAwayFromBanned,
@@ -39,7 +38,8 @@ import {
 import { openLog, type OpsLog } from "./lib/opslog";
 import { classicTokens, collectUniverseXdr, feeKeys, orderClientKey, restKeys, settlePageKeys, sweepPadSizes, tokenHex } from "./lib/padkeys";
 import { loadState, saveState, type MmState, type QuoteState } from "./lib/statefile";
-import { outcomeOf } from "./lib/outcomes";
+import { type OutcomeInput } from "./lib/outcomes";
+import { runSubmit, sleep, type SubmitPair } from "./lib/submitlog";
 import { createViews, type Views } from "./lib/views";
 
 export type MmArgs = {
@@ -116,23 +116,6 @@ export const MM_SPECS: ArgSpec<keyof MmArgs & string>[] = [
 
 export function parseMmArgs(argv: string[]): MmArgs {
   return parseArgs<MmArgs>(argv, MM_SPECS);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-function detailOf(text: string, outcome: string): string {
-  if (outcome === "ok") return "";
-  return text.length > 460 ? text.slice(0, 300) + " ... " + text.slice(-160) : text;
-}
-
-function resultText(res: EngineResult): string {
-  if (res.kind === "ok") return "";
-  if ("message" in res && res.message) return res.message;
-  if (res.kind === "typed") return `${res.errorName}@${res.at}`;
-  if (res.kind === "footprint") return res.missingKey ?? "footprint";
-  return res.kind;
 }
 
 export type MmDeps = {
@@ -238,7 +221,6 @@ export class MM {
     const padKeys = [...extraKeys, ...feeKeys(this.a.market, this.hex.base, this.hex.quote)];
     for (const q of Object.values(this.state.quotes)) {
       padKeys.push(...restKeys(this.a.market, q.side === "bid", q.tick));
-      padKeys.push(...settlePageKeys(this.a.market, q.side === "bid", q.tick));
     }
     const keys = collectUniverseXdr({
       contract: this.a.contract,
@@ -249,20 +231,12 @@ export class MM {
     this.sizes = await sweepPadSizes(this.rpc, keys, { growth: 32, chunk: 100 });
   }
 
-  async submit(label: string, extra: Record<string, unknown>, run: () => Promise<EngineResult>): Promise<string> {
-    let res: EngineResult;
-    try {
-      res = await run();
-    } catch (e) {
-      const msg = repr(e);
-      this.record(label, "build_error", { detail: msg.slice(-300), ...extra });
-      return "build_error";
-    }
-    const outcome = outcomeOf(res);
-    const text = resultText(res);
-    const tx = "hash" in res ? res.hash ?? "" : "";
-    this.record(label, outcome, { tx, detail: detailOf(text, outcome), ...extra });
-    return outcome;
+  async submit(label: string, extra: Record<string, unknown>, run: () => Promise<EngineResult>): Promise<SubmitPair> {
+    return runSubmit(this.log, label, extra, run);
+  }
+
+  private simTyped(res: OutcomeInput, name: string): boolean {
+    return res.kind === "typed" && res.errorName === name && res.at === "simulation";
   }
 
   async place(isBid: boolean, tick: number, lots: number, slot: number): Promise<string> {
@@ -275,7 +249,7 @@ export class MM {
       orderClientKey(this.a.market, this.ownerHex, BigInt(nonce)),
       ...feeKeys(this.a.market, this.hex.base, this.hex.quote),
     ];
-    const out = await this.submit("place", {}, () =>
+    const { out, res } = await this.submit("place", {}, () =>
       this.postOnlyFn(this.rpc, {
         contract: this.a.contract,
         secret: this.id.secret,
@@ -293,12 +267,12 @@ export class MM {
         sizes: this.padSizes(),
       }),
     );
-    if (out === "ok") {
+    if (res.kind === "ok") {
       this.state.quotes[String(nonce)] = { side: isBid ? "bid" : "ask", tick, lots, slot, t: this.now() };
       this.save();
-    } else if (out === "sim:typed:LevelFull") {
+    } else if (this.simTyped(res, "LevelFull")) {
       this.badTicks.set(banKey(isBid, tick), this.now() + LEVEL_FULL_BAN_S);
-    } else if (out === "sim:typed:Crossed") {
+    } else if (this.simTyped(res, "Crossed")) {
       await this.healTo(isBid, tick);
     }
     return out;
@@ -310,35 +284,30 @@ export class MM {
     if (items.length === 1) {
       const { nonce, isBid, tick, lots, slot } = items[0];
       const padKeys = [...restKeys(this.a.market, isBid, tick), ...feeKeys(this.a.market, this.hex.base, this.hex.quote)];
-      const res = await submitReplace(this.rpc, {
-        contract: this.a.contract,
-        secret: this.id.secret,
-        owner: this.id.address,
-        market: this.a.market,
-        nonce: BigInt(nonce),
-        isBid,
-        tick,
-        qtyLots: BigInt(lots),
-        window,
-        padKeys,
-        tokens: this.tokens,
-        sizes: this.padSizes(),
-      }).catch((e: unknown) => {
-        this.record("replace", "build_error", { detail: repr(e).slice(-300) });
-        return { kind: "build_error" as const };
-      });
-      const out = outcomeOf(res);
-      const text = resultText(res as EngineResult);
-      const tx = "hash" in res ? res.hash ?? "" : "";
-      this.record("replace", out, { tx, detail: detailOf(text, out) });
-      if (out === "ok") {
+      const { out, res } = await this.submit("replace", {}, () =>
+        submitReplace(this.rpc, {
+          contract: this.a.contract,
+          secret: this.id.secret,
+          owner: this.id.address,
+          market: this.a.market,
+          nonce: BigInt(nonce),
+          isBid,
+          tick,
+          qtyLots: BigInt(lots),
+          window,
+          padKeys,
+          tokens: this.tokens,
+          sizes: this.padSizes(),
+        }),
+      );
+      if (res.kind === "ok") {
         this.state.quotes[String(nonce)] = { side: isBid ? "bid" : "ask", tick, lots, slot, t: this.now() };
         this.save();
-      } else if (out === "sim:typed:LevelFull") {
+      } else if (this.simTyped(res, "LevelFull")) {
         this.badTicks.set(banKey(isBid, tick), this.now() + LEVEL_FULL_BAN_S);
-      } else if (out === "sim:typed:Crossed") {
+      } else if (this.simTyped(res, "Crossed")) {
         await this.healTo(isBid, tick);
-      } else if (out === "sim:typed:UnknownOrder" || out === "typed:UnknownOrder") {
+      } else if (res.kind === "typed" && res.errorName === "UnknownOrder") {
         delete this.state.quotes[String(nonce)];
         this.save();
       }
@@ -353,24 +322,19 @@ export class MM {
     }));
     const padKeys = [...feeKeys(this.a.market, this.hex.base, this.hex.quote)];
     for (const it of items) padKeys.push(...restKeys(this.a.market, it.isBid, it.tick));
-    const res = await submitReplaceBatch(this.rpc, {
-      contract: this.a.contract,
-      secret: this.id.secret,
-      owner: this.id.address,
-      market: this.a.market,
-      items: body,
-      padKeys,
-      tokens: this.tokens,
-      sizes: this.padSizes(),
-    }).catch((e: unknown) => {
-      this.record("replace_batch", "build_error", { detail: repr(e).slice(-300) });
-      return { kind: "build_error" as const };
-    });
-    const out = outcomeOf(res);
-    const text = resultText(res as EngineResult);
-    const tx = "hash" in res ? res.hash ?? "" : "";
-    this.record("replace_batch", out, { tx, detail: detailOf(text, out) });
-    if (out === "ok") {
+    const { out, res } = await this.submit("replace_batch", {}, () =>
+      submitReplaceBatch(this.rpc, {
+        contract: this.a.contract,
+        secret: this.id.secret,
+        owner: this.id.address,
+        market: this.a.market,
+        items: body,
+        padKeys,
+        tokens: this.tokens,
+        sizes: this.padSizes(),
+      }),
+    );
+    if (res.kind === "ok") {
       for (const it of items) {
         this.state.quotes[String(it.nonce)] = {
           side: it.isBid ? "bid" : "ask",
@@ -400,9 +364,8 @@ export class MM {
     const key = banKey(isBid, b);
     if ((this.healed.get(key) ?? 0) > this.now()) return "recent";
     this.healed.set(key, this.now() + HEAL_DEBOUNCE_S);
-    let healTarget = clampHealTarget(isBid, b, target, this.a.healBand);
-    const q = await this.views.quotePlace(isBid, healTarget, 1);
-    if (q.crossed.length >= MAX_LEVELS_CROSSED) healTarget = q.crossed[q.crossed.length - 1].tick;
+    const q = await this.views.quotePlace(isBid, clampHealTarget(isBid, b, target, this.a.healBand), 1);
+    const healTarget = healTargetFromQuote(isBid, b, target, this.a.healBand, q.crossed);
     const nonce = this.nextNonce();
     const quoted = {
       market: this.a.market,
@@ -418,7 +381,7 @@ export class MM {
     };
     const outPad = pad(quoted, healTarget, { pagesForEmpty: false });
     const flags = { post_only: false, fill_or_kill: false, no_rest: true };
-    return this.submit(
+    const { out } = await this.submit(
       "heal",
       { side: isBid ? "bid" : "ask", phantom_tick: b, target: healTarget, phantoms: q.crossed.length },
       () =>
@@ -440,28 +403,24 @@ export class MM {
           pagesForEmpty: false,
         }),
     );
+    return out;
   }
 
   async settle(nonce: number, isBid: boolean, tick: number): Promise<string> {
     const padKeys = [...feeKeys(this.a.market, this.hex.base, this.hex.quote), ...settlePageKeys(this.a.market, isBid, tick)];
-    const res = await submitSettle(this.rpc, {
-      contract: this.a.contract,
-      secret: this.id.secret,
-      owner: this.id.address,
-      market: this.a.market,
-      nonce: BigInt(nonce),
-      padKeys,
-      tokens: this.tokens,
-      sizes: this.padSizes(),
-    }).catch((e: unknown) => {
-      this.record("settle", "build_error", { detail: repr(e).slice(-300) });
-      return { kind: "build_error" as const };
-    });
-    const out = outcomeOf(res);
-    const text = resultText(res as EngineResult);
-    const tx = "hash" in res ? res.hash ?? "" : "";
-    this.record("settle", out, { tx, detail: detailOf(text, out) });
-    if (out === "ok" || out.includes("UnknownOrder")) {
+    const { out, res } = await this.submit("settle", {}, () =>
+      submitSettle(this.rpc, {
+        contract: this.a.contract,
+        secret: this.id.secret,
+        owner: this.id.address,
+        market: this.a.market,
+        nonce: BigInt(nonce),
+        padKeys,
+        tokens: this.tokens,
+        sizes: this.padSizes(),
+      }),
+    );
+    if (res.kind === "ok" || (res.kind === "typed" && res.errorName === "UnknownOrder")) {
       delete this.state.quotes[String(nonce)];
       this.save();
     }
@@ -535,13 +494,11 @@ export class MM {
     const fullScan = loop % a.fullScanEvery === 0;
     const filled: { n: number; filled_lots: number }[] = [];
     for (const [key, cur] of [...bySlot.entries()]) {
-      const [side, slotStr] = key.split(":");
-      const slot = Number(slotStr);
-      if (!(fullScan || slot < a.touchSlots)) continue;
+      if (!(fullScan || cur.q.slot < a.touchSlots)) continue;
       const info = await this.views.order(cur.n);
       if (info == null) {
         delete quotes[String(cur.n)];
-        bySlot.delete(`${side}:${slot}`);
+        bySlot.delete(key);
         continue;
       }
       if ((info.filled_lots ?? 0) > 0) {
@@ -592,8 +549,10 @@ export class MM {
       if ((await this.healTo(false, asks[0].tick)) !== "ok") break;
     }
 
-    const universe = [...toReplace.map((it) => restKeys(this.a.market, it.isBid, it.tick)).flat(), ...toPlace.map((p) => restKeys(this.a.market, p.isBid, p.tick)).flat()];
-    await this.refreshSizes(universe);
+    if (toReplace.length || toPlace.length) {
+      const universe = [...toReplace.map((it) => restKeys(this.a.market, it.isBid, it.tick)).flat(), ...toPlace.map((p) => restKeys(this.a.market, p.isBid, p.tick)).flat()];
+      await this.refreshSizes(universe);
+    }
 
     for (let i = 0; i < toReplace.length; i += a.batch) {
       await this.replaceItems(toReplace.slice(i, i + a.batch));
@@ -609,9 +568,8 @@ export class MM {
     const ba = askTicks.length ? Math.min(...askTicks) : null;
     const bookBb = await this.views.best(true);
     const bookBa = await this.views.best(false);
-    const line = loopLine({
+    this.record("loop", "ok", makeLoopLine({
       t: this.now(),
-      outcome: "ok",
       loop,
       mid: this.feed.last,
       src: this.feed.source,
@@ -630,13 +588,59 @@ export class MM {
       volume_lots: this.state.volume_lots,
       xlm: bal.XLM ?? null,
       usdc: bal[a.usdcCode] ?? null,
-    });
-    this.record("loop", "ok", line);
+    }));
   }
+}
+
+export function makeLoopLine(fields: {
+  t: number;
+  loop: number;
+  mid: number | null;
+  src: string | null;
+  mid_tick: number;
+  skew_bps: number;
+  our_bid: number | null;
+  our_ask: number | null;
+  book_bid: number | null;
+  book_ask: number | null;
+  live: number;
+  n_bids: number;
+  n_asks: number;
+  replaced: number;
+  placed: number;
+  fills_total: number;
+  volume_lots: number;
+  xlm: number | null;
+  usdc: number | null;
+}): Record<string, unknown> {
+  return {
+    t: fields.t,
+    action: "loop",
+    outcome: "ok",
+    loop: fields.loop,
+    mid: fields.mid,
+    src: fields.src,
+    mid_tick: fields.mid_tick,
+    skew_bps: fields.skew_bps,
+    our_bid: fields.our_bid,
+    our_ask: fields.our_ask,
+    book_bid: fields.book_bid,
+    book_ask: fields.book_ask,
+    live: fields.live,
+    n_bids: fields.n_bids,
+    n_asks: fields.n_asks,
+    replaced: fields.replaced,
+    placed: fields.placed,
+    fills_total: fields.fills_total,
+    volume_lots: fields.volume_lots,
+    xlm: fields.xlm,
+    usdc: fields.usdc,
+  };
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const a = parseMmArgs(argv);
+  if (a.network !== "testnet") throw new Error("only testnet is supported by the ops entry points today");
   const mm = new MM(a);
   if (a.cancelAll) {
     await mm.cancelAll();
