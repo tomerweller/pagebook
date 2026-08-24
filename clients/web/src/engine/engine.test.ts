@@ -7,7 +7,7 @@ import { ck, instanceKey } from "../keys";
 import { ERROR_CODE_COUNT, ERROR_MESSAGES, ERROR_NAMES, hostErrorMessage, parseContractError } from "./errors";
 import { keysForReplace, keysForSettle, pad, restoreMarks, windowJson, type Quoted } from "./pad";
 import { sortedKeyStrs, type ClientKey } from "./clientKeys";
-import { PER_ADDED, WRITE_ENTRY_FEE, applyPad } from "./txdata";
+import { DEFAULT_GROWTH, PER_ADDED, WRITE_ENTRY_FEE, applyPad, type ApplyPadSizes } from "./txdata";
 
 const T1 = "01".repeat(32);
 const T2 = "02".repeat(32);
@@ -347,4 +347,50 @@ test("applyPad unions, promotes, and floors fee per added RW key", () => {
   expect(Number(out.resources().instructions())).toBe(Math.floor(1_000_000 * 1.25) + 120_000 * added + 3_000_000);
   expect(PER_ADDED).toBeGreaterThanOrEqual(WRITE_ENTRY_FEE);
   expect(out.ext().switch()).toBe(1);
+});
+
+function sizesOf(map: Map<string, { exists: boolean; actualSize: number }>, growth?: number, slack?: number): ApplyPadSizes {
+  return {
+    sizeOf(key) {
+      return map.get(key.toXDR("base64"));
+    },
+    growth,
+    slack,
+  };
+}
+
+test("applyPad sizes covers an existing key at actual+growth", () => {
+  const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+  const a = ck(contract, "Level", 0, false, 10).xdr;
+  const data = emptyData([], []);
+  const map = new Map([[a.toXDR("base64"), { exists: true, actualSize: 404 }]]);
+  const { data: out, added } = applyPad(data, [a], [], sizesOf(map));
+  expect(added).toBe(1);
+  expect(Number(out.resources().writeBytes())).toBe(50 + 404 + DEFAULT_GROWTH);
+  expect(Number(out.resources().instructions())).toBe(Math.floor(1_000_000 * 1.25) + 120_000 * added + 3_000_000);
+});
+
+test("applyPad sizes covers a nonexistent key at zero", () => {
+  const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+  const a = ck(contract, "Level", 0, false, 10).xdr;
+  const data = emptyData([], []);
+  const map = new Map([[a.toXDR("base64"), { exists: false, actualSize: 404 }]]);
+  const { data: out } = applyPad(data, [a], [], sizesOf(map, 16, 0));
+  expect(Number(out.resources().writeBytes())).toBe(50);
+});
+
+test("applyPad sizes mixed set plus slack pooled once", () => {
+  const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+  const a = ck(contract, "Level", 0, false, 10).xdr;
+  const b = ck(contract, "Level", 0, false, 11).xdr;
+  const c = ck(contract, "Level", 0, false, 12).xdr;
+  const data = emptyData([], []);
+  const map = new Map([
+    [a.toXDR("base64"), { exists: true, actualSize: 404 }],
+    [b.toXDR("base64"), { exists: false, actualSize: 999 }],
+  ]);
+  const { data: out, added } = applyPad(data, [a, b, c], [], sizesOf(map, 16, 50));
+  expect(added).toBe(3);
+  expect(Number(out.resources().writeBytes())).toBe(50 + 404 + 16 + 50);
+  expect(Number(out.resources().instructions())).toBe(Math.floor(1_000_000 * 1.25) + 120_000 * 3 + 3_000_000);
 });

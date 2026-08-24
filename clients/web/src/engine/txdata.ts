@@ -24,16 +24,41 @@ function keyB64(k: StellarSdk.xdr.LedgerKey): string {
   return k.toXDR("base64");
 }
 
+function writeBytesFor(added: number, addedKeys: StellarSdk.xdr.LedgerKey[], sizes?: ApplyPadSizes): number {
+  if (!sizes) return WRITE_BYTES_PER * added;
+  const growth = sizes.growth ?? DEFAULT_GROWTH;
+  let extra = sizes.slack ?? 0;
+  for (const k of addedKeys) {
+    const info = sizes.sizeOf(k);
+    if (info?.exists) extra += info.actualSize + growth;
+  }
+  return extra;
+}
+
 export type ApplyPadResult = {
   data: StellarSdk.xdr.SorobanTransactionData;
   added: number;
   resourceFee: bigint;
 };
 
+export type PadKeySize = {
+  exists: boolean;
+  actualSize: number;
+};
+
+export type ApplyPadSizes = {
+  sizeOf(key: StellarSdk.xdr.LedgerKey): PadKeySize | undefined;
+  growth?: number;
+  slack?: number;
+};
+
+export const DEFAULT_GROWTH = 32;
+
 export function applyPad(
   data: StellarSdk.xdr.SorobanTransactionData,
   extraKeys: StellarSdk.xdr.LedgerKey[],
   archivedIndexes: number[] = [],
+  sizes?: ApplyPadSizes,
 ): ApplyPadResult {
   const builder = new StellarSdk.SorobanDataBuilder(data);
   const ro = [...builder.getReadOnly()];
@@ -42,6 +67,7 @@ export function applyPad(
   const roMap = new Map(ro.map((k) => [keyB64(k), k]));
 
   let added = 0;
+  const addedKeys: StellarSdk.xdr.LedgerKey[] = [];
   const nextRo = [...ro];
   const nextRw = [...rw];
   for (const k of extraKeys) {
@@ -55,6 +81,7 @@ export function applyPad(
     nextRw.push(k);
     rwSet.add(s);
     added += 1;
+    addedKeys.push(k);
   }
 
   builder.setReadOnly(nextRo);
@@ -62,7 +89,7 @@ export function applyPad(
 
   const res = data.resources();
   const instructions = Math.floor(Number(res.instructions()) * INSTR_MULT) + INSTR_PER * added + INSTR_FIXED;
-  const writeBytes = Number(res.writeBytes()) + WRITE_BYTES_PER * added;
+  const writeBytes = Number(res.writeBytes()) + writeBytesFor(added, addedKeys, sizes);
   const diskReadBytes = Number(res.diskReadBytes()) + DISK_READ_PER * added;
   builder.setResources(instructions, diskReadBytes, writeBytes);
 
