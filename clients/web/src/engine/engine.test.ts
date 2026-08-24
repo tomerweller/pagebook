@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { ck, instanceKey } from "../keys";
 import { ERROR_CODE_COUNT, ERROR_MESSAGES, ERROR_NAMES, hostErrorMessage, parseContractError } from "./errors";
 import { keysForReplace, keysForSettle, pad, restoreMarks, windowJson, type Quoted } from "./pad";
+import { classifySubmit, decodePlaceResult } from "./submit";
 import { sortedKeyStrs, type ClientKey } from "./clientKeys";
 import { DEFAULT_GROWTH, PER_ADDED, WRITE_ENTRY_FEE, applyPad, type ApplyPadSizes } from "./txdata";
 
@@ -377,6 +378,42 @@ test("applyPad sizes covers a nonexistent key at zero", () => {
   const map = new Map([[a.toXDR("base64"), { exists: false, actualSize: 404 }]]);
   const { data: out } = applyPad(data, [a], [], sizesOf(map, 16, 0));
   expect(Number(out.resources().writeBytes())).toBe(50);
+});
+
+test("classifySubmit splits send and apply failures", () => {
+  expect(classifySubmit("txBadSeq from horizon", "send").kind).toBe("txBadSeq");
+  expect(classifySubmit("txBadSeq from horizon", "send")).toMatchObject({ reachedLedger: false });
+  expect(classifySubmit("txBAD_SEQ after inclusion", "apply")).toMatchObject({ kind: "txBadSeq", reachedLedger: true });
+  expect(classifySubmit("InvokeHostFunction(ResourceLimitExceeded)", "apply").kind).toBe("resourceLimit");
+  expect(classifySubmit("status: TxSorobanInvalid", "send").kind).toBe("sorobanInvalid");
+  expect(classifySubmit("trying to access contract data key outside of the footprint", "apply").kind).toBe("footprint");
+});
+
+test("decodePlaceResult reads the place 3-tuple from TransactionMeta", () => {
+  const ret = StellarSdk.xdr.ScVal.scvVec([
+    StellarSdk.xdr.ScVal.scvBool(true),
+    StellarSdk.nativeToScVal(5n, { type: "u64" }),
+    StellarSdk.nativeToScVal(1234n, { type: "i128" }),
+  ]);
+  const sm = new StellarSdk.xdr.SorobanTransactionMeta({
+    ext: new StellarSdk.xdr.SorobanTransactionMetaExt(0),
+    events: [],
+    returnValue: ret,
+    diagnosticEvents: [],
+  });
+  const v3 = new StellarSdk.xdr.TransactionMetaV3({
+    ext: new StellarSdk.xdr.ExtensionPoint(0),
+    txChangesBefore: [],
+    operations: [],
+    txChangesAfter: [],
+    sorobanMeta: sm,
+  });
+  const meta = new StellarSdk.xdr.TransactionMeta(3, v3);
+  expect(decodePlaceResult(meta.toXDR("base64"))).toEqual({
+    rested: true,
+    filledLots: 5n,
+    quoteAtoms: 1234n,
+  });
 });
 
 test("applyPad sizes mixed set plus slack pooled once", () => {

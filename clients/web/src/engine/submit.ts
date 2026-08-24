@@ -17,11 +17,55 @@ export type PlaceFlags = {
   no_rest: boolean;
 };
 
-export type EngineOk = { kind: "ok"; hash: string; ledger?: number; fee?: string };
+export type EngineOk = { kind: "ok"; hash: string; ledger?: number; fee?: string; resultMetaXdr?: string };
 export type EngineTyped = { kind: "typed"; errorCode: number; errorName: string; at: "simulation" | "apply"; hash?: string };
 export type EngineFootprint = { kind: "footprint"; missingKey?: string; hash?: string };
+export type EngineBadSeq = { kind: "txBadSeq"; message: string; hash?: string; reachedLedger?: boolean };
+export type EngineResourceLimit = { kind: "resourceLimit"; message: string; hash?: string };
+export type EngineSorobanInvalid = { kind: "sorobanInvalid"; message: string; hash?: string };
+export type EngineTimeout = { kind: "timeout"; message: string; hash: string };
 export type EngineRpc = { kind: "rpc"; message: string; hash?: string };
-export type EngineResult = EngineOk | EngineTyped | EngineFootprint | EngineRpc;
+export type EngineResult =
+  | EngineOk
+  | EngineTyped
+  | EngineFootprint
+  | EngineBadSeq
+  | EngineResourceLimit
+  | EngineSorobanInvalid
+  | EngineTimeout
+  | EngineRpc;
+
+export type PlaceReturn = {
+  rested: boolean;
+  filledLots: bigint;
+  quoteAtoms: bigint;
+};
+
+export function decodePlaceResult(metaXdrBase64: string): PlaceReturn {
+  const meta = StellarSdk.xdr.TransactionMeta.fromXDR(metaXdrBase64, "base64");
+  const ret = sorobanReturnValue(meta);
+  if (!ret) throw new Error("no soroban return value");
+  const native = StellarSdk.scValToNative(ret) as unknown;
+  if (!Array.isArray(native) || native.length < 3) throw new Error("place return is not a 3-tuple");
+  return {
+    rested: Boolean(native[0]),
+    filledLots: BigInt(String(native[1])),
+    quoteAtoms: BigInt(String(native[2])),
+  };
+}
+
+function sorobanReturnValue(meta: StellarSdk.xdr.TransactionMeta): StellarSdk.xdr.ScVal | null {
+  const sw = Number(meta.switch());
+  if (sw === 3) {
+    const sm = meta.v3().sorobanMeta();
+    return sm ? sm.returnValue() : null;
+  }
+  if (sw === 4) {
+    const sm = meta.v4().sorobanMeta();
+    return sm ? sm.returnValue() : null;
+  }
+  return null;
+}
 
 export type ClassicToken = { sac: string; code?: string; issuer?: string };
 
@@ -110,15 +154,43 @@ export function scReplaceItem(item: {
   ]);
 }
 
-function classify(text: string, at: "simulation" | "apply", hash?: string): EngineResult {
+export function classifySubmit(
+  text: string,
+  at: "simulation" | "apply" | "send",
+  hash?: string,
+): EngineResult {
   const host = hostErrorMessage(text);
   if (host) return { kind: "rpc", message: host, hash };
   const code = parseContractError(text);
-  if (code != null) return { kind: "typed", errorCode: code, errorName: errorName(code), at, hash };
-  if (/footprint|ExceededLimit|storage.*exceeded/i.test(text) && !/TxSorobanInvalid/.test(text)) {
+  if (code != null) {
+    const typedAt = at === "send" ? "apply" : at;
+    return { kind: "typed", errorCode: code, errorName: errorName(code), at: typedAt, hash };
+  }
+  if (/txBadSeq|BAD_SEQ/.test(text)) {
+    return { kind: "txBadSeq", message: text.slice(0, 400), hash, reachedLedger: at === "apply" };
+  }
+  if (/ResourceLimitExceeded/.test(text)) return { kind: "resourceLimit", message: text.slice(0, 400), hash };
+  if (/TxSorobanInvalid/.test(text)) return { kind: "sorobanInvalid", message: text.slice(0, 400), hash };
+  if (/footprint|ExceededLimit|storage.*exceeded/i.test(text)) {
     return { kind: "footprint", hash };
   }
   return { kind: "rpc", message: text.slice(0, 400), hash };
+}
+
+function sendFailureText(sent: { status: string; message?: string; errorResultXdr?: string }): string {
+  const parts: string[] = [];
+  if (sent.message) parts.push(sent.message);
+  if (sent.status) parts.push(sent.status);
+  if (sent.errorResultXdr) {
+    parts.push(sent.errorResultXdr);
+    try {
+      const tr = StellarSdk.xdr.TransactionResult.fromXDR(sent.errorResultXdr, "base64");
+      parts.push(tr.result().switch().name);
+    } catch {
+      /* keep the raw xdr */
+    }
+  }
+  return parts.join("\n");
 }
 
 function chargedFee(r: { feeCharged?: number | string; resultXdr?: string }): string | undefined {
@@ -137,15 +209,15 @@ async function waitTx(rpc: Rpc, hash: string): Promise<EngineResult> {
     await new Promise((r) => setTimeout(r, delay));
     const r = await rpc.getTransaction(hash);
     if (r.status === "SUCCESS") {
-      return { kind: "ok", hash, ledger: r.ledger, fee: chargedFee(r) };
+      return { kind: "ok", hash, ledger: r.ledger, fee: chargedFee(r), resultMetaXdr: r.resultMetaXdr };
     }
     if (r.status === "FAILED") {
       const text = [r.resultXdr, ...(r.diagnosticEventsXdr ?? [])].filter(Boolean).join("\n");
-      return classify(text || "transaction failed", "apply", hash);
+      return classifySubmit(text || "transaction failed", "apply", hash);
     }
     delay = Math.min(Math.round(delay * 1.4), 2000);
   }
-  return { kind: "rpc", message: "timed out waiting for transaction", hash };
+  return { kind: "timeout", message: "timed out waiting for transaction", hash };
 }
 
 export type SubmitArgs = {
@@ -162,6 +234,18 @@ export type SubmitArgs = {
 
 export async function submitInvocation(a: SubmitArgs): Promise<EngineResult> {
   const kp = StellarSdk.Keypair.fromSecret(a.sourceSecret);
+  let retriedBadSeq = false;
+  for (;;) {
+    const result = await submitOnce(a, kp);
+    if (result.kind === "txBadSeq" && !result.reachedLedger && !retriedBadSeq) {
+      retriedBadSeq = true;
+      continue;
+    }
+    return result;
+  }
+}
+
+async function submitOnce(a: SubmitArgs, kp: StellarSdk.Keypair): Promise<EngineResult> {
   const acc = await readAccount(a.rpc, kp.publicKey());
   if (!acc.exists) return { kind: "rpc", message: "account not funded" };
   const account = new StellarSdk.Account(kp.publicKey(), acc.sequence.toString());
@@ -181,7 +265,7 @@ export async function submitInvocation(a: SubmitArgs): Promise<EngineResult> {
   } catch (e) {
     return { kind: "rpc", message: e instanceof Error ? e.message : String(e) };
   }
-  if (sim.error) return classify(sim.error, "simulation");
+  if (sim.error) return classifySubmit(sim.error, "simulation");
   if (!sim.transactionData) return { kind: "rpc", message: "simulation returned no transactionData" };
 
   let assembled: StellarSdk.Transaction;
@@ -216,12 +300,16 @@ export async function submitInvocation(a: SubmitArgs): Promise<EngineResult> {
   try {
     const sent = await a.rpc.sendTransaction(finalTx.toXDR());
     const hash = sent.hash;
+    const failText = sendFailureText(sent);
+    if (sent.status === "ERROR") {
+      return classifySubmit(failText || "sendTransaction ERROR", "send", hash);
+    }
     if (!hash) return { kind: "rpc", message: sent.message || sent.status || "no hash" };
-    if (sent.status === "ERROR") return classify(sent.message || sent.errorResultXdr || "sendTransaction ERROR", "apply", hash);
     if (sent.status === "TRY_AGAIN_LATER") return { kind: "rpc", message: "try again later", hash };
     return waitTx(a.rpc, hash);
   } catch (e) {
-    return { kind: "rpc", message: e instanceof Error ? e.message : String(e) };
+    const message = e instanceof Error ? e.message : String(e);
+    return classifySubmit(message, "send");
   }
 }
 
