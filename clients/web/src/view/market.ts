@@ -152,7 +152,6 @@ export function registerMarketView(
       const app = store.read();
       const snap = app.book.snapshot;
       if (!snap) {
-        $("pair").textContent = "-- / --";
         renderMeta(viewStateFrom(app, opts.onSwitchMarket));
         clearPanes();
         return;
@@ -181,14 +180,19 @@ function viewStateFrom(app: AppState, onSwitchMarket: (id: number) => void): Mar
   };
 }
 
-export function renderMeta(state: MarketViewState): void {
-  const { market, marketList, contract, isTestnet } = state;
+export function renderMeta(state: MarketViewState, pairText?: string): void {
+  const { market, marketList } = state;
+  // The pair title IS the selector: a transparent native select overlays the
+  // styled pair text, so the closed control shows only the pair while the
+  // open list keeps the disambiguating "pair · id" labels.
   const opts = marketList.length
     ? marketList
         .map((m) => `<option value="${m.id}"${m.id === market ? " selected" : ""}>${esc(marketLabel(m))} · ${m.id}</option>`)
         .join("")
     : `<option value="${market ?? 0}" selected>market ${market ?? 0}</option>`;
-  const html = `<label>market <select id="market-select" aria-label="market">${opts}</select></label> · ${contractLink(contract, isTestnet)}`;
+  const active = marketList.find((m) => m.id === market);
+  const pair = pairText ?? (active ? marketLabel(active) : "-- / --");
+  const html = `<span id="pair">${esc(pair)}</span><span class="pair-caret">▾</span><select id="market-select" class="pair-select" aria-label="market">${opts}</select>`;
   const action = paneCache.write("meta", $("meta"), html);
   if (action === "html") {
     $("market-select").addEventListener("change", (e) => state.onSwitchMarket(Number((e.target as HTMLSelectElement).value)));
@@ -199,8 +203,7 @@ export function render(book: BookSnapshot, state: MarketViewState): void {
   const baseSym = tokenLabel(book.tokens?.base, state.overrides.baseSym, book.base);
   const quoteSym = tokenLabel(book.tokens?.quote, state.overrides.quoteSym, book.quote);
   const pair = `${baseSym} / ${quoteSym}`;
-  if ($("pair").textContent !== pair) $("pair").textContent = pair;
-  renderMeta(state);
+  renderMeta(state, pair);
 
   const bid = book.bestBid;
   const ask = book.bestAsk;
@@ -449,6 +452,7 @@ function factsHtml(book: BookSnapshot, baseSym: string, quoteSym: string, state:
   const feeB = `${formatAtoms(book.fees.base, bd)} ${baseSym}`;
   const feeQ = `${formatAtoms(book.fees.quote, qd)} ${quoteSym}`;
   return [
+    fact("contract", contractLink(state.contract, state.isTestnet)),
     fact("base", `${esc(baseSym)} ${contractLink(m.base, state.isTestnet)}`),
     fact("quote", `${esc(quoteSym)} ${contractLink(m.quote, state.isTestnet)}`),
     fact("lot_size", formatInt(m.lot_size)),

@@ -33,7 +33,7 @@ test("wallet strip is sticky at cold load and through scroll", async ({ page }) 
   expect(overflow.sw).toBe(overflow.iw);
   await expect(page.locator(".wallet-instrument")).toContainText("99");
   await expect(page.locator(".wallet-instrument")).toContainText("101");
-  await expect(page.locator("[data-sec=brand]")).toBeHidden();
+  await expect(page.locator("header.top .brand")).toBeVisible();
   await page.screenshot({ path: "test-results/b3-strip-cold.png" });
 
   const short = await page.locator(".wallet-toggle").boundingBox();

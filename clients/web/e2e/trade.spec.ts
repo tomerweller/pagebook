@@ -21,6 +21,9 @@ test("fund, trustline, take, rest, settle on XLM/USDC", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "XLM / USDC" })).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText("add trustline")).toHaveCount(0, { timeout: 90_000 });
   await expect(page.locator(".wallet-assets")).toContainText("USDC");
+  // Provisioning must fully land before trading: "USDC" alone also matches
+  // the pre-trustline "no trustline" row (the historical e2e flake).
+  await expect(page.locator(".wallet-assets")).not.toContainText("no trustline", { timeout: 90_000 });
   await expect(page.locator(".wallet-xlm")).not.toContainText("unfunded");
 
   const ticket = page.locator(".ticket");

@@ -349,10 +349,8 @@ export function mountWallet(opts: {
   function ensureShell(): void {
     if (shellReady) return;
     el.innerHTML = `
-      <div data-sec="brand"></div>
       <div data-sec="head"></div>
       <div class="wallet-body">
-        <div data-sec="sheet-brand"></div>
         <div data-sec="identity"></div>
         <div data-sec="balances"></div>
         <div data-sec="ticket" id="ticket-root"></div>
@@ -415,9 +413,6 @@ export function mountWallet(opts: {
     const w = app.read().wallet;
     const cls = `wallet${w.collapsed ? "" : " open"}`;
     if (el.className !== cls) el.className = cls;
-    const brand = `<div class="wallet-brand"><a href="../" class="wallet-brand-name">PAGEBOOK</a> <span class="wallet-brand-sub">· STELLAR TESTNET</span></div>`;
-    write("brand", brand);
-    write("sheet-brand", brand);
     const id = w.active;
     const line = id && w.enabled ? balanceLine(w, app.read().book.snapshot) : "";
     write(

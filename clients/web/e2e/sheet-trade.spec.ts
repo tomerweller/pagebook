@@ -30,6 +30,8 @@ test("place → replace → settle confirmations stay in the sheet at 375", asyn
 
   await page.goto(`/pagebook/client/?seed=${seed()}&market=1`);
   await expect(page.getByRole("heading", { name: "XLM / USDC" })).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator("#wallet")).toContainText("USDC", { timeout: 90_000 });
+  await expect(page.locator("#wallet")).not.toContainText("no trustline", { timeout: 90_000 });
   await expect(page.getByText("add trustline")).toHaveCount(0, { timeout: 90_000 });
 
   const row = page.locator(".row[data-tick][data-side=bid]").filter({ visible: true }).first();

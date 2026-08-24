@@ -29,8 +29,7 @@ function emptyApp(): AppState {
 
 function mount(): void {
   document.body.innerHTML = `
-    <h1 id="pair">-- / --</h1>
-    <div id="meta"></div>
+    <h1 class="pair-title" id="meta"><span id="pair">-- / --</span></h1>
     <div id="fresh"><span id="fresh-text"></span></div>
     <div id="kpis"></div>
     <div id="ladder"></div>
