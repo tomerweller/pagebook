@@ -260,8 +260,8 @@ header.top {
   border-bottom: 1px solid var(--line);
 }
 header.top .masthead { display: flex; align-items: baseline; gap: 14px; min-width: 0; }
-.brand { font-size: 11px; letter-spacing: 0.08em; color: var(--ink); font-weight: 600; text-decoration: none; white-space: nowrap; }
-.brand:hover { color: var(--accent); text-decoration: none; }
+.brand { font-size: 14px; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.brand:hover, .brand:active { color: var(--accent); }
 .brand-sub { color: var(--muted); font-weight: 400; letter-spacing: 0.04em; }
 .pair-title {
   position: relative;
