@@ -826,15 +826,21 @@ per-transaction caps (400 entries, 200 read-write entries, 132 KB) and the ledge
 write budget. Pad the band the book can plausibly move into, not the maximum.
 
 **Archived keys in the pad.** P23 restore is opt-in per footprint entry: the
-transaction lists which archived entries to restore and pays their rent; an archived
-key that is declared but *not* listed costs only its footprint slot, and traps only if
-execution touches it. So: mark for restore exactly the archived entries simulation
+transaction lists which archived entries to restore and pays their rent. Measured on
+testnet (ADR-032), the earlier claim that an unlisted archived key "traps only if
+execution touches it" is WRONG: the host loads the full read-write footprint before
+execution, and any archived read-write key that is not marked for restore fails the
+transaction at apply with `EntryArchived`, fee charged, touched or not. So a pad must
+never declare an archived key unmarked. The client learns liveness from the same RPC
+sweep pad v2 uses (`getLedgerEntries` returns `liveUntilLedgerSeq`): DROP archived
+band keys from the pad, and mark for restore exactly the archived entries simulation
 touched (a stale bit over an archived level, an archived word on the walk, an archived
-`Level` at the rest tick, `quote_place` returns the touched key set, §11, and RPC
-says which are archived) and pad every other archived key unmarked. Nothing can turn an unmarked archived key into a touched one in
-flight: the only way an archived `Level` re-enters the walk is a rest at that tick,
-which restores it first. Restore rent therefore lands only on entries the taker's own
-execution needs, once. A stale bit over an archived level costs one restore (~0.067
+`Level` at the rest tick). The residual race, someone restores and rests on a dropped
+tick between the sweep and apply and the walk reaches it, is the same class and
+likelihood as the pad v2 create race: rare, one fee, retry heals. Restore rent lands
+only on entries the taker's own execution needs, once. Keepalive (§12) is therefore
+load-bearing: a band whose gaps archive sheds pad coverage until something restores
+or recreates the levels. A stale bit over an archived level costs one restore (~0.067
 XLM) and one `MAX_LEVELS_CROSSED` slot, for exactly one taker, ever; seeding it costs
 its author a rest plus a cancel, ~0.12 XLM fresh, or ~0.002 XLM per `replace` item on
 a nonce whose rent is already paid, plus a `Level` that must be created or restored at
@@ -862,9 +868,8 @@ band deep enough to be safe may not fit in the 400-entry footprint; clients trad
 `pad_end` against trap probability. This residual is inherent and far smaller than the
 whole-book race in 02, but it is not zero, do not claim otherwise.
 
-Declared-but-untouched entries cost no rent and no restore, live or archived, provided
-archived ones are not marked for restore (§14); a *touched* archived entry costs its
-restore rent, and only entries simulation touched are marked. They are not free of
+Declared-but-untouched live entries cost no rent and no restore; a declared archived
+read-write entry fails the transaction at apply unless marked for restore (ADR-032). They are not free of
 fees or capacity: a read-write key pays the write-entry fee, and one that exists is
 charged its write bytes as if written (measured on testnet, ADR-025). Per-transaction
 limits: 400 footprint entries, 200 writes, 132 KB written; per-ledger: 286,720 write

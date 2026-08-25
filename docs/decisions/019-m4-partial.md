@@ -35,3 +35,11 @@ and the 2,000-ledger soak with the spammer and rest storm active (4,573
 transactions, no footprint failure, no unexplained trap). What remains partial
 is the three restore-opt-in transactions, which wait on testnet's seven-day
 minimum TTL; ADR-025 carries the fixtures and the runbook.
+
+## Update (2026-08-25)
+
+The three restore-opt-in transactions ran against the archived fixtures
+(ADR-032). M4 is complete. One result overturned a design assumption: an
+unmarked archived read-write footprint key fails the transaction whether or
+not execution touches it; sections 14 and 15 and docs/03 carry the
+correction.

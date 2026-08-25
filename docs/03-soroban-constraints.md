@@ -55,9 +55,11 @@ put funds-bearing state here), **persistent** (archived at TTL expiry, restorabl
 - **Protocol 23 auto-restore:** simulation detects archived persistent/instance entries
   a transaction touches and the `InvokeHostFunction` op restores them in-line. Restore
   is **opt-in per footprint entry**: the transaction lists which archived read-write
-  entries to restore and pays their rent; an archived key that is declared but not
-  listed costs only its footprint slot and fails the transaction only if execution
-  touches it (this is what lets PageBook pad archived keys for free, architecture
+  entries to restore and pays their rent. Measured on testnet (ADR-032): an archived
+  read-write key that is declared but NOT listed fails the transaction at apply with
+  `EntryArchived`, fee charged, whether or not execution touches it. The host loads
+  the full read-write footprint before execution. Pads must therefore avoid or mark
+  archived keys (architecture
   §14). Manually built transactions that skip simulation fail on archived entries.
   Restores consume disk-read budget (small: 400 KB/ledger) — designs should make
   archived-entry touches rare and beneficiary-paid. Verify the per-entry opt-in
