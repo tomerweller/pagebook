@@ -35,6 +35,8 @@ export type SoakArgs = {
   rpc: string;
   ledgers: number;
   mid: number;
+  tickMin: number;
+  tickMax: number;
   log: string;
   taker: string;
   maker: string;
@@ -54,6 +56,8 @@ export const SOAK_SPECS: ArgSpec<keyof SoakArgs & string>[] = [
   { flag: "--rpc", dest: "rpc", default: "https://soroban-testnet.stellar.org" },
   { flag: "--ledgers", dest: "ledgers", type: "int", default: 2000 },
   { flag: "--mid", dest: "mid", type: "int", default: 100 },
+  { flag: "--tick-min", dest: "tickMin", type: "int", default: 1 },
+  { flag: "--tick-max", dest: "tickMax", type: "int", default: 65536 },
   { flag: "--log", dest: "log", default: "ops/soak.log" },
   { flag: "--taker", dest: "taker", default: "pb-taker" },
   { flag: "--maker", dest: "maker", default: "pb-maker" },
@@ -233,7 +237,7 @@ export class Soak {
         isBid,
         limitTick: limit,
         qtyLots: BigInt(qty),
-        startTick: startTickForPostOnly(isBid),
+        startTick: startTickForPostOnly(isBid, this.a.tickMin, this.a.tickMax),
         nonce: BigInt(nonce),
         window: emptyRestWindow(),
         flags,
