@@ -19,3 +19,5 @@ tools/stress/*.out
 tools/research/*.log
 tools/research/*.json
 clients/web/ops/*.out
+clients/web/ops/deploy/env
+clients/web/ops/deploy/env.scratch

@@ -1,0 +1,53 @@
+# Scratch validation overlay: run the stack against market 0 (PBA/PBB test
+# assets) with scratch identities and a synthetic walking mid, before cutting
+# over market 1. Usage:
+#
+#   cp env.example env.scratch && chmod 600 env.scratch
+#   # fill PB_SECRET_PB_MAKER / PB_SECRET_PB_TAKER (scratch identities)
+#   docker compose -f docker-compose.yml -f docker-compose.scratch.yml \
+#     --env-file /dev/null up -d --build
+#
+# Pass = 30+ minutes with no footprint / trapped:unknown / resource_limit in
+# the logs and the watchdog printing MM OK.
+
+x-market0: &market0-args
+  CONTRACT: CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO
+  BASE_SAC: CDAHSKHBGFENTV3XGWRWVIWE3ISAEYIZQNGD4GCWRDDIOIW4DVZ26FQG
+  QUOTE_SAC: CBEC6J5RWWWC7CYCHJTXIBDFTFRK6GTMLK4E47BECO5BDXVM7YHATUIK
+  USDC_ISSUER: GCBMNFRU74KLBUCVHJVQXRRMGEWUWC2WZ5KXLYABNFLXGCFTJPKBT4IB
+
+services:
+  mm:
+    env_file: ./env.scratch
+    environment:
+      <<: *market0-args
+    command: >
+      sh -c 'exec npx tsx ops/mm.ts
+      --contract $$CONTRACT --market 0 --identity pb-maker
+      --base-sac $$BASE_SAC --quote-sac $$QUOTE_SAC --usdc-issuer $$USDC_ISSUER
+      --usdc-code PBB --base-code PBA --base-issuer $$USDC_ISSUER
+      --tick-min 1 --tick-max 65536
+      --levels 4 --base-lots 2 --step-lots 1 --interval 30
+      --fixed-mid 100 --walk-mid
+      --state ops/state/scratch-mm.json --log ops/logs/scratch-mm.log'
+
+  trader:
+    env_file: ./env.scratch
+    environment:
+      <<: *market0-args
+    command: >
+      sh -c 'exec npx tsx ops/trader.ts
+      --contract $$CONTRACT --market 0 --identity pb-taker
+      --base-sac $$BASE_SAC --quote-sac $$QUOTE_SAC --usdc-issuer $$USDC_ISSUER
+      --usdc-code PBB --base-code PBA --base-issuer $$USDC_ISSUER
+      --min-wait 15 --max-wait 40 --log ops/logs/scratch-trader.log'
+
+  watchdog:
+    env_file: ./env.scratch
+    environment:
+      <<: *market0-args
+    command: >
+      sh -c 'while true; do
+      npx tsx ops/check.ts --contract $$CONTRACT --market 0 --identity pb-maker
+      --log ops/logs/scratch-mm.log --state ops/state/scratch-mm.json
+      --trader-log ops/logs/scratch-trader.log || true; sleep 900; done'

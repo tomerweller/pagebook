@@ -1,0 +1,70 @@
+# PageBook ops stack: maker + trader + watchdog on testnet market 1 (XLM/USDC).
+# See ops/README.md for the full runbook (secrets, state handoff, cutover).
+#
+#   cp env.example env && chmod 600 env   # fill in the PB_SECRET_* values
+#   docker compose up -d --build
+#   docker compose logs -f watchdog       # the alert surface (log-only)
+
+x-common: &common
+  build:
+    context: ../..
+    dockerfile: Dockerfile
+  env_file: ./env
+  restart: unless-stopped
+  volumes:
+    - pagebook-state:/app/ops/state
+    - pagebook-logs:/app/ops/logs
+  logging:
+    driver: json-file
+    options:
+      max-size: "50m"
+      max-file: "5"
+
+x-market: &market-args
+  CONTRACT: CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO
+  BASE_SAC: CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
+  QUOTE_SAC: CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA
+  USDC_ISSUER: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+
+services:
+  mm:
+    <<: *common
+    environment:
+      <<: *market-args
+    # The maker exits on SIGTERM leaving its quotes live and its state current;
+    # a restart resumes them (drilled in ADR-031). Give it time to finish the
+    # in-flight cycle.
+    stop_grace_period: 150s
+    command: >
+      sh -c 'exec npx tsx ops/mm.ts
+      --contract $$CONTRACT --market 1 --identity pb-mm
+      --base-sac $$BASE_SAC --quote-sac $$QUOTE_SAC --usdc-issuer $$USDC_ISSUER
+      --levels 20 --base-lots 25 --step-lots 12 --interval 30 --pad-v2
+      --state ops/state/mm.json --log ops/logs/mm.log'
+
+  trader:
+    <<: *common
+    environment:
+      <<: *market-args
+    stop_grace_period: 120s
+    command: >
+      sh -c 'exec npx tsx ops/trader.ts
+      --contract $$CONTRACT --market 1 --identity pb-trader
+      --base-sac $$BASE_SAC --quote-sac $$QUOTE_SAC --usdc-issuer $$USDC_ISSUER
+      --log ops/logs/trader.log'
+
+  watchdog:
+    <<: *common
+    environment:
+      <<: *market-args
+    # Log-only alerting: "MM OK"/"MM ALERT" lines land in this service's
+    # stdout (docker compose logs watchdog). Runs every 30 minutes.
+    command: >
+      sh -c 'while true; do
+      npx tsx ops/check.ts --contract $$CONTRACT --market 1 --identity pb-mm
+      --log ops/logs/mm.log --state ops/state/mm.json --trader-log ops/logs/trader.log
+      || true; sleep 1800; done'
+
+volumes:
+  pagebook-state:
+  pagebook-logs:
