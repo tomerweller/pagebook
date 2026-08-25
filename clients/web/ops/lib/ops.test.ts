@@ -8,6 +8,10 @@ import { findConfigDir, loadIdentity } from "./identity";
 import { secretEnvName } from "./math";
 import { openLog } from "./opslog";
 import { main as mmMain, parseMmArgs } from "../mm";
+import { main as soakMain, parseSoakArgs } from "../soak";
+import { main as stressMain, parseStressArgs } from "../stress";
+import { main as checkMain, parseCheckArgs } from "../check";
+import { main as resourcesMain, parseResourcesArgs } from "../resources";
 import { main as traderMain, parseTraderArgs } from "../trader";
 
 test("identity env override PB_SECRET_<NAME>", async () => {
@@ -145,6 +149,16 @@ test("ops entry points reject a non-testnet network", async () => {
   await expect(
     traderMain(["--contract", "C1", "--market", "1", "--base-sac", "B", "--quote-sac", "Q", "--usdc-issuer", "G", "--network", "pubnet"]),
   ).rejects.toThrow(/only testnet is supported/);
+  await expect(
+    soakMain(["--contract", "C1", "--base", "B", "--quote", "Q", "--issuer", "G", "--codes", "PBA,PBB", "--network", "pubnet"]),
+  ).rejects.toThrow(/only testnet is supported/);
+  await expect(stressMain(["run", "--network", "pubnet"])).rejects.toThrow(/only testnet is supported/);
+  await expect(checkMain(["--contract", "C1", "--market", "1", "--network", "pubnet"])).rejects.toThrow(/only testnet is supported/);
+  await expect(resourcesMain(["--contract", "C1", "--network", "pubnet"])).rejects.toThrow(/only testnet is supported/);
+  expect(parseSoakArgs(["--contract", "C1", "--base", "B", "--quote", "Q", "--issuer", "G", "--codes", "PBA,PBB"]).taker).toBe("pb-taker");
+  expect(parseStressArgs(["seed"]).phase).toBe("seed");
+  expect(parseCheckArgs(["--contract", "C1", "--market", "1"]).window).toBe(3600);
+  expect(parseResourcesArgs(["--contract", "C1"]).perCat).toBe(30);
 });
 
 test("parseArgs rejects missing required", () => {

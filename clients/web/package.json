@@ -13,7 +13,11 @@
     "e2e": "npm run build && playwright test",
     "icons": "node scripts/gen-icons.mjs",
     "ops:mm": "tsx ops/mm.ts",
-    "ops:trader": "tsx ops/trader.ts"
+    "ops:trader": "tsx ops/trader.ts",
+    "ops:soak": "tsx ops/soak.ts",
+    "ops:stress": "tsx ops/stress.ts",
+    "ops:check": "tsx ops/check.ts",
+    "ops:resources": "tsx ops/resources.ts"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "16.2.0"

@@ -1,6 +1,5 @@
 node_modules/
 dist/
-soak/*.log
 ops/*.log
 ops/state/
 test-results/
