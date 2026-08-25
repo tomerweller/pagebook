@@ -164,9 +164,9 @@ same ADR).
 | `contracts/pagebook/` | Soroban contract modules and tests |
 | `crates/pagebook-types/` | Shared contract types, packed encodings, constants, and key helpers |
 | `crates/pagebook-client/` | Client-side key and footprint helpers |
-| `tools/soak/` | Testnet soak driver: padded footprints through the stellar CLI, outcome classification (ADR-025) |
-| `tools/mm/` | XLM/USDC market maker for testnet market 1, quoted off the spot price, a trader that generates traffic against it, and their external health check (ADR-026) |
-| `tools/stress/` | Ledger-limit saturation fleet: near-cap batches oversubscribing the write-byte cap (ADR-027) |
+| `clients/web/ops/` | Live ops tooling on the web engine: market maker, trader, watchdog, soak, stress, resource sampler (ADR-031) |
+| `tools/soak/`, `tools/stress/` | Frozen import targets for `tools/research/`; superseded by `clients/web/ops/` (ADR-031) |
+| `tools/research/` | Frozen measurement instruments behind ADR-025 to ADR-028 |
 | `clients/web/` | TypeScript trading client (Vite): market view plus in-page testnet wallet, published at [tomerweller.com/pagebook/client](https://tomerweller.com/pagebook/client/) |
 | `docs/03-soroban-constraints.md` | Soroban storage, footprint, and resource background |
 | `docs/04-architecture.md` | Full technical specification |

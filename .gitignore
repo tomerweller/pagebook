@@ -18,3 +18,4 @@ tools/stress/*.log
 tools/stress/*.out
 tools/research/*.log
 tools/research/*.json
+clients/web/ops/*.out
