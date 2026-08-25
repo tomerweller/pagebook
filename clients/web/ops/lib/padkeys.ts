@@ -37,6 +37,18 @@ export function orderClientKey(market: number, owner: Hex32, nonce: bigint): Cli
   return { t: "Order", market, owner, nonce };
 }
 
+export function classicPairTokens(baseSac: string, quoteSac: string, issuer: string, codes: string): ClassicToken[] {
+  const [baseCode, quoteCode] = codes.split(",");
+  return classicTokens({
+    baseSac,
+    quoteSac,
+    usdcCode: quoteCode ?? "",
+    usdcIssuer: issuer,
+    baseCode: baseCode ?? "",
+    baseIssuer: issuer,
+  });
+}
+
 export function classicTokens(opts: {
   baseSac: string;
   quoteSac: string;

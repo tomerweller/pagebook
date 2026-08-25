@@ -9,7 +9,9 @@ import { toLedgerKey, type ClientKey } from "./clientKeys";
 import { errorName, hostErrorMessage, parseContractError } from "./errors";
 import { pad, restoreMarks, type PadOut, type Quoted, type WindowSpec } from "./pad";
 import { simulate } from "./quote";
-import { applyPad, classicFee, footprintIndexes, type ApplyPadSizes } from "./txdata";
+import { applyPad, classicFee, declaredFromSoroban, footprintIndexes, type ApplyPadSizes, type DeclaredResources } from "./txdata";
+
+export type { DeclaredResources };
 
 export type PlaceFlags = {
   post_only: boolean;
@@ -27,7 +29,7 @@ export type EngineSorobanInvalid = { kind: "sorobanInvalid"; message: string; ha
 export type EngineTimeout = { kind: "timeout"; message: string; hash: string };
 export type EngineRpc = { kind: "rpc"; message: string; hash?: string; at?: EnginePhase };
 export type EngineTrapped = { kind: "trapped"; message?: string; hash?: string; at?: EnginePhase };
-export type EngineResult =
+export type EngineBody =
   | EngineOk
   | EngineTyped
   | EngineFootprint
@@ -37,6 +39,7 @@ export type EngineResult =
   | EngineTimeout
   | EngineRpc
   | EngineTrapped;
+export type EngineResult = EngineBody & { declared?: DeclaredResources };
 
 export type PlaceReturn = {
   rested: boolean;
@@ -436,6 +439,7 @@ async function submitOnce(a: SubmitArgs, kp: StellarSdk.Keypair): Promise<Engine
     }
   }
   const padded = applyPad(existing, extraXdr, archivedIdx, a.sizes);
+  const declared = declaredFromSoroban(padded.data);
   const fee = classicFee(padded.resourceFee);
   const finalTx = StellarSdk.TransactionBuilder.cloneFrom(assembled, { fee }).setSorobanData(padded.data).build();
   finalTx.sign(kp);
@@ -445,14 +449,14 @@ async function submitOnce(a: SubmitArgs, kp: StellarSdk.Keypair): Promise<Engine
     const hash = sent.hash;
     const failText = sendFailureText(sent);
     if (sent.status === "ERROR") {
-      return classifySubmit(failText || "sendTransaction ERROR", "send", hash);
+      return { ...classifySubmit(failText || "sendTransaction ERROR", "send", hash), declared };
     }
-    if (!hash) return { kind: "rpc", message: sent.message || sent.status || "no hash" };
-    if (sent.status === "TRY_AGAIN_LATER") return { kind: "rpc", message: "try again later", hash };
-    return waitTx(a.rpc, hash);
+    if (!hash) return { kind: "rpc", message: sent.message || sent.status || "no hash", declared };
+    if (sent.status === "TRY_AGAIN_LATER") return { kind: "rpc", message: "try again later", hash, declared };
+    return { ...(await waitTx(a.rpc, hash)), declared };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    return classifySubmit(message, "send");
+    return { ...classifySubmit(message, "send"), declared };
   }
 }
 

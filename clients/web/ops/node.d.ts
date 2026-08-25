@@ -37,6 +37,7 @@ declare const process: {
   env: Record<string, string | undefined>;
   cwd(): string;
   on(event: string, fn: (signal?: string) => void): void;
+  stdout: { write(s: string): void };
   stderr: { write(s: string): void };
   exit(code: number): never;
 };

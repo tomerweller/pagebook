@@ -207,6 +207,7 @@ export type SendTransactionResult = {
 export type GetTransactionResult = {
   status: string;
   txHash?: string;
+  envelopeXdr?: string;
   resultXdr?: string;
   resultMetaXdr?: string;
   diagnosticEventsXdr?: string[];

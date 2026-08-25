@@ -35,11 +35,31 @@ function writeBytesFor(added: number, addedKeys: StellarSdk.xdr.LedgerKey[], siz
   return extra;
 }
 
+export type DeclaredResources = {
+  rw: number;
+  ro: number;
+  instr: number;
+  wb: number;
+  fee: number;
+};
+
 export type ApplyPadResult = {
   data: StellarSdk.xdr.SorobanTransactionData;
   added: number;
   resourceFee: bigint;
 };
+
+export function declaredFromSoroban(data: StellarSdk.xdr.SorobanTransactionData): DeclaredResources {
+  const res = data.resources();
+  const fp = res.footprint();
+  return {
+    rw: fp.readWrite().length,
+    ro: fp.readOnly().length,
+    instr: Number(res.instructions()),
+    wb: Number(res.writeBytes()),
+    fee: Number(data.resourceFee().toString()),
+  };
+}
 
 export type PadKeySize = {
   exists: boolean;
