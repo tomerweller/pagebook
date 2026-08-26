@@ -378,13 +378,13 @@ test("applyPad sizes covers an existing key at actual+growth", () => {
   expect(Number(out.resources().instructions())).toBe(Math.floor(1_000_000 * 1.25) + 120_000 * added + 3_000_000);
 });
 
-test("applyPad sizes covers a nonexistent key at zero", () => {
+test("applyPad sizes covers a nonexistent key at the creation estimate", () => {
   const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
   const a = ck(contract, "Level", 0, false, 10).xdr;
   const data = emptyData([], []);
   const map = new Map([[a.toXDR("base64"), { exists: false, actualSize: 404 }]]);
   const { data: out } = applyPad(data, [a], [], sizesOf(map, 16, 0));
-  expect(Number(out.resources().writeBytes())).toBe(50);
+  expect(Number(out.resources().writeBytes())).toBe(650); // 50 sim + 600 creation cover
 });
 
 function contractErrorEvent(code: number): string {
@@ -601,7 +601,7 @@ test("applyPad sizes mixed set plus slack pooled once", () => {
   ]);
   const { data: out, added } = applyPad(data, [a, b, c], [], sizesOf(map, 16, 50));
   expect(added).toBe(3);
-  expect(Number(out.resources().writeBytes())).toBe(50 + 404 + 16 + 50);
+  expect(Number(out.resources().writeBytes())).toBe(50 + 404 + 16 + 50 + 600 + 600); // nonexistent/unswept keys covered at the creation estimate // two nonexistent keys now covered at 600 each
   expect(Number(out.resources().instructions())).toBe(Math.floor(1_000_000 * 1.25) + 120_000 * 3 + 3_000_000);
 });
 

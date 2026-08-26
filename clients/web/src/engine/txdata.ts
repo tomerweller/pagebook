@@ -30,7 +30,16 @@ function writeBytesFor(added: number, addedKeys: StellarSdk.xdr.LedgerKey[], siz
   let extra = sizes.slack ?? 0;
   for (const k of addedKeys) {
     const info = sizes.sizeOf(k);
-    if (info?.exists) extra += info.actualSize + growth;
+    if (info?.exists) {
+      extra += info.actualSize + growth;
+    } else {
+      // A key that does not exist yet is free ONLY if nothing writes it. The
+      // operation itself may create it (a fresh level, its page, the order),
+      // and a created entry must be covered at its post-creation size:
+      // measured shortfalls of exactly one entry (204 to 300 bytes) took the
+      // maker down on 2026-08-26. Cover at the per-type budget estimate.
+      extra += info?.createSize ?? WRITE_BYTES_PER;
+    }
   }
   return extra;
 }
@@ -69,6 +78,9 @@ export type PadKeySize = {
   actualSize: number;
   liveUntil?: number;
   liveness?: KeyLiveness;
+  /** Coverage for a key the operation may create (per-type budget estimate).
+   *  Defaults to the flat per-key rate when absent. */
+  createSize?: number;
 };
 
 export type ApplyPadSizes = {
