@@ -53,7 +53,14 @@ export function parseCheckArgs(argv: string[]): CheckArgs {
 
 const MM_BAD = new Set(["footprint", "trapped:unknown", "build_error", "sign_error", "resource_limit", "soroban_invalid"]);
 
+export function archivedKeyName(outcome: string): string | null {
+  const inner = outcome.startsWith("sim:") ? outcome.slice(4) : outcome;
+  if (!inner.startsWith("archived:")) return null;
+  return inner.slice("archived:".length) || "unknown";
+}
+
 export function isMmBadOutcome(outcome: string): boolean {
+  if (archivedKeyName(outcome) && !outcome.startsWith("sim:")) return true;
   if (MM_BAD.has(outcome)) return true;
   return outcome.startsWith("typed:") && !outcome.includes("Crossed");
 }
@@ -123,16 +130,20 @@ export async function runCheck(a: CheckArgs, deps: CheckDeps = {}): Promise<Chec
   }
 
   const bad: Record<string, number> = {};
+  const archived: Record<string, number> = {};
   let okN = 0;
   let simRej = 0;
   let applyRej = 0;
   for (const [key, v] of outcomes) {
     const [action, outcome] = key.split("\0");
     if (isMmBadOutcome(outcome)) bad[`${action}/${outcome}`] = v;
+    const archKey = archivedKeyName(outcome);
+    if (archKey) archived[archKey] = (archived[archKey] ?? 0) + v;
     if (outcome === "ok") okN += v;
     if (outcome.startsWith("sim:")) simRej += v;
     if (outcome.startsWith("typed:")) applyRej += v;
   }
+  if (Object.keys(archived).length) alerts.push("archived entries: " + JSON.stringify(archived));
   if (Object.keys(bad).length) alerts.push("bad outcomes in window: " + JSON.stringify(bad));
 
   const feed = deps.feed ?? new Feed();
@@ -220,6 +231,7 @@ export async function runCheck(a: CheckArgs, deps: CheckDeps = {}): Promise<Chec
       }
     }
     const tbad: Record<string, number> = {};
+    const tArchived: Record<string, number> = {};
     let takesOk = 0;
     let restsOk = 0;
     let settlesOk = 0;
@@ -228,12 +240,15 @@ export async function runCheck(a: CheckArgs, deps: CheckDeps = {}): Promise<Chec
     for (const [key, v] of tc) {
       const [action, outcome] = key.split("\0");
       if (isTraderBadOutcome(outcome)) tbad[`${action}/${outcome}`] = v;
+      const archKey = archivedKeyName(outcome);
+      if (archKey) tArchived[archKey] = (tArchived[archKey] ?? 0) + v;
       if (action === "take" && outcome === "ok") takesOk = v;
       if (action === "rest" && outcome === "ok") restsOk = v;
       if (action === "settle" && outcome === "ok") settlesOk = v;
       if (outcome.startsWith("sim:")) tSim += v;
       if (outcome.startsWith("typed:")) tApply += v;
     }
+    if (Object.keys(tArchived).length) alerts.push("archived entries: " + JSON.stringify(tArchived));
     if (Object.keys(tbad).length) alerts.push("trader bad outcomes in window: " + JSON.stringify(tbad));
     if (lastT && tnow - lastT > a.maxTraderAge) alerts.push(`trader stale: last line ${Math.floor(tnow - lastT)}s ago`);
     trader = {

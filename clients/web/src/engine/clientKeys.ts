@@ -81,6 +81,42 @@ export function sameKey(a: ClientKey, b: ClientKey): boolean {
   return keyStr(a) === keyStr(b);
 }
 
+function formatScValArg(v: StellarSdk.xdr.ScVal): string {
+  try {
+    const sw = v.switch().name;
+    if (sw === "scvBool") return v.b() ? "true" : "false";
+    if (sw === "scvU32") return String(v.u32());
+    if (sw === "scvU64") return v.u64().toString();
+    if (sw === "scvI32") return String(v.i32());
+    if (sw === "scvI64") return v.i64().toString();
+    if (sw === "scvSymbol") return String(StellarSdk.scValToNative(v));
+    if (sw === "scvAddress") return addrToHex(StellarSdk.Address.fromScVal(v).toString());
+    if (sw === "scvBytes") return hex32(v.bytes());
+    const native = StellarSdk.scValToNative(v) as unknown;
+    if (typeof native === "boolean" || typeof native === "number" || typeof native === "bigint") return String(native);
+    if (typeof native === "string") return native;
+  } catch {
+    /* fall through */
+  }
+  return "?";
+}
+
+export function scValKeyName(val: StellarSdk.xdr.ScVal): string {
+  try {
+    const sw = val.switch().name;
+    if (sw === "scvLedgerKeyContractInstance") return "Config";
+    if (sw !== "scvVec") return "unknown";
+    const vec = val.vec() ?? [];
+    if (!vec.length) return "unknown";
+    if (vec[0].switch().name !== "scvSymbol") return "unknown";
+    const name = String(StellarSdk.scValToNative(vec[0]));
+    const args = vec.slice(1).map(formatScValArg);
+    return args.length ? `${name}(${args.join(",")})` : name;
+  } catch {
+    return "unknown";
+  }
+}
+
 export function toLedgerKey(ctx: KeyContext, k: ClientKey): LedgerKeyWrap {
   switch (k.t) {
     case "Config":

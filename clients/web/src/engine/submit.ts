@@ -5,7 +5,7 @@ import { sacBalanceKey } from "../keys";
 import { accountLedgerKey, trustlineLedgerKey } from "../wallet/account";
 import { readAccount } from "../wallet/account";
 import { NETWORK_PASSPHRASE } from "../wallet/network";
-import { toLedgerKey, type ClientKey } from "./clientKeys";
+import { scValKeyName, toLedgerKey, type ClientKey } from "./clientKeys";
 import { errorName, hostErrorMessage, parseContractError } from "./errors";
 import { pad, restoreMarks, type PadOut, type Quoted, type WindowSpec } from "./pad";
 import { simulate } from "./quote";
@@ -29,6 +29,13 @@ export type EngineSorobanInvalid = { kind: "sorobanInvalid"; message: string; ha
 export type EngineTimeout = { kind: "timeout"; message: string; hash: string };
 export type EngineRpc = { kind: "rpc"; message: string; hash?: string; at?: EnginePhase };
 export type EngineTrapped = { kind: "trapped"; message?: string; hash?: string; at?: EnginePhase };
+export type EngineArchived = {
+  kind: "archived";
+  keyName: string;
+  keyXdr: string;
+  at: "apply" | "simulation";
+  hash?: string;
+};
 export type EngineBody =
   | EngineOk
   | EngineTyped
@@ -38,7 +45,8 @@ export type EngineBody =
   | EngineSorobanInvalid
   | EngineTimeout
   | EngineRpc
-  | EngineTrapped;
+  | EngineTrapped
+  | EngineArchived;
 export type EngineResult = EngineBody & { declared?: DeclaredResources };
 
 export type PlaceReturn = {
@@ -168,6 +176,8 @@ export function classifySubmit(
   const typedAt = at === "send" ? "apply" : at;
   const host = hostErrorMessage(text);
   if (host) return { kind: "rpc", message: host, hash, at };
+  const archived = archivedFromText(text);
+  if (archived) return { ...archived, at: typedAt === "simulation" ? "simulation" : "apply", hash };
   const code = parseContractError(text);
   if (code != null) {
     return { kind: "typed", errorCode: code, errorName: errorName(code), at: typedAt, hash };
@@ -183,10 +193,48 @@ export function classifySubmit(
   return { kind: "rpc", message: text.slice(0, 400), hash, at };
 }
 
+export const ARCHIVED_ENTRY_MSG = "trying to access an archived contract data entry";
+
+export function archivedFromText(text: string): { kind: "archived"; keyName: string; keyXdr: string } | null {
+  if (!new RegExp(`${ARCHIVED_ENTRY_MSG}|EntryArchived|invalid_input.*archived`, "i").test(text)) {
+    return null;
+  }
+  return { kind: "archived", keyName: "unknown", keyXdr: "" };
+}
+
+export function extractArchivedKey(data: StellarSdk.xdr.ScVal): { keyName: string; keyXdr: string } | undefined {
+  try {
+    if (data.switch().name !== "scvVec") return undefined;
+    const vec = data.vec() ?? [];
+    let sawMsg = false;
+    let afterAddr: StellarSdk.xdr.ScVal | undefined;
+    for (let i = 0; i < vec.length; i++) {
+      const v = vec[i];
+      const sw = v.switch().name;
+      if (sw === "scvString" || sw === "scvSymbol") {
+        try {
+          if (String(StellarSdk.scValToNative(v)).includes(ARCHIVED_ENTRY_MSG)) {
+            sawMsg = true;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      if (sw === "scvAddress" && i + 1 < vec.length) afterAddr = vec[i + 1];
+    }
+    if (!sawMsg) return undefined;
+    if (afterAddr) return { keyName: scValKeyName(afterAddr), keyXdr: afterAddr.toXDR("base64") };
+    return { keyName: "unknown", keyXdr: "" };
+  } catch {
+    return undefined;
+  }
+}
+
 type FailedHints = {
   contract?: number;
   footprint: boolean;
   resource: boolean;
+  archived?: { keyName: string; keyXdr: string };
 };
 
 function walkScVal(val: StellarSdk.xdr.ScVal, hints: FailedHints, texts: string[]): void {
@@ -273,6 +321,8 @@ function diagnoseEvent(b64: string, hints: FailedHints, texts: string[]): void {
       }
     }
     walkScVal(v0.data(), hints, texts);
+    const archived = extractArchivedKey(v0.data());
+    if (archived) hints.archived = archived;
     try {
       const native = StellarSdk.scValToNative(v0.data());
       const code = contractCodeFromNative(native);
@@ -308,6 +358,7 @@ export function classifyFailedTx(
   resultXdr: string | undefined,
   diagnosticEventsXdr: string[] | undefined,
   hash?: string,
+  at: "apply" | "simulation" = "apply",
 ): EngineResult {
   const hints: FailedHints = { footprint: false, resource: false };
   const texts: string[] = [];
@@ -315,12 +366,21 @@ export function classifyFailedTx(
   for (const b64 of diagnosticEventsXdr ?? []) diagnoseEvent(b64, hints, texts);
   const blob = texts.join("\n");
   if (/trying to access contract data key outside of the footprint/i.test(blob)) hints.footprint = true;
-  if (hints.contract != null) {
-    return { kind: "typed", errorCode: hints.contract, errorName: errorName(hints.contract), at: "apply", hash };
+  if (hints.archived || blob.includes(ARCHIVED_ENTRY_MSG) || /EntryArchived/i.test(blob)) {
+    return {
+      kind: "archived",
+      keyName: hints.archived?.keyName ?? "unknown",
+      keyXdr: hints.archived?.keyXdr ?? "",
+      at,
+      hash,
+    };
   }
-  if (hints.footprint) return { kind: "footprint", hash, at: "apply" };
-  if (hints.resource) return { kind: "resourceLimit", message: "ResourceLimitExceeded", hash, at: "apply" };
-  return { kind: "trapped", hash, at: "apply" };
+  if (hints.contract != null) {
+    return { kind: "typed", errorCode: hints.contract, errorName: errorName(hints.contract), at, hash };
+  }
+  if (hints.footprint) return { kind: "footprint", hash, at };
+  if (hints.resource) return { kind: "resourceLimit", message: "ResourceLimitExceeded", hash, at };
+  return { kind: "trapped", hash, at };
 }
 
 function sendFailureText(sent: { status: string; message?: string; errorResultXdr?: string }): string {

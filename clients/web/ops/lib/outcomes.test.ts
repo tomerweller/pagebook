@@ -27,6 +27,12 @@ test("outcomeOf maps engine result kinds", () => {
   expect(outcomeOf({ kind: "rpc", message: "nope", at: "simulation" })).toBe("sim:other");
   expect(outcomeOf({ kind: "trapped" })).toBe("trapped:unknown");
   expect(outcomeOf({ kind: "trapped", at: "simulation" })).toBe("sim:trapped:unknown");
+  expect(outcomeOf({ kind: "archived", keyName: "TickSummary(1,false)", keyXdr: "aa", at: "apply" })).toBe(
+    "archived:TickSummary(1,false)",
+  );
+  expect(outcomeOf({ kind: "archived", keyName: "TickSummary(1,false)", keyXdr: "aa", at: "simulation" })).toBe(
+    "sim:archived:TickSummary(1,false)",
+  );
   expect(outcomeOf({ kind: "typed", errorCode: 15, errorName: "UnknownOrder", at: "apply" })).toBe("typed:UnknownOrder");
 });
 
@@ -43,6 +49,8 @@ test("classifyText matches canned RPC and SDK strings", () => {
   expect(classifyText("timed out waiting for transaction")).toBe("rpc_timeout");
   expect(classifyText("connection reset")).toBe("other");
   expect(classifyText("Error(Contract, #11)", { sim: true })).toBe("sim:typed:LevelFull");
+  expect(classifyText("trying to access an archived contract data entry")).toBe("archived:unknown");
+  expect(classifyText("HostError: EntryArchived", { sim: true })).toBe("sim:archived:unknown");
 });
 
 test("diagnoseEvents classifies a Trapped diagnostic JSON path", () => {
@@ -72,6 +80,7 @@ test("diagnoseEvents classifies a Trapped diagnostic JSON path", () => {
     }),
   ).toBe("footprint");
   expect(diagnoseEvents({ note: "Trapped with no contract code" })).toBe("trapped:unknown");
+  expect(diagnoseEvents({ reason: "trying to access an archived contract data entry" })).toBe("archived:unknown");
   expect(
     outcomeOf({ kind: "rpc", message: "Trapped", hash: "ab" }, { events: typed }),
   ).toBe("typed:RetryRest");

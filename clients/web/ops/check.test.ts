@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { Feed } from "./lib/feed";
 import type { Views } from "./lib/views";
-import { isMmBadOutcome, parseCheckArgs, runCheck, type CheckArgs } from "./check";
+import { archivedKeyName, isMmBadOutcome, parseCheckArgs, runCheck, type CheckArgs } from "./check";
 
 function args(over: Partial<CheckArgs> = {}): CheckArgs {
   return {
@@ -80,6 +80,10 @@ test("check flags and defaults", () => {
   expect(isMmBadOutcome("typed:Crossed")).toBe(false);
   expect(isMmBadOutcome("sim:typed:LevelFull")).toBe(false);
   expect(isMmBadOutcome("ok")).toBe(false);
+  expect(isMmBadOutcome("archived:TickSummary(1,false)")).toBe(true);
+  expect(isMmBadOutcome("sim:archived:TickSummary(1,false)")).toBe(false);
+  expect(archivedKeyName("archived:TickSummary(1,false)")).toBe("TickSummary(1,false)");
+  expect(archivedKeyName("sim:archived:BestTick(1,true)")).toBe("BestTick(1,true)");
 });
 
 test("clean window is MM OK", async () => {
@@ -178,4 +182,23 @@ test("through-mid tolerance boundary", async () => {
   });
   expect(over.ok).toBe(false);
   expect(over.alerts.some((x) => x.includes("quote through the mid"))).toBe(true);
+});
+
+test("archived outcomes get their own alert class", async () => {
+  const feed = new Feed({ get: async () => ({ data: { amount: "0.158" } }) });
+  const mm =
+    loop(9990) +
+    "\n" +
+    JSON.stringify({ t: 9995, action: "place", outcome: "archived:TickSummary(1,false)", tx: "bb" }) +
+    "\n" +
+    JSON.stringify({ t: 9996, action: "replace", outcome: "archived:TickSummary(1,false)", tx: "cc" });
+  const r = await runCheck(args(), {
+    now,
+    feed,
+    views: openViews(15770, 15830, 4, 4),
+    ...files(mm),
+  });
+  expect(r.ok).toBe(false);
+  expect(r.alerts.some((a) => a.includes("archived entries:"))).toBe(true);
+  expect(r.alerts.join(" ")).toContain('"TickSummary(1,false)":2');
 });

@@ -34,6 +34,8 @@ export function outcomeOf(result: OutcomeInput, opts?: { events?: unknown }): st
       return "sign_error";
     case "trapped":
       return withSim(result.at, "trapped:unknown");
+    case "archived":
+      return withSim(result.at, `archived:${result.keyName || "unknown"}`);
     case "rpc": {
       if (opts?.events != null) return withSim(result.at, diagnoseEvents(opts.events));
       return classifyText(result.message, { sim: result.at === "simulation" });
@@ -51,6 +53,7 @@ function classifyBody(text: string): string {
   const contract = contractErrorName(text);
   if (contract) return `typed:${contract}`;
   if (isFootprint(text)) return "footprint";
+  if (/trying to access an archived contract data entry|EntryArchived/i.test(text)) return "archived:unknown";
   if (/TxSorobanInvalid/.test(text)) return "soroban_invalid";
   if (/txBadSeq|BAD_SEQ/.test(text)) return "bad_seq";
   if (/ResourceLimitExceeded/.test(text)) return "resource_limit";
@@ -62,6 +65,7 @@ export function diagnoseEvents(events: unknown): string {
   const text = typeof events === "string" ? events : JSON.stringify(events);
   const contract = contractErrorName(text);
   if (contract) return `typed:${contract}`;
+  if (/trying to access an archived contract data entry|EntryArchived/i.test(text)) return "archived:unknown";
   if (isFootprint(text) || /"storage"/i.test(text)) return "footprint";
   // A trapped transaction whose events match nothing known is the one outcome
   // the watchdog must never mistake for benign noise (check.py's bad set).

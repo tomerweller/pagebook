@@ -6,7 +6,7 @@ import { ERROR_CODE_COUNT, ERROR_MESSAGES, ERROR_NAMES, hostErrorMessage, parseC
 import { keysForReplace, keysForSettle, pad, restoreMarks, windowJson, type Quoted } from "./pad";
 import { outcomeOf } from "../../ops/lib/outcomes";
 import { classifyFailedTx, classifySubmit, decodePlaceResult } from "./submit";
-import { sortedKeyStrs, type ClientKey } from "./clientKeys";
+import { scValKeyName, sortedKeyStrs, type ClientKey } from "./clientKeys";
 import { DEFAULT_GROWTH, PER_ADDED, WRITE_ENTRY_FEE, applyPad, type ApplyPadSizes } from "./txdata";
 
 const T1 = "01".repeat(32);
@@ -394,6 +394,27 @@ function contractErrorEvent(code: number): string {
   }).toXDR("base64");
 }
 
+function archivedEntryEvent(contract: string, key: StellarSdk.xdr.ScVal): string {
+  const errVal = StellarSdk.xdr.ScVal.scvError(StellarSdk.xdr.ScError.sceValue(StellarSdk.xdr.ScErrorCode.scecInvalidInput()));
+  const v0 = new StellarSdk.xdr.ContractEventV0({
+    topics: [StellarSdk.xdr.ScVal.scvSymbol("error"), errVal],
+    data: StellarSdk.xdr.ScVal.scvVec([
+      StellarSdk.xdr.ScVal.scvString("trying to access an archived contract data entry"),
+      new StellarSdk.Address(contract).toScVal(),
+      key,
+    ]),
+  });
+  return new StellarSdk.xdr.DiagnosticEvent({
+    inSuccessfulContractCall: false,
+    event: new StellarSdk.xdr.ContractEvent({
+      ext: new StellarSdk.xdr.ExtensionPoint(0),
+      contractId: null,
+      type: StellarSdk.xdr.ContractEventType.diagnostic(),
+      body: new StellarSdk.xdr.ContractEventBody(0, v0),
+    }),
+  }).toXDR("base64");
+}
+
 function storageLimitEvent(): string {
   const errVal = StellarSdk.xdr.ScVal.scvError(
     StellarSdk.xdr.ScError.sceStorage(StellarSdk.xdr.ScErrorCode.scecExceededLimit()),
@@ -449,6 +470,44 @@ test("classifyFailedTx decodes real XDR fixtures", () => {
   expect(outcomeOf(classifyFailedTx(failedTx("trapped"), [contractErrorEvent(15)]))).toBe("typed:UnknownOrder");
   expect(outcomeOf(classifyFailedTx(failedTx("trapped"), [storageLimitEvent()]))).toBe("footprint");
   expect(outcomeOf(classifyFailedTx(failedTx("trapped"), []))).toBe("trapped:unknown");
+});
+
+test("classifyFailedTx names an archived TickSummary from the diagnostic data vec", () => {
+  const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+  const key = StellarSdk.xdr.ScVal.scvVec([
+    StellarSdk.xdr.ScVal.scvSymbol("TickSummary"),
+    StellarSdk.xdr.ScVal.scvU32(1),
+    StellarSdk.xdr.ScVal.scvBool(false),
+  ]);
+  expect(scValKeyName(key)).toBe("TickSummary(1,false)");
+  const ev = archivedEntryEvent(contract, key);
+  const got = classifyFailedTx(failedTx("trapped"), [ev]);
+  expect(got).toMatchObject({
+    kind: "archived",
+    keyName: "TickSummary(1,false)",
+    at: "apply",
+  });
+  expect(got.kind === "archived" && got.keyXdr).toBe(key.toXDR("base64"));
+  expect(outcomeOf(got)).toBe("archived:TickSummary(1,false)");
+  expect(classifyFailedTx(undefined, [ev], undefined, "simulation")).toMatchObject({
+    kind: "archived",
+    keyName: "TickSummary(1,false)",
+    at: "simulation",
+  });
+  expect(outcomeOf(classifyFailedTx(undefined, [ev], undefined, "simulation"))).toBe("sim:archived:TickSummary(1,false)");
+});
+
+test("classifySubmit treats the archived-entry diagnostic string as archived", () => {
+  expect(classifySubmit("invalid_input: trying to access an archived contract data entry", "apply")).toMatchObject({
+    kind: "archived",
+    keyName: "unknown",
+    at: "apply",
+  });
+  expect(classifySubmit("HostError: EntryArchived", "simulation")).toMatchObject({
+    kind: "archived",
+    at: "simulation",
+  });
+  expect(outcomeOf(classifySubmit("trying to access an archived contract data entry", "apply"))).toBe("archived:unknown");
 });
 
 test("classifySubmit splits send and apply failures", () => {

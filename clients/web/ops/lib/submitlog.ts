@@ -16,6 +16,7 @@ export function resultText(res: OutcomeInput): string {
   if ("message" in res && res.message) return res.message;
   if (res.kind === "typed") return `${res.errorName}@${res.at}`;
   if (res.kind === "footprint") return res.missingKey ?? "footprint";
+  if (res.kind === "archived") return `archived:${res.keyName}`;
   return res.kind;
 }
 
