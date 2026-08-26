@@ -214,12 +214,15 @@ export async function runKeepalive(a: KeepaliveArgs, deps: KeepaliveDeps = {}): 
     }
   } else {
     for (const group of batchItems(restoreItems, EXTEND_BATCH)) {
-      const res = await doRestore(
+      let res = await doRestore(
         rpc,
         id.secret,
         a.contract,
         group.map((g) => g.keyXdr),
       );
+      if (res.kind === "txBadSeq") {
+        res = await doRestore(rpc, id.secret, a.contract, group.map((g) => g.keyXdr));
+      }
       const out = outcomeOf(res);
       for (const item of group) {
         log.record("restore", out, { key: item.keyName, liveUntil: item.liveUntil, latest, tx: "hash" in res ? res.hash : "" });
@@ -227,12 +230,17 @@ export async function runKeepalive(a: KeepaliveArgs, deps: KeepaliveDeps = {}): 
       if (res.kind === "ok") restores += group.length;
     }
     for (const group of batchItems(extendItems, EXTEND_BATCH)) {
-      const res = await doExtend(
+      let res = await doExtend(
         rpc,
         id.secret,
         group.map((g) => g.keyXdr),
         a.extendLedgers,
       );
+      if (res.kind === "txBadSeq") {
+        // Another submitter on the same identity raced us (the maker, when
+        // keepalive runs as pb-mm). One retry with a fresh sequence.
+        res = await doExtend(rpc, id.secret, group.map((g) => g.keyXdr), a.extendLedgers);
+      }
       const out = outcomeOf(res);
       for (const item of group) {
         log.record("extend", out, { key: item.keyName, liveUntil: item.liveUntil, latest, tx: "hash" in res ? res.hash : "" });
@@ -240,7 +248,16 @@ export async function runKeepalive(a: KeepaliveArgs, deps: KeepaliveDeps = {}): 
       if (res.kind === "ok") extendsN += group.length;
     }
   }
-  const skipped = rows.length - new Set(plan.map((p) => p.keyName)).size;
+  const planned = new Set(plan.map((p) => p.keyName));
+  for (const row of rows) {
+    // Singletons are few; record their remaining TTL even when healthy so the
+    // log proves liveness (an operator gap found in the first cloud run).
+    const t = row.key.t;
+    if ((t === "Market" || t === "TickSummary" || t === "BestTick" || t === "FeeAccrual") && row.liveness === "live" && !planned.has(keyStr(row.key))) {
+      log.record("healthy", "live", { key: keyStr(row.key), liveUntil: row.liveUntil, latest, remaining: (row.liveUntil ?? 0) - latest });
+    }
+  }
+  const skipped = rows.length - planned.size;
   const summary: KeepaliveSummary = {
     mid,
     latest,

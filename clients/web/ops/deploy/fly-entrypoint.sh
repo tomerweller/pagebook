@@ -50,9 +50,13 @@ run_trader() {
 }
 
 run_keepalive() {
+  # A dedicated identity avoids sequence-number races with the maker; fall
+  # back to pb-mm (with the keepalive's own bad_seq retry) when unset.
+  local keeper_identity="pb-mm"
+  if [[ -n "${PB_SECRET_PB_KEEPER:-}" ]]; then keeper_identity="pb-keeper"; fi
   while [[ ! -f "$stop_file" ]]; do
     npx tsx ops/keepalive.ts \
-      --contract "$contract" --market 1 --identity pb-mm \
+      --contract "$contract" --market 1 --identity "$keeper_identity" \
       --base-sac "$base_sac" --quote-sac "$quote_sac" \
       --log "$log_dir/keepalive.log" || true
     [[ ! -f "$stop_file" ]] || break
