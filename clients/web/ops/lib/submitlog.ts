@@ -1,6 +1,19 @@
-import type { EngineResult } from "../../src/engine/submit";
+import type { Rpc } from "../../src/book";
+import { restoreKeys, type EngineResult } from "../../src/engine/submit";
 import { repr } from "./math";
 import { outcomeOf, type OutcomeInput } from "./outcomes";
+
+export const MAX_RESTORES_PER_CYCLE = 3;
+
+export type RestoreBudget = { n: number };
+
+export type RestoreCtx = {
+  rpc: Rpc;
+  secret: string;
+  contract: string;
+  budget: RestoreBudget;
+  restore?: typeof restoreKeys;
+};
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -40,6 +53,7 @@ export async function runSubmit(
   label: string,
   extra: Record<string, unknown>,
   run: () => Promise<EngineResult>,
+  restore?: RestoreCtx,
 ): Promise<SubmitPair> {
   let res: OutcomeInput;
   try {
@@ -48,5 +62,17 @@ export async function runSubmit(
     res = { kind: "build_error", message: repr(e) };
   }
   const out = recordSubmit(log, label, res, extra);
+  if (
+    restore &&
+    res.kind === "archived" &&
+    res.keyXdr &&
+    restore.budget.n < MAX_RESTORES_PER_CYCLE
+  ) {
+    restore.budget.n += 1;
+    const doRestore = restore.restore ?? restoreKeys;
+    const rr = await doRestore(restore.rpc, restore.secret, restore.contract, [res.keyXdr]);
+    log.record("restore", outcomeOf(rr), { key: res.keyName });
+    if (rr.kind === "ok") return runSubmit(log, label, extra, run, restore);
+  }
   return { out, res };
 }

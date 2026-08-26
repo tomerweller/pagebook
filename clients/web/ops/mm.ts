@@ -39,7 +39,7 @@ import { openLog, type OpsLog } from "./lib/opslog";
 import { classicTokens, collectUniverseXdr, feeKeys, orderClientKey, restKeys, settlePageKeys, sweepPadSizes, tokenHex } from "./lib/padkeys";
 import { loadState, saveState, type MmState, type QuoteState } from "./lib/statefile";
 import { type OutcomeInput } from "./lib/outcomes";
-import { runSubmit, sleep, type SubmitPair } from "./lib/submitlog";
+import { runSubmit, sleep, type RestoreBudget, type SubmitPair } from "./lib/submitlog";
 import { createViews, type Views } from "./lib/views";
 
 export type MmArgs = {
@@ -154,6 +154,7 @@ export class MM {
   badTicks = new Map<string, number>();
   healed = new Map<string, number>();
   sizes: ApplyPadSizes | undefined;
+  restores: RestoreBudget = { n: 0 };
   private now: () => number;
   private sleep: (ms: number) => Promise<void>;
   private balancesFn: () => Promise<Record<string, number>>;
@@ -240,7 +241,12 @@ export class MM {
   }
 
   async submit(label: string, extra: Record<string, unknown>, run: () => Promise<EngineResult>): Promise<SubmitPair> {
-    return runSubmit(this.log, label, extra, run);
+    return runSubmit(this.log, label, extra, run, {
+      rpc: this.rpc,
+      secret: this.id.secret,
+      contract: this.a.contract,
+      budget: this.restores,
+    });
   }
 
   private simTyped(res: OutcomeInput, name: string): boolean {
@@ -463,6 +469,7 @@ export class MM {
   }
 
   async cycle(loop: number): Promise<void> {
+    this.restores.n = 0;
     const a = this.a;
     await this.feed.fetch();
     const stale = this.feed.age() > a.maxFeedAge;

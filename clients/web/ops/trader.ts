@@ -5,17 +5,19 @@ import { addrToHex } from "../src/engine/clientKeys";
 import { pad } from "../src/engine/pad";
 import {
   decodePlaceResult,
+  restoreKeys,
   submitPlace,
   submitSettle,
   type ClassicToken,
 } from "../src/engine/submit";
+import type { WindowSpec } from "../src/engine/pad";
 import { parseArgs, type ArgSpec } from "./lib/args";
 import { loadIdentity, type Identity } from "./lib/identity";
 import { bandTooWide, drawTake, randInt, repr, takeLimit } from "./lib/math";
 import { openLog, type OpsLog } from "./lib/opslog";
 import { classicTokens, feeKeys, settlePageKeys, tokenHex } from "./lib/padkeys";
-import { recordSubmit, runSubmit, sleep } from "./lib/submitlog";
-import type { OutcomeInput } from "./lib/outcomes";
+import { MAX_RESTORES_PER_CYCLE, recordSubmit, runSubmit, sleep, type RestoreBudget } from "./lib/submitlog";
+import { outcomeOf, type OutcomeInput } from "./lib/outcomes";
 import { createViews, type Views } from "./lib/views";
 
 export type TraderArgs = {
@@ -88,6 +90,7 @@ export class Trader {
   resting: Resting[] = [];
   stop = false;
   stats = { takes: 0, lots_taken: 0, rests: 0, settles: 0 };
+  restores: RestoreBudget = { n: 0 };
   tokens: ClassicToken[];
   private now: () => number;
   private sleep: (ms: number) => Promise<void>;
@@ -169,24 +172,21 @@ export class Trader {
     };
     let res: OutcomeInput;
     try {
-      res = await submitPlace(this.rpc, {
-        contract: this.a.contract,
-        secret: this.id.secret,
-        taker: this.id.address,
-        market: this.a.market,
-        isBid,
-        limitTick: limit,
-        qtyLots: BigInt(lots),
-        startTick: q.start_tick,
-        nonce: BigInt(nonce),
-        window: outPad.window,
-        flags,
-        quoted,
-        tokens: this.tokens,
-        padEnd: limit,
-      });
+      res = await this.submitPlaceOnce(isBid, limit, lots, nonce, quoted, outPad.window, flags);
     } catch (e) {
       res = { kind: "build_error", message: repr(e) };
+    }
+    if (res.kind === "archived" && res.keyXdr && this.restores.n < MAX_RESTORES_PER_CYCLE) {
+      this.restores.n += 1;
+      const rr = await restoreKeys(this.rpc, this.id.secret, this.a.contract, [res.keyXdr]);
+      this.record("restore", outcomeOf(rr), { key: res.keyName });
+      if (rr.kind === "ok") {
+        try {
+          res = await this.submitPlaceOnce(isBid, limit, lots, nonce, quoted, outPad.window, flags);
+        } catch (e) {
+          res = { kind: "build_error", message: repr(e) };
+        }
+      }
     }
     let ret: { rested: boolean; filled_lots: number; quote_atoms: number } | null = null;
     if (res.kind === "ok" && res.resultMetaXdr) {
@@ -201,9 +201,49 @@ export class Trader {
     return { out, res, ret, nonce };
   }
 
+  private submitPlaceOnce(
+    isBid: boolean,
+    limit: number,
+    lots: number,
+    nonce: number,
+    quoted: Parameters<typeof pad>[0],
+    window: WindowSpec,
+    flags: { post_only: boolean; fill_or_kill: boolean; no_rest: boolean },
+  ) {
+    return submitPlace(this.rpc, {
+      contract: this.a.contract,
+      secret: this.id.secret,
+      taker: this.id.address,
+      market: this.a.market,
+      isBid,
+      limitTick: limit,
+      qtyLots: BigInt(lots),
+      startTick: quoted.startTick,
+      nonce: BigInt(nonce),
+      window,
+      flags,
+      quoted,
+      tokens: this.tokens,
+      padEnd: limit,
+    });
+  }
+
+  restoreCtx() {
+    return {
+      rpc: this.rpc,
+      secret: this.id.secret,
+      contract: this.a.contract,
+      budget: this.restores,
+    };
+  }
+
   async settle(nonce: number, isBid: boolean, tick: number): Promise<string> {
     const padKeys = [...feeKeys(this.a.market, this.hex.base, this.hex.quote), ...settlePageKeys(this.a.market, isBid, tick)];
-    const { out } = await runSubmit(this.log, "settle", { nonce }, () =>
+    const { out } = await runSubmit(
+      this.log,
+      "settle",
+      { nonce },
+      () =>
       submitSettle(this.rpc, {
         contract: this.a.contract,
         secret: this.id.secret,
@@ -213,11 +253,13 @@ export class Trader {
         padKeys,
         tokens: this.tokens,
       }),
+      this.restoreCtx(),
     );
     return out;
   }
 
   async step(): Promise<void> {
+    this.restores.n = 0;
     const a = this.a;
     const now = this.now();
     const due = this.resting.filter((r) => r.tCancel <= now);

@@ -5,7 +5,17 @@ import padConformance from "../../../../crates/pagebook-client/fixtures/pad-conf
 import { ERROR_CODE_COUNT, ERROR_MESSAGES, ERROR_NAMES, hostErrorMessage, parseContractError } from "./errors";
 import { keysForReplace, keysForSettle, pad, restoreMarks, windowJson, type Quoted } from "./pad";
 import { outcomeOf } from "../../ops/lib/outcomes";
-import { classifyFailedTx, classifySubmit, decodePlaceResult } from "./submit";
+import {
+  classifyFailedTx,
+  classifySubmit,
+  decodePlaceResult,
+  ledgerKeyFromKeyXdr,
+  restoreKeys,
+  submitInvocation,
+  submitRestorePreamble,
+} from "./submit";
+import { accountLedgerKey } from "../wallet/account";
+import type { Rpc } from "../book";
 import { scValKeyName, sortedKeyStrs, type ClientKey } from "./clientKeys";
 import { DEFAULT_GROWTH, PER_ADDED, WRITE_ENTRY_FEE, applyPad, type ApplyPadSizes } from "./txdata";
 
@@ -573,4 +583,157 @@ test("applyPad sizes mixed set plus slack pooled once", () => {
   expect(added).toBe(3);
   expect(Number(out.resources().writeBytes())).toBe(50 + 404 + 16 + 50);
   expect(Number(out.resources().instructions())).toBe(Math.floor(1_000_000 * 1.25) + 120_000 * 3 + 3_000_000);
+});
+
+function accountDataXdr(pubkey: string, seq = "10"): string {
+  const kp = StellarSdk.Keypair.fromPublicKey(pubkey);
+  const acc = new StellarSdk.xdr.AccountEntry({
+    accountId: kp.xdrAccountId(),
+    balance: new StellarSdk.xdr.Int64(10_000_000_000),
+    seqNum: new StellarSdk.xdr.Int64(Number(seq)) as never,
+    numSubEntries: 0,
+    inflationDest: null,
+    flags: 0,
+    homeDomain: "",
+    thresholds: Uint8Array.from([1, 0, 0, 0]) as never,
+    signers: [],
+    ext: new StellarSdk.xdr.AccountEntryExt(0),
+  });
+  return StellarSdk.xdr.LedgerEntryData.account(acc).toXDR("base64");
+}
+
+function mockRpc(over: Partial<Rpc> & { secret?: string } = {}): { rpc: Rpc; kp: StellarSdk.Keypair } {
+  const kp = StellarSdk.Keypair.random();
+  const accKey = accountLedgerKey(kp.publicKey()).toXDR("base64");
+  const rpc: Rpc = {
+    getLatestLedger: async () => ({ sequence: 1 }),
+    getLedgerEntries: async (...keys) => {
+      const want = keys.map((k) => (typeof k === "string" ? k : "toXDR" in k ? k.toXDR("base64") : String(k)));
+      if (want.some((k) => k === accKey)) {
+        return { entries: [{ key: accKey, xdr: accountDataXdr(kp.publicKey()) }], latestLedger: 1 };
+      }
+      return { entries: [], latestLedger: 1 };
+    },
+    getEvents: async () => ({ events: [] }),
+    getNetwork: async () => ({ passphrase: "Test SDF Network ; September 2015" }),
+    sendTransaction: async () => ({ status: "PENDING", hash: "aa".repeat(32) }),
+    getTransaction: async () => ({ status: "SUCCESS", txHash: "aa".repeat(32) }),
+    simulateTransaction: async (xdr) => {
+      const tx = StellarSdk.TransactionBuilder.fromXDR(xdr, "Test SDF Network ; September 2015") as StellarSdk.Transaction;
+      const data = tx.toEnvelope().v1().tx().ext().sorobanData();
+      return {
+        transactionData: data.toXDR("base64"),
+        minResourceFee: "12000",
+        results: [{ xdr: StellarSdk.xdr.ScVal.scvVoid().toXDR("base64") }],
+      };
+    },
+    ...over,
+  };
+  return { rpc, kp };
+}
+
+test("ledgerKeyFromKeyXdr accepts ScVal and LedgerKey encodings", () => {
+  const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+  const key = StellarSdk.xdr.ScVal.scvVec([
+    StellarSdk.xdr.ScVal.scvSymbol("TickSummary"),
+    StellarSdk.xdr.ScVal.scvU32(1),
+    StellarSdk.xdr.ScVal.scvBool(false),
+  ]);
+  const fromSc = ledgerKeyFromKeyXdr(contract, key.toXDR("base64"));
+  expect(fromSc.switch().name).toBe("contractData");
+  const wrap = ck(contract, "TickSummary", 1, false);
+  const fromLk = ledgerKeyFromKeyXdr(contract, wrap.base64);
+  expect(fromLk.toXDR("base64")).toBe(wrap.base64);
+});
+
+test("restoreKeys submits RestoreFootprint with the key in the RW footprint", async () => {
+  const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+  const key = StellarSdk.xdr.ScVal.scvVec([
+    StellarSdk.xdr.ScVal.scvSymbol("TickSummary"),
+    StellarSdk.xdr.ScVal.scvU32(1),
+    StellarSdk.xdr.ScVal.scvBool(false),
+  ]);
+  let sent: string | undefined;
+  const { rpc, kp } = mockRpc({
+    sendTransaction: async (xdr) => {
+      sent = xdr;
+      return { status: "PENDING", hash: "bb".repeat(32) };
+    },
+    getTransaction: async () => ({ status: "SUCCESS", txHash: "bb".repeat(32) }),
+  });
+  const got = await restoreKeys(rpc, kp.secret(), contract, [key.toXDR("base64")]);
+  expect(got.kind).toBe("ok");
+  expect(sent).toBeTruthy();
+  const tx = StellarSdk.TransactionBuilder.fromXDR(sent!, "Test SDF Network ; September 2015");
+  expect(tx.operations[0].type).toBe("restoreFootprint");
+  const env = (tx as StellarSdk.Transaction).toEnvelope();
+  const rw = env.v1().tx().ext().sorobanData().resources().footprint().readWrite();
+  expect(rw.length).toBe(1);
+});
+
+test("submitRestorePreamble sends a restore using the preamble SorobanData", async () => {
+  const data = emptyData([], [ck("CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO", "Market", 1).xdr]);
+  let sent: string | undefined;
+  const { rpc, kp } = mockRpc({
+    sendTransaction: async (xdr) => {
+      sent = xdr;
+      return { status: "PENDING", hash: "cc".repeat(32) };
+    },
+    getTransaction: async () => ({ status: "SUCCESS", txHash: "cc".repeat(32) }),
+  });
+  const got = await submitRestorePreamble(rpc, kp.secret(), {
+    transactionData: data.toXDR("base64"),
+    minResourceFee: "9000",
+  });
+  expect(got.kind).toBe("ok");
+  const tx = StellarSdk.TransactionBuilder.fromXDR(sent!, "Test SDF Network ; September 2015");
+  expect(tx.operations[0].type).toBe("restoreFootprint");
+});
+
+test("submitInvocation restores a simulate restorePreamble then re-simulates", async () => {
+  const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+  const data = emptyData([], []);
+  let sims = 0;
+  let restores = 0;
+  const { rpc, kp } = mockRpc({
+    simulateTransaction: async (xdr) => {
+      const tx = StellarSdk.TransactionBuilder.fromXDR(xdr, "Test SDF Network ; September 2015");
+      const isRestore = tx.operations[0]?.type === "restoreFootprint";
+      if (isRestore) {
+        return {
+          transactionData: data.toXDR("base64"),
+          minResourceFee: "8000",
+          results: [{ xdr: StellarSdk.xdr.ScVal.scvVoid().toXDR("base64") }],
+        };
+      }
+      sims += 1;
+      if (sims === 1) {
+        return {
+          restorePreamble: { transactionData: data.toXDR("base64"), minResourceFee: "8000" },
+          error: "need restore",
+        };
+      }
+      return {
+        transactionData: data.toXDR("base64"),
+        minResourceFee: "8000",
+        results: [{ xdr: StellarSdk.xdr.ScVal.scvVoid().toXDR("base64") }],
+      };
+    },
+    sendTransaction: async (xdr) => {
+      const tx = StellarSdk.TransactionBuilder.fromXDR(xdr, "Test SDF Network ; September 2015");
+      if (tx.operations[0]?.type === "restoreFootprint") restores += 1;
+      return { status: "PENDING", hash: `${restores}d`.repeat(32).slice(0, 64) };
+    },
+    getTransaction: async () => ({ status: "SUCCESS", resultMetaXdr: undefined }),
+  });
+  const got = await submitInvocation({
+    rpc,
+    contract,
+    sourceSecret: kp.secret(),
+    fn: "best",
+    args: [StellarSdk.xdr.ScVal.scvU32(1), StellarSdk.xdr.ScVal.scvBool(true)],
+  });
+  expect(restores).toBe(1);
+  expect(sims).toBe(2);
+  expect(got.kind).toBe("ok");
 });
