@@ -569,6 +569,26 @@ test("decodePlaceResult reads the place 3-tuple from TransactionMeta", () => {
   });
 });
 
+test("applyPad drops archived pad keys and reports dropped", () => {
+  const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+  const a = ck(contract, "Level", 0, false, 10).xdr;
+  const b = ck(contract, "Level", 0, false, 11).xdr;
+  const c = ck(contract, "TickSummary", 1, false).xdr;
+  const data = emptyData([], [c]);
+  const map = new Map([
+    [a.toXDR("base64"), { exists: true, actualSize: 100, liveness: "archived" as const }],
+    [b.toXDR("base64"), { exists: true, actualSize: 100, liveness: "live" as const }],
+    [c.toXDR("base64"), { exists: true, actualSize: 50, liveness: "archived" as const }],
+  ]);
+  const { data: out, added, dropped } = applyPad(data, [a, b, c], [], sizesOf(map));
+  expect(dropped).toBe(1);
+  expect(added).toBe(1);
+  const rw = new StellarSdk.SorobanDataBuilder(out).getReadWrite().map((k) => k.toXDR("base64"));
+  expect(rw).not.toContain(a.toXDR("base64"));
+  expect(rw).toContain(b.toXDR("base64"));
+  expect(rw).toContain(c.toXDR("base64"));
+});
+
 test("applyPad sizes mixed set plus slack pooled once", () => {
   const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
   const a = ck(contract, "Level", 0, false, 10).xdr;

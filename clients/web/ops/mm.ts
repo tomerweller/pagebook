@@ -219,14 +219,10 @@ export class MM {
   }
 
   padSizes(): ApplyPadSizes | undefined {
-    return this.a.padV2 ? this.sizes : undefined;
+    return this.sizes;
   }
 
   async refreshSizes(extraKeys: import("../src/engine/clientKeys").ClientKey[] = []): Promise<void> {
-    if (!this.a.padV2) {
-      this.sizes = undefined;
-      return;
-    }
     const padKeys = [...extraKeys, ...feeKeys(this.a.market, this.hex.base, this.hex.quote)];
     for (const q of Object.values(this.state.quotes)) {
       padKeys.push(...restKeys(this.a.market, q.side === "bid", q.tick));
@@ -237,7 +233,7 @@ export class MM {
       padKeys,
       tokens: this.tokens,
     });
-    this.sizes = await sweepPadSizes(this.rpc, keys, { growth: 32, chunk: 100 });
+    this.sizes = await sweepPadSizes(this.rpc, keys, { growth: 32, chunk: 100, coverBytes: this.a.padV2 });
   }
 
   async submit(label: string, extra: Record<string, unknown>, run: () => Promise<EngineResult>): Promise<SubmitPair> {
@@ -415,6 +411,7 @@ export class MM {
           tokens: this.tokens,
           padEnd: healTarget,
           pagesForEmpty: false,
+          sizes: this.padSizes(),
         }),
     );
     return out;
@@ -564,10 +561,11 @@ export class MM {
       if ((await this.healTo(false, asks[0].tick)) !== "ok") break;
     }
 
-    if (toReplace.length || toPlace.length) {
-      const universe = [...toReplace.map((it) => restKeys(this.a.market, it.isBid, it.tick)).flat(), ...toPlace.map((p) => restKeys(this.a.market, p.isBid, p.tick)).flat()];
-      await this.refreshSizes(universe);
-    }
+    const universe = [
+      ...toReplace.map((it) => restKeys(this.a.market, it.isBid, it.tick)).flat(),
+      ...toPlace.map((p) => restKeys(this.a.market, p.isBid, p.tick)).flat(),
+    ];
+    await this.refreshSizes(universe);
 
     for (let i = 0; i < toReplace.length; i += a.batch) {
       await this.replaceItems(toReplace.slice(i, i + a.batch));

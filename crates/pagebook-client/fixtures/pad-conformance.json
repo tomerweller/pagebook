@@ -3,6 +3,7 @@
   "nonce": 7,
   "base": "0202020202020202020202020202020202020202020202020202020202020202",
   "quote": "0303030303030303030303030303030303030303030303030303030303030303",
+  "note": "Liveness-aware pads drop archived keys in the TS engine applyPad. This fixture still enumerates the full pad. The Rust crate does not classify archival.",
   "cases": [
     {
       "name": "multi_cross",

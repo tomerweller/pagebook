@@ -25,7 +25,7 @@ function keyB64(k: StellarSdk.xdr.LedgerKey): string {
 }
 
 function writeBytesFor(added: number, addedKeys: StellarSdk.xdr.LedgerKey[], sizes?: ApplyPadSizes): number {
-  if (!sizes) return WRITE_BYTES_PER * added;
+  if (!sizes || sizes.coverBytes === false) return WRITE_BYTES_PER * added;
   const growth = sizes.growth ?? DEFAULT_GROWTH;
   let extra = sizes.slack ?? 0;
   for (const k of addedKeys) {
@@ -46,6 +46,7 @@ export type DeclaredResources = {
 export type ApplyPadResult = {
   data: StellarSdk.xdr.SorobanTransactionData;
   added: number;
+  dropped: number;
   resourceFee: bigint;
 };
 
@@ -61,15 +62,21 @@ export function declaredFromSoroban(data: StellarSdk.xdr.SorobanTransactionData)
   };
 }
 
+export type KeyLiveness = "live" | "archived" | "nonexistent";
+
 export type PadKeySize = {
   exists: boolean;
   actualSize: number;
+  liveUntil?: number;
+  liveness?: KeyLiveness;
 };
 
 export type ApplyPadSizes = {
   sizeOf(key: StellarSdk.xdr.LedgerKey): PadKeySize | undefined;
   growth?: number;
   slack?: number;
+  coverBytes?: boolean;
+  latestLedger?: number;
 };
 
 export const DEFAULT_GROWTH = 32;
@@ -87,12 +94,17 @@ export function applyPad(
   const roMap = new Map(ro.map((k) => [keyB64(k), k]));
 
   let added = 0;
+  let dropped = 0;
   const addedKeys: StellarSdk.xdr.LedgerKey[] = [];
   const nextRo = [...ro];
   const nextRw = [...rw];
   for (const k of extraKeys) {
     const s = keyB64(k);
     if (rwSet.has(s)) continue;
+    if (sizes?.sizeOf(k)?.liveness === "archived") {
+      dropped += 1;
+      continue;
+    }
     if (roMap.has(s)) {
       const idx = nextRo.findIndex((x) => keyB64(x) === s);
       if (idx >= 0) nextRo.splice(idx, 1);
@@ -128,7 +140,7 @@ export function applyPad(
       resourceFee: out.resourceFee(),
     });
   }
-  return { data: out, added, resourceFee: BigInt(out.resourceFee().toString()) };
+  return { data: out, added, dropped, resourceFee: BigInt(out.resourceFee().toString()) };
 }
 
 export function footprintIndexes(
