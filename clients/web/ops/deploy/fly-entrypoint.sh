@@ -8,7 +8,10 @@ mkdir -p "$state_dir" "$log_dir"
 mm_pid_file="$state_dir/mm.pid"
 trader_pid_file="$state_dir/trader.pid"
 watchdog_log="$log_dir/watchdog.log"
-stopping=0
+stop_file="$state_dir/stopping"
+# Stale from a previous boot or crash: pid files may name recycled pids, and a
+# leftover stop file would prevent the runners from starting.
+rm -f "$mm_pid_file" "$trader_pid_file" "$stop_file"
 
 contract=${CONTRACT:?CONTRACT is required}
 base_sac=${BASE_SAC:?BASE_SAC is required}
@@ -16,7 +19,7 @@ quote_sac=${QUOTE_SAC:?QUOTE_SAC is required}
 usdc_issuer=${USDC_ISSUER:?USDC_ISSUER is required}
 
 run_mm() {
-  while ((stopping == 0)); do
+  while [[ ! -f "$stop_file" ]]; do
     npx tsx ops/mm.ts \
       --contract "$contract" --market 1 --identity pb-mm \
       --base-sac "$base_sac" --quote-sac "$quote_sac" --usdc-issuer "$usdc_issuer" \
@@ -26,13 +29,13 @@ run_mm() {
     printf '%s\n' "$child" > "$mm_pid_file"
     wait "$child" || true
     rm -f "$mm_pid_file"
-    ((stopping == 0)) || break
+    [[ ! -f "$stop_file" ]] || break
     sleep 5
   done
 }
 
 run_trader() {
-  while ((stopping == 0)); do
+  while [[ ! -f "$stop_file" ]]; do
     npx tsx ops/trader.ts \
       --contract "$contract" --market 1 --identity pb-trader \
       --base-sac "$base_sac" --quote-sac "$quote_sac" --usdc-issuer "$usdc_issuer" \
@@ -41,7 +44,7 @@ run_trader() {
     printf '%s\n' "$child" > "$trader_pid_file"
     wait "$child" || true
     rm -f "$trader_pid_file"
-    ((stopping == 0)) || break
+    [[ ! -f "$stop_file" ]] || break
     sleep 5
   done
 }
@@ -76,11 +79,15 @@ watchdog() {
     printf '%s\n' "$output" | tee -a "$watchdog_log"
     if ((status != 0)); then
       case "$output" in
-        *"bot stale"*|*"no log"*|*"no loop line"*|*"bad outcomes"*|*"trader stale"*|*"trader bad outcomes"*)
+        *"bot stale"*|*"no log"*|*"no loop line"*|*"trader stale"*)
+          # Process-health signals: a restart can help.
           restart_child "$mm_pid_file" "maker"
           restart_child "$trader_pid_file" "trader"
           ;;
         *)
+          # Bad outcomes, geometry, reserve: chain-side or operator matters.
+          # Restarting a process cannot repair on-chain state (the 2026-08-26
+          # archived-entry incident looped here); log and leave it visible.
           printf '%s autofix: alert requires observation, no process restart\n' "$(date -u +%FT%TZ)" >> "$watchdog_log"
           ;;
       esac
@@ -92,7 +99,9 @@ watchdog &
 watchdog_pid=$!
 
 shutdown() {
-  stopping=1
+  # The runner loops are separate processes; a shell variable cannot reach
+  # them. The stop file can.
+  touch "$stop_file"
   trap - SIGINT SIGTERM
   for pid_file in "$mm_pid_file" "$trader_pid_file"; do
     child=$(cat "$pid_file" 2>/dev/null || true)
