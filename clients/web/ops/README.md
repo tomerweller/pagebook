@@ -67,3 +67,25 @@ is how the original migration cut over).
 - The trader needs nothing persistent; the watchdog needs only the volumes.
 - Feeds (Coinbase, Kraken), Soroban RPC, and Horizon are the only outbound
   dependencies; all HTTPS.
+
+## Fly deployment
+
+`clients/web/fly.toml` runs the maker, trader, and watchdog on one Fly Machine
+in `iad`. The app has no public service. A 1 GB volume mounted at `/data`
+holds `mm.json`, the bot logs, and the hourly watchdog log across restarts and
+deploys. The watchdog runs once an hour. If it finds a stale bot or a hard
+runtime error, it restarts that bot through the supervisor. Price-move and
+low-reserve alerts remain visible in the watchdog log for operator follow-up.
+
+From `clients/web`:
+
+1. Sign in with `fly auth login`.
+2. Create the app without starting a Machine:
+   `fly apps create pagebook-bots`.
+3. Set `PB_SECRET_PB_MM` and `PB_SECRET_PB_TRADER` with `fly secrets set`.
+4. Deploy with `fly deploy`.
+5. Confirm the Machine and all three bots with `fly status` and `fly logs`.
+
+Fly sends `SIGTERM` and waits up to three minutes. The supervisor forwards the
+signal to both bots. The maker saves its current state and leaves its quotes
+live; the trader settles its temporary resting orders before exiting.

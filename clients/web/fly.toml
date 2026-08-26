@@ -1,0 +1,23 @@
+app = "pagebook-bots"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = 180
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  CONTRACT = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO"
+  BASE_SAC = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+  QUOTE_SAC = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA"
+  USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+
+[mounts]
+  source = "pagebook_data"
+  destination = "/data"
+  initial_size = "1gb"
+  snapshot_retention = 14
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

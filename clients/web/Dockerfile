@@ -15,5 +15,6 @@ COPY public ./public
 
 RUN mkdir -p /app/ops/state /app/ops/logs
 
-# Default command is the maker; compose overrides per service.
-CMD ["npx", "tsx", "ops/mm.ts", "--help"]
+# Fly runs all three bots on one Machine. Compose overrides this command for
+# its one-process-per-container services.
+CMD ["/bin/bash", "ops/deploy/fly-entrypoint.sh"]
