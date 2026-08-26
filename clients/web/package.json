@@ -17,7 +17,8 @@
     "ops:soak": "tsx ops/soak.ts",
     "ops:stress": "tsx ops/stress.ts",
     "ops:check": "tsx ops/check.ts",
-    "ops:resources": "tsx ops/resources.ts"
+    "ops:resources": "tsx ops/resources.ts",
+    "ops:keepalive": "tsx ops/keepalive.ts"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "16.2.0"

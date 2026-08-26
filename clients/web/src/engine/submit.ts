@@ -646,6 +646,46 @@ export async function restoreEntries(
   return restoreKeys(createRpc(rpcUrl), secret, contract, keyXdrs);
 }
 
+export async function extendKeys(
+  rpc: Rpc,
+  secret: string,
+  keyXdrs: string[],
+  extendTo: number,
+): Promise<EngineResult> {
+  if (!keyXdrs.length) return { kind: "ok", hash: "" };
+  const kp = StellarSdk.Keypair.fromSecret(secret);
+  const acc = await readAccount(rpc, kp.publicKey());
+  if (!acc.exists) return { kind: "rpc", message: "account not funded" };
+  const account = new StellarSdk.Account(kp.publicKey(), acc.sequence.toString());
+  let keys: StellarSdk.xdr.LedgerKey[];
+  try {
+    keys = keyXdrs.map((b64) => StellarSdk.xdr.LedgerKey.fromXDR(b64, "base64"));
+  } catch (e) {
+    return { kind: "rpc", message: e instanceof Error ? e.message : String(e) };
+  }
+  const data = new StellarSdk.SorobanDataBuilder().setReadOnly(keys).build();
+  const built = new StellarSdk.TransactionBuilder(account, {
+    fee: "100",
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(StellarSdk.Operation.extendFootprintTtl({ extendTo }))
+    .setTimeout(60)
+    .setSorobanData(data)
+    .build();
+  let sim;
+  try {
+    sim = await simulate(rpc, built.toXDR());
+  } catch (e) {
+    return { kind: "rpc", message: e instanceof Error ? e.message : String(e) };
+  }
+  if (sim.error) return classifySubmit(sim.error, "simulation");
+  const priced = sim.transactionData ? parseSorobanData(sim.transactionData) : data;
+  const fee = classicFee(BigInt(sim.minResourceFee ?? priced.resourceFee().toString()));
+  const finalTx = StellarSdk.TransactionBuilder.cloneFrom(built, { fee }).setSorobanData(priced).build();
+  finalTx.sign(kp);
+  return sendAndWait(rpc, finalTx);
+}
+
 async function archivedTouched(
   rpc: Rpc,
   contract: string,
