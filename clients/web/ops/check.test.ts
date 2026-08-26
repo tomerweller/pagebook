@@ -201,4 +201,53 @@ test("archived outcomes get their own alert class", async () => {
   expect(r.ok).toBe(false);
   expect(r.alerts.some((a) => a.includes("archived entries:"))).toBe(true);
   expect(r.alerts.join(" ")).toContain('"TickSummary(1,false)":2');
+  expect((r.summary.last_hour as { bad: number }).bad).toBe(2);
+});
+
+test("last_hour.bad counts the bad set and keeps apply_rejected as typed:*", async () => {
+  const feed = new Feed({ get: async () => ({ data: { amount: "0.158" } }) });
+  const mm =
+    loop(9990) +
+    "\n" +
+    JSON.stringify({ t: 9995, action: "place", outcome: "ok" }) +
+    "\n" +
+    JSON.stringify({ t: 9996, action: "place", outcome: "typed:LevelFull" }) +
+    "\n" +
+    JSON.stringify({ t: 9997, action: "place", outcome: "trapped:unknown" }) +
+    "\n" +
+    JSON.stringify({ t: 9998, action: "place", outcome: "sim:typed:Crossed" });
+  const r = await runCheck(args(), {
+    now,
+    feed,
+    views: openViews(15770, 15830, 4, 4),
+    ...files(mm),
+  });
+  const hour = r.summary.last_hour as { ok: number; apply_rejected: number; bad: number; sim_rejected: number };
+  expect(hour.ok).toBe(1);
+  expect(hour.apply_rejected).toBe(1);
+  expect(hour.sim_rejected).toBe(1);
+  expect(hour.bad).toBe(2);
+});
+
+test("a hanging view is a note and skips the book section", async () => {
+  const feed = new Feed({ get: async () => ({ data: { amount: "0.158" } }) });
+  const hang: Views = {
+    best: () => new Promise(() => undefined),
+    level: async () => {
+      throw new Error("should not run");
+    },
+    order: async () => null,
+    quotePlace: async () => ({ start_tick: 1, crossed: [], filled_lots: 0, quote_atoms: 0n, tail_seq: 0 }),
+  };
+  const r = await runCheck(args(), {
+    now,
+    feed,
+    views: hang,
+    viewTimeoutMs: 20,
+    ...files(loop(9990)),
+  });
+  expect(r.ok).toBe(true);
+  expect(r.notes.some((n) => n === "view timeout")).toBe(true);
+  expect(r.summary.book_bid).toBeNull();
+  expect(r.summary.book_ask).toBeNull();
 });

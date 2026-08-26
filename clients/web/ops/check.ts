@@ -70,6 +70,26 @@ export function isTraderBadOutcome(outcome: string): boolean {
   return outcome.startsWith("typed:") && !outcome.includes("Crossed");
 }
 
+export const VIEW_TIMEOUT_MS = 15_000;
+
+export async function withTimeout<T>(p: Promise<T>, ms = VIEW_TIMEOUT_MS): Promise<T> {
+  let t: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<T>((_, rej) => {
+        t = setTimeout(() => rej(new Error("view timeout")), ms);
+      }),
+    ]);
+  } finally {
+    if (t !== undefined) clearTimeout(t);
+  }
+}
+
+function isViewTimeout(e: unknown): boolean {
+  return e instanceof Error && e.message === "view timeout";
+}
+
 export type CheckDeps = {
   now?: () => number;
   readFile?: (path: string) => string | null;
@@ -77,6 +97,7 @@ export type CheckDeps = {
   feed?: Feed;
   views?: Views;
   rpc?: Rpc;
+  viewTimeoutMs?: number;
 };
 
 export type CheckResult = {
@@ -134,9 +155,13 @@ export async function runCheck(a: CheckArgs, deps: CheckDeps = {}): Promise<Chec
   let okN = 0;
   let simRej = 0;
   let applyRej = 0;
+  let badN = 0;
   for (const [key, v] of outcomes) {
     const [action, outcome] = key.split("\0");
-    if (isMmBadOutcome(outcome)) bad[`${action}/${outcome}`] = v;
+    if (isMmBadOutcome(outcome)) {
+      bad[`${action}/${outcome}`] = v;
+      badN += v;
+    }
     const archKey = archivedKeyName(outcome);
     if (archKey) archived[archKey] = (archived[archKey] ?? 0) + v;
     if (outcome === "ok") okN += v;
@@ -191,18 +216,20 @@ export async function runCheck(a: CheckArgs, deps: CheckDeps = {}): Promise<Chec
     const id = loadIdentity(a.identity, a.configDir);
     views = createViews(rpc, { contract: a.contract, source: id.address, market: a.market, owner: id.address });
   }
+  const viewMs = deps.viewTimeoutMs ?? VIEW_TIMEOUT_MS;
   let bookBid: number | null = null;
   let bookAsk: number | null = null;
   try {
-    bookBid = await views.best(true);
-    bookAsk = await views.best(false);
+    bookBid = await withTimeout(views.best(true), viewMs);
+    bookAsk = await withTimeout(views.best(false), viewMs);
   } catch (e) {
-    notes.push(`best view error: ${String(e).slice(-80)}`);
+    if (isViewTimeout(e)) notes.push("view timeout");
+    else notes.push(`best view error: ${String(e).slice(-80)}`);
   }
   if (bookBid != null && bookAsk != null && bookBid >= bookAsk) {
     try {
-      const lb = await views.level(true, bookBid);
-      const la = await views.level(false, bookAsk);
+      const lb = await withTimeout(views.level(true, bookBid), viewMs);
+      const la = await withTimeout(views.level(false, bookAsk), viewMs);
       if ((lb.open_lots ?? 0) > 0 && (la.open_lots ?? 0) > 0) {
         alerts.push(`book crossed for real: bid ${bookBid} (${lb.open_lots} lots) ask ${bookAsk} (${la.open_lots} lots)`);
       } else {
@@ -211,7 +238,8 @@ export async function runCheck(a: CheckArgs, deps: CheckDeps = {}): Promise<Chec
         );
       }
     } catch (e) {
-      notes.push(`level view error: ${String(e).slice(-80)}`);
+      if (isViewTimeout(e)) notes.push("view timeout");
+      else notes.push(`level view error: ${String(e).slice(-80)}`);
     }
   }
 
@@ -237,9 +265,13 @@ export async function runCheck(a: CheckArgs, deps: CheckDeps = {}): Promise<Chec
     let settlesOk = 0;
     let tSim = 0;
     let tApply = 0;
+    let tBadN = 0;
     for (const [key, v] of tc) {
       const [action, outcome] = key.split("\0");
-      if (isTraderBadOutcome(outcome)) tbad[`${action}/${outcome}`] = v;
+      if (isTraderBadOutcome(outcome)) {
+        tbad[`${action}/${outcome}`] = v;
+        tBadN += v;
+      }
       const archKey = archivedKeyName(outcome);
       if (archKey) tArchived[archKey] = (tArchived[archKey] ?? 0) + v;
       if (action === "take" && outcome === "ok") takesOk = v;
@@ -258,6 +290,7 @@ export async function runCheck(a: CheckArgs, deps: CheckDeps = {}): Promise<Chec
       settles_ok: settlesOk,
       sim_rejected: tSim,
       apply_rejected: tApply,
+      bad: tBadN,
     };
   }
 
@@ -277,7 +310,7 @@ export async function runCheck(a: CheckArgs, deps: CheckDeps = {}): Promise<Chec
     volume_lots: lastLoop && lastLoop.volume_lots != null ? lastLoop.volume_lots : null,
     xlm,
     usdc: lastLoop && lastLoop.usdc != null ? lastLoop.usdc : null,
-    last_hour: { ok: okN, sim_rejected: simRej, apply_rejected: applyRej, heals },
+    last_hour: { ok: okN, sim_rejected: simRej, apply_rejected: applyRej, heals, bad: badN },
     trader_last_hour: trader,
   };
 
