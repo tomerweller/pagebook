@@ -4,6 +4,10 @@ export const FEED_UA = "pagebook-mm/0.1";
 export const FEED_TIMEOUT_MS = 10_000;
 export const COINBASE_URL = "https://api.coinbase.com/v2/prices/XLM-USD/spot";
 export const KRAKEN_URL = "https://api.kraken.com/0/public/Ticker?pair=XLMUSD";
+// Third source: XLM/USD mid from Bitstamp (US-accessible; Binance geo-blocks
+// US egress like Fly iad). Added after a cloud host lost Coinbase AND Kraken
+// for hours (2026-08-28) and the maker correctly refused to quote blind.
+export const BITSTAMP_URL = "https://www.bitstamp.net/api/v2/ticker/xlmusd/";
 
 export type HttpGet = (url: string, opts: { timeoutMs: number; userAgent: string }) => Promise<unknown>;
 
@@ -75,6 +79,20 @@ export class Feed {
       this.last = p;
       this.at = this.now();
       this.source = "kraken";
+      return p;
+    } catch {
+      /* bitstamp */
+    }
+    try {
+      const j = (await this.get(BITSTAMP_URL, { timeoutMs: FEED_TIMEOUT_MS, userAgent: FEED_UA })) as {
+        bid?: string;
+        ask?: string;
+      };
+      const p = (Number(j.bid) + Number(j.ask)) / 2;
+      if (!Number.isFinite(p) || p <= 0) throw new Error("bad bitstamp mid");
+      this.last = p;
+      this.at = this.now();
+      this.source = "bitstamp";
       return p;
     } catch {
       return null;

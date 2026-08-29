@@ -70,6 +70,19 @@ test("feed uses last-good, coinbase then kraken, fixed-mid", async () => {
   expect(calls.some((u) => u.includes("coinbase"))).toBe(true);
   expect(calls.some((u) => u.includes("kraken"))).toBe(true);
 
+  const stamped = new Feed({
+    now: () => 200,
+    get: async (url) => {
+      if (url.includes("bitstamp")) return { bid: "0.14", ask: "0.16" };
+      throw new Error("down");
+    },
+  });
+  expect(await stamped.fetch()).toBeCloseTo(0.15);
+  expect(stamped.source).toBe("bitstamp");
+
+  const dark = new Feed({ now: () => 300, get: async () => { throw new Error("down"); } });
+  expect(await dark.fetch()).toBeNull();
+
   const fixed = new Feed({ fixedMid: 15800, now: () => 1 });
   expect(await fixed.fetch()).toBeCloseTo(0.158);
   expect(fixed.source).toBe("fixed");

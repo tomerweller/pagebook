@@ -65,7 +65,7 @@ is how the original migration cut over).
   `resource_limit` outcomes appear (the quantified in-flight race), drop the
   flag and restart.
 - The trader needs nothing persistent; the watchdog needs only the volumes.
-- Feeds (Coinbase, Kraken), Soroban RPC, and Horizon are the only outbound
+- Feeds (Coinbase, Kraken, Bitstamp), Soroban RPC, and Horizon are the only outbound
   dependencies; all HTTPS.
 
 ## Fly deployment
