@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRpc, type Rpc } from "../src/book";
@@ -26,6 +26,7 @@ export type CheckArgs = {
   minXlm: number;
   window: number;
   maxTraderAge: number;
+  logTailBytes: number;
 };
 
 export const CHECK_SPECS: ArgSpec<keyof CheckArgs & string>[] = [
@@ -45,6 +46,7 @@ export const CHECK_SPECS: ArgSpec<keyof CheckArgs & string>[] = [
   { flag: "--min-xlm", dest: "minXlm", type: "float", default: 2000 },
   { flag: "--window", dest: "window", type: "float", default: 3600 },
   { flag: "--max-trader-age", dest: "maxTraderAge", type: "float", default: 600 },
+  { flag: "--log-tail-bytes", dest: "logTailBytes", type: "int", default: 8 * 1024 * 1024 },
 ];
 
 export function parseCheckArgs(argv: string[]): CheckArgs {
@@ -59,15 +61,52 @@ export function archivedKeyName(outcome: string): string | null {
   return inner.slice("archived:".length) || "unknown";
 }
 
+// Neither bot ever sends fill_or_kill, so a genuine PageBook Unfilled (#10) is
+// impossible for them; error #10 in practice is the SAC's BalanceError sharing
+// the code (the account cannot escrow or be paid out). Simulation-time or not,
+// it means funding, not a moving book, so it alerts.
+function isUnfilled(outcome: string): boolean {
+  return outcome === "typed:Unfilled" || outcome === "sim:typed:Unfilled";
+}
+
 export function isMmBadOutcome(outcome: string): boolean {
+  if (isUnfilled(outcome)) return true;
   if (archivedKeyName(outcome) && !outcome.startsWith("sim:")) return true;
   if (MM_BAD.has(outcome)) return true;
   return outcome.startsWith("typed:") && !outcome.includes("Crossed");
 }
 
 export function isTraderBadOutcome(outcome: string): boolean {
+  if (isUnfilled(outcome)) return true;
   if (outcome === "error" || MM_BAD.has(outcome)) return true;
   return outcome.startsWith("typed:") && !outcome.includes("Crossed");
+}
+
+// Bounded read of a log's tail: the check only looks at the last loop line and
+// a one-hour window, and reading a whole multi-week log OOMs the watchdog (a
+// 229 MB read is a ~460 MB V8 string). A partial first line is dropped.
+export function readTailSync(path: string, maxBytes: number): string | null {
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch (e) {
+    if (e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "ENOENT") return null;
+    throw e;
+  }
+  try {
+    const size = fstatSync(fd).size;
+    const start = Math.max(0, size - maxBytes);
+    const buf = Buffer.alloc(size - start);
+    readSync(fd, buf, 0, buf.length, start);
+    let text = buf.toString("utf8");
+    if (start > 0) {
+      const nl = text.indexOf("\n");
+      text = nl === -1 ? "" : text.slice(nl + 1);
+    }
+    return text;
+  } finally {
+    closeSync(fd);
+  }
 }
 
 export const VIEW_TIMEOUT_MS = 15_000;
@@ -126,11 +165,14 @@ export async function runCheck(a: CheckArgs, deps: CheckDeps = {}): Promise<Chec
       }
     });
   const exists = deps.exists ?? existsSync;
+  // Logs are read tail-only (they grow for weeks); the state file stays a full
+  // read. Injected readFile keeps serving both in tests.
+  const readLog = deps.readFile ? readFile : (path: string) => readTailSync(path, a.logTailBytes);
 
   let lastLoop: OpsLogRecord | null = null;
   const outcomes = new Map<string, number>();
   let heals = 0;
-  const mmText = readFile(a.log);
+  const mmText = readLog(a.log);
   if (mmText == null) {
     alerts.push("no log");
   } else {
@@ -170,6 +212,10 @@ export async function runCheck(a: CheckArgs, deps: CheckDeps = {}): Promise<Chec
   }
   if (Object.keys(archived).length) alerts.push("archived entries: " + JSON.stringify(archived));
   if (Object.keys(bad).length) alerts.push("bad outcomes in window: " + JSON.stringify(bad));
+  // A bot that keeps submitting and lands nothing is down whatever the
+  // rejections are individually (each sim rejection alone can look benign).
+  const rejected = simRej + applyRej;
+  if (okN === 0 && rejected >= 50) alerts.push(`nothing landed in window: 0 ok, ${rejected} rejected`);
 
   const feed = deps.feed ?? new Feed();
   const p = await feed.fetch();
@@ -248,7 +294,7 @@ export async function runCheck(a: CheckArgs, deps: CheckDeps = {}): Promise<Chec
     const tc = new Map<string, number>();
     let lots = 0;
     let lastT = 0;
-    const ttext = readFile(a.traderLog) ?? "";
+    const ttext = readLog(a.traderLog) ?? "";
     for (const d of parseLogLines(ttext)) {
       lastT = Math.max(lastT, d.t ?? 0);
       if (tnow - (d.t ?? 0) > a.window || d.action === "stats") continue;

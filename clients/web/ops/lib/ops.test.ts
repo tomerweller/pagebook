@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
@@ -118,6 +118,22 @@ test("opslog JSON-lines flush per line with Python field names", () => {
   log.close();
   const line = JSON.parse(readFileSync(path, "utf8").trim()) as Record<string, unknown>;
   expect(line).toEqual({ t: 12.5, action: "cancel_all", outcome: "stale", age: 300 });
+});
+
+test("opslog rotates at the size cap, keeping one generation", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pb-log-"));
+  const path = join(dir, "mm.log");
+  const log = openLog(path, () => 1, { rotateBytes: 200 });
+  for (let i = 0; i < 12; i++) log.record("loop", "ok", { pad: "x".repeat(40) });
+  log.close();
+  expect(existsSync(path + ".1")).toBe(true);
+  const current = readFileSync(path, "utf8");
+  const rotated = readFileSync(path + ".1", "utf8");
+  expect(current.length).toBeLessThan(200);
+  expect(rotated.length).toBeGreaterThanOrEqual(200);
+  const total = current.split("\n").filter(Boolean).length + rotated.split("\n").filter(Boolean).length;
+  expect(total).toBeLessThanOrEqual(12);
+  for (const line of current.split("\n").filter(Boolean)) expect(() => JSON.parse(line)).not.toThrow();
 });
 
 test("mm and trader argparse flags and defaults", () => {

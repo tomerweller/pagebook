@@ -1,7 +1,10 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test } from "vitest";
 import { Feed } from "./lib/feed";
 import type { Views } from "./lib/views";
-import { archivedKeyName, isMmBadOutcome, parseCheckArgs, runCheck, type CheckArgs } from "./check";
+import { archivedKeyName, isMmBadOutcome, isTraderBadOutcome, parseCheckArgs, readTailSync, runCheck, type CheckArgs } from "./check";
 
 function args(over: Partial<CheckArgs> = {}): CheckArgs {
   return {
@@ -84,6 +87,56 @@ test("check flags and defaults", () => {
   expect(isMmBadOutcome("sim:archived:TickSummary(1,false)")).toBe(false);
   expect(archivedKeyName("archived:TickSummary(1,false)")).toBe("TickSummary(1,false)");
   expect(archivedKeyName("sim:archived:BestTick(1,true)")).toBe("BestTick(1,true)");
+  expect(a.logTailBytes).toBe(8 * 1024 * 1024);
+});
+
+test("Unfilled is bad even at simulation: the bots never send fill_or_kill, so it is the SAC's BalanceError", () => {
+  expect(isMmBadOutcome("sim:typed:Unfilled")).toBe(true);
+  expect(isMmBadOutcome("typed:Unfilled")).toBe(true);
+  expect(isTraderBadOutcome("sim:typed:Unfilled")).toBe(true);
+  expect(isTraderBadOutcome("typed:Unfilled")).toBe(true);
+  expect(isMmBadOutcome("sim:typed:Crossed")).toBe(false);
+  expect(isTraderBadOutcome("sim:typed:Crossed")).toBe(false);
+});
+
+test("readTailSync bounds the read and drops the partial first line", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pb-tail-"));
+  const path = join(dir, "mm.log");
+  const lines = [];
+  for (let i = 0; i < 100; i++) lines.push(JSON.stringify({ t: i, action: "loop", outcome: "ok" }));
+  writeFileSync(path, lines.join("\n") + "\n");
+  const full = readTailSync(path, 1 << 20)!;
+  expect(full.split("\n").filter(Boolean).length).toBe(100);
+  const tail = readTailSync(path, 200)!;
+  const got = tail.split("\n").filter(Boolean);
+  expect(got.length).toBeLessThan(100);
+  expect(got.length).toBeGreaterThan(0);
+  for (const line of got) expect(() => JSON.parse(line)).not.toThrow();
+  expect(JSON.parse(got[got.length - 1]).t).toBe(99);
+  expect(readTailSync(join(dir, "absent.log"), 200)).toBeNull();
+});
+
+test("zero landed among many rejections is an alert; one landed is not", async () => {
+  const feed = new Feed({ get: async () => ({ data: { amount: "0.158" } }) });
+  const rejections = Array.from({ length: 60 }, (_, i) =>
+    JSON.stringify({ t: 9900 + i, action: "replace", outcome: "sim:typed:Crossed" }),
+  );
+  const stuck = await runCheck(args(), {
+    now,
+    feed,
+    views: openViews(15770, 15830, 4, 4),
+    ...files([loop(9990), ...rejections].join("\n")),
+  });
+  expect(stuck.ok).toBe(false);
+  expect(stuck.alerts.some((x) => x.includes("nothing landed in window: 0 ok, 60 rejected"))).toBe(true);
+
+  const alive = await runCheck(args(), {
+    now,
+    feed,
+    views: openViews(15770, 15830, 4, 4),
+    ...files([loop(9990), ...rejections, JSON.stringify({ t: 9991, action: "place", outcome: "ok" })].join("\n")),
+  });
+  expect(alive.alerts.some((x) => x.includes("nothing landed"))).toBe(false);
 });
 
 test("clean window is MM OK", async () => {

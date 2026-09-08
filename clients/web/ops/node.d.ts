@@ -16,7 +16,18 @@ declare module "node:fs" {
   export function writeFileSync(path: string, data: string): void;
   export function mkdtempSync(prefix: string): string;
   export function existsSync(path: string): boolean;
+  export function fstatSync(fd: number): { size: number };
+  export function readSync(fd: number, buffer: NodeBuffer, offset: number, length: number, position: number): number;
 }
+
+// The sliver of Buffer the ops tools use; @types/node stays out of the web app.
+interface NodeBuffer {
+  length: number;
+  toString(encoding: string): string;
+}
+declare const Buffer: {
+  alloc(size: number): NodeBuffer;
+};
 
 declare module "node:path" {
   export function dirname(p: string): string;
