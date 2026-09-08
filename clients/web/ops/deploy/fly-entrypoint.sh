@@ -64,12 +64,26 @@ run_keepalive() {
   done
 }
 
+run_refill() {
+  # Testnet-only friendbot top-up (ADR-034). Signs only with locally generated
+  # throwaway keys, so it needs no bot identity or secret.
+  while [[ ! -f "$stop_file" ]]; do
+    npx tsx ops/refill.ts \
+      --usdc-issuer "$usdc_issuer" \
+      --log "$log_dir/refill.log" || true
+    [[ ! -f "$stop_file" ]] || break
+    sleep 86400
+  done
+}
+
 run_mm &
 mm_pid=$!
 run_trader &
 trader_pid=$!
 run_keepalive &
 keepalive_pid=$!
+run_refill &
+refill_pid=$!
 
 restart_child() {
   local pid_file="$1"
@@ -124,17 +138,18 @@ shutdown() {
     child=$(cat "$pid_file" 2>/dev/null || true)
     if [[ "$child" =~ ^[0-9]+$ ]]; then kill -TERM "$child" 2>/dev/null || true; fi
   done
-  kill -TERM "$mm_pid" "$trader_pid" "$watchdog_pid" "$keepalive_pid" 2>/dev/null || true
+  kill -TERM "$mm_pid" "$trader_pid" "$watchdog_pid" "$keepalive_pid" "$refill_pid" 2>/dev/null || true
   wait "$mm_pid" 2>/dev/null || true
   wait "$trader_pid" 2>/dev/null || true
   wait "$watchdog_pid" 2>/dev/null || true
   wait "$keepalive_pid" 2>/dev/null || true
+  wait "$refill_pid" 2>/dev/null || true
 }
 
 trap shutdown SIGINT SIGTERM
 
 set +e
-wait -n "$mm_pid" "$trader_pid" "$watchdog_pid" "$keepalive_pid"
+wait -n "$mm_pid" "$trader_pid" "$watchdog_pid" "$keepalive_pid" "$refill_pid"
 status=$?
 set -e
 
