@@ -387,7 +387,7 @@ test("applyPad sizes covers a nonexistent key at the creation estimate", () => {
   expect(Number(out.resources().writeBytes())).toBe(650); // 50 sim + 600 creation cover
 });
 
-function contractErrorEvent(code: number): string {
+function contractErrorEvent(code: number, raisedBy?: string): string {
   const errVal = StellarSdk.xdr.ScVal.scvError(StellarSdk.xdr.ScError.sceContract(code));
   const v0 = new StellarSdk.xdr.ContractEventV0({
     topics: [StellarSdk.xdr.ScVal.scvSymbol("error"), errVal],
@@ -397,7 +397,7 @@ function contractErrorEvent(code: number): string {
     inSuccessfulContractCall: false,
     event: new StellarSdk.xdr.ContractEvent({
       ext: new StellarSdk.xdr.ExtensionPoint(0),
-      contractId: null,
+      contractId: raisedBy ? StellarSdk.StrKey.decodeContract(raisedBy) : null,
       type: StellarSdk.xdr.ContractEventType.diagnostic(),
       body: new StellarSdk.xdr.ContractEventBody(0, v0),
     }),
@@ -480,6 +480,58 @@ test("classifyFailedTx decodes real XDR fixtures", () => {
   expect(outcomeOf(classifyFailedTx(failedTx("trapped"), [contractErrorEvent(15)]))).toBe("typed:UnknownOrder");
   expect(outcomeOf(classifyFailedTx(failedTx("trapped"), [storageLimitEvent()]))).toBe("footprint");
   expect(outcomeOf(classifyFailedTx(failedTx("trapped"), []))).toBe("trapped:unknown");
+});
+
+const PAGEBOOK = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+const SAC = "CB64D3G7SM2RTH6JSGG34DDTFTQ5CFDKVDZJZSODMCX4NJ2HV2KN7OHT";
+
+test("classifyFailedTx decodes a foreign-raised error through the SAC table", () => {
+  // SAC #10 is BalanceError, not PageBook's Unfilled (the outage collision).
+  const got = classifyFailedTx(failedTx("trapped"), [contractErrorEvent(10, SAC)], undefined, "apply", PAGEBOOK);
+  expect(got).toMatchObject({
+    kind: "typed",
+    errorCode: 10,
+    errorName: "BalanceError",
+    foreign: true,
+    raisedBy: SAC,
+    at: "apply",
+  });
+  expect(outcomeOf(got)).toBe("sac:BalanceError");
+  // SAC #9 is AllowanceError, not Crossed (the invisible collision).
+  const allowance = classifyFailedTx(undefined, [contractErrorEvent(9, SAC)], undefined, "simulation", PAGEBOOK);
+  expect(allowance).toMatchObject({ kind: "typed", errorName: "AllowanceError", foreign: true, at: "simulation" });
+  expect(outcomeOf(allowance)).toBe("sim:sac:AllowanceError");
+  // An unknown SAC code falls back to the number.
+  expect(classifyFailedTx(undefined, [contractErrorEvent(99, SAC)], undefined, "simulation", PAGEBOOK)).toMatchObject({
+    errorName: "99",
+    foreign: true,
+  });
+});
+
+test("classifyFailedTx keeps the PageBook decode for its own and unattributed errors", () => {
+  const own = classifyFailedTx(failedTx("trapped"), [contractErrorEvent(10, PAGEBOOK)], undefined, "apply", PAGEBOOK);
+  expect(own).toMatchObject({ kind: "typed", errorName: "Unfilled", foreign: false, raisedBy: PAGEBOOK });
+  expect(outcomeOf(own)).toBe("typed:Unfilled");
+  // No contractId in the events: attribution unknown, behavior unchanged.
+  const unknown = classifyFailedTx(failedTx("trapped"), [contractErrorEvent(10)], undefined, "apply", PAGEBOOK);
+  expect(unknown).toMatchObject({ kind: "typed", errorName: "Unfilled", foreign: false });
+  expect(outcomeOf(unknown)).toBe("typed:Unfilled");
+  // No invoked contract given (restore/extend paths): also unchanged.
+  expect(classifyFailedTx(failedTx("trapped"), [contractErrorEvent(10, SAC)])).toMatchObject({
+    errorName: "Unfilled",
+    foreign: false,
+  });
+});
+
+test("classifyFailedTx attributes to the first error event, not the escalating parent frame", () => {
+  const got = classifyFailedTx(
+    failedTx("trapped"),
+    [contractErrorEvent(10, SAC), contractErrorEvent(10, PAGEBOOK)],
+    undefined,
+    "apply",
+    PAGEBOOK,
+  );
+  expect(got).toMatchObject({ errorName: "BalanceError", raisedBy: SAC, foreign: true });
 });
 
 test("classifyFailedTx names an archived TickSummary from the diagnostic data vec", () => {
@@ -708,6 +760,46 @@ test("submitRestorePreamble sends a restore using the preamble SorobanData", asy
   expect(got.kind).toBe("ok");
   const tx = StellarSdk.TransactionBuilder.fromXDR(sent!, "Test SDF Network ; September 2015");
   expect(tx.operations[0].type).toBe("restoreFootprint");
+});
+
+test("submitInvocation attributes a simulation contract error via the diagnostic events", async () => {
+  const { rpc, kp } = mockRpc({
+    simulateTransaction: async () => ({
+      error: "HostError: Error(Contract, #10)",
+      events: [contractErrorEvent(10, SAC)],
+    }),
+  });
+  const got = await submitInvocation({
+    rpc,
+    contract: PAGEBOOK,
+    sourceSecret: kp.secret(),
+    fn: "place",
+    args: [StellarSdk.xdr.ScVal.scvU32(1)],
+  });
+  expect(got).toMatchObject({
+    kind: "typed",
+    errorCode: 10,
+    errorName: "BalanceError",
+    foreign: true,
+    raisedBy: SAC,
+    at: "simulation",
+  });
+  expect(outcomeOf(got)).toBe("sim:sac:BalanceError");
+
+  // Without diagnostic events the error text still decodes through PageBook's
+  // table, exactly as before.
+  const { rpc: bare, kp: kp2 } = mockRpc({
+    simulateTransaction: async () => ({ error: "HostError: Error(Contract, #10)" }),
+  });
+  const fallback = await submitInvocation({
+    rpc: bare,
+    contract: PAGEBOOK,
+    sourceSecret: kp2.secret(),
+    fn: "place",
+    args: [StellarSdk.xdr.ScVal.scvU32(1)],
+  });
+  expect(fallback).toMatchObject({ kind: "typed", errorName: "Unfilled", at: "simulation" });
+  expect(outcomeOf(fallback)).toBe("sim:typed:Unfilled");
 });
 
 test("submitInvocation restores a simulate restorePreamble then re-simulates", async () => {

@@ -17,7 +17,9 @@ export function outcomeOf(result: OutcomeInput, opts?: { events?: unknown }): st
     case "ok":
       return "ok";
     case "typed":
-      return withSim(result.at, `typed:${result.errorName}`);
+      // A foreign raiser is a token: the code was decoded through the SAC
+      // table, and the sac: prefix keeps it out of the benign typed: space.
+      return withSim(result.at, `${result.foreign ? "sac" : "typed"}:${result.errorName}`);
     case "footprint":
       return withSim(result.at, "footprint");
     case "txBadSeq":

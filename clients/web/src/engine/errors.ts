@@ -54,6 +54,30 @@ export const ERROR_MESSAGES: Record<number, string> = {
 
 export const ERROR_CODE_COUNT = 24;
 
+// The Stellar Asset Contract's error table (rs-soroban-env native asset
+// contract). SAC codes overlap PageBook's — #9 AllowanceError vs Crossed,
+// #10 BalanceError vs Unfilled — so a code may only be decoded through this
+// table when the raising contract is known to not be PageBook.
+export const SAC_ERROR_NAMES: Record<number, string> = {
+  1: "InternalError",
+  2: "OperationNotSupportedError",
+  3: "AlreadyInitializedError",
+  4: "UnauthorizedError",
+  5: "AuthenticationError",
+  6: "AccountMissingError",
+  7: "AccountIsNotClassic",
+  8: "NegativeAmountError",
+  9: "AllowanceError",
+  10: "BalanceError",
+  11: "BalanceDeauthorizedError",
+  12: "OverflowError",
+  13: "TrustlineMissingError",
+};
+
+export function sacErrorName(code: number): string {
+  return SAC_ERROR_NAMES[code] ?? String(code);
+}
+
 export function errorName(code: number): string {
   return ERROR_NAMES[code] ?? String(code);
 }

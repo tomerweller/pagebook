@@ -69,7 +69,14 @@ function isUnfilled(outcome: string): boolean {
   return outcome === "typed:Unfilled" || outcome === "sim:typed:Unfilled";
 }
 
+// sac:* is a token-layer failure (balance, allowance, trustline): never a
+// benign moving-book rejection, so it alerts even at simulation time.
+function isSac(outcome: string): boolean {
+  return outcome.startsWith("sac:") || outcome.startsWith("sim:sac:");
+}
+
 export function isMmBadOutcome(outcome: string): boolean {
+  if (isSac(outcome)) return true;
   if (isUnfilled(outcome)) return true;
   if (archivedKeyName(outcome) && !outcome.startsWith("sim:")) return true;
   if (MM_BAD.has(outcome)) return true;
@@ -77,6 +84,7 @@ export function isMmBadOutcome(outcome: string): boolean {
 }
 
 export function isTraderBadOutcome(outcome: string): boolean {
+  if (isSac(outcome)) return true;
   if (isUnfilled(outcome)) return true;
   if (outcome === "error" || MM_BAD.has(outcome)) return true;
   return outcome.startsWith("typed:") && !outcome.includes("Crossed");
@@ -208,7 +216,7 @@ export async function runCheck(a: CheckArgs, deps: CheckDeps = {}): Promise<Chec
     if (archKey) archived[archKey] = (archived[archKey] ?? 0) + v;
     if (outcome === "ok") okN += v;
     if (outcome.startsWith("sim:")) simRej += v;
-    if (outcome.startsWith("typed:")) applyRej += v;
+    if (outcome.startsWith("typed:") || outcome.startsWith("sac:")) applyRej += v;
   }
   if (Object.keys(archived).length) alerts.push("archived entries: " + JSON.stringify(archived));
   if (Object.keys(bad).length) alerts.push("bad outcomes in window: " + JSON.stringify(bad));
@@ -324,7 +332,7 @@ export async function runCheck(a: CheckArgs, deps: CheckDeps = {}): Promise<Chec
       if (action === "rest" && outcome === "ok") restsOk = v;
       if (action === "settle" && outcome === "ok") settlesOk = v;
       if (outcome.startsWith("sim:")) tSim += v;
-      if (outcome.startsWith("typed:")) tApply += v;
+      if (outcome.startsWith("typed:") || outcome.startsWith("sac:")) tApply += v;
     }
     if (Object.keys(tArchived).length) alerts.push("archived entries: " + JSON.stringify(tArchived));
     if (Object.keys(tbad).length) alerts.push("trader bad outcomes in window: " + JSON.stringify(tbad));

@@ -6,7 +6,7 @@ import { accountLedgerKey, trustlineLedgerKey } from "../wallet/account";
 import { readAccount } from "../wallet/account";
 import { NETWORK_PASSPHRASE } from "../wallet/network";
 import { scValKeyName, toLedgerKey, type ClientKey } from "./clientKeys";
-import { errorName, hostErrorMessage, parseContractError } from "./errors";
+import { errorName, hostErrorMessage, parseContractError, sacErrorName } from "./errors";
 import { pad, restoreMarks, type PadOut, type Quoted, type WindowSpec } from "./pad";
 import { simulate } from "./quote";
 import { applyPad, classicFee, declaredFromSoroban, footprintIndexes, type ApplyPadSizes, type DeclaredResources } from "./txdata";
@@ -21,7 +21,19 @@ export type PlaceFlags = {
 
 export type EnginePhase = "simulation" | "apply" | "send";
 export type EngineOk = { kind: "ok"; hash: string; ledger?: number; fee?: string; resultMetaXdr?: string };
-export type EngineTyped = { kind: "typed"; errorCode: number; errorName: string; at: "simulation" | "apply"; hash?: string };
+// `raisedBy` is the contract the diagnostic events attribute the error to,
+// when they carry one. `foreign` means it was some contract other than the
+// one invoked — for PageBook that can only be a token, so the code was
+// decoded through the SAC error table instead of PageBook's.
+export type EngineTyped = {
+  kind: "typed";
+  errorCode: number;
+  errorName: string;
+  at: "simulation" | "apply";
+  hash?: string;
+  raisedBy?: string;
+  foreign?: boolean;
+};
 export type EngineFootprint = { kind: "footprint"; missingKey?: string; hash?: string; at?: EnginePhase };
 export type EngineBadSeq = { kind: "txBadSeq"; message: string; hash?: string; reachedLedger?: boolean; at?: EnginePhase };
 export type EngineResourceLimit = { kind: "resourceLimit"; message: string; hash?: string; at?: EnginePhase };
@@ -232,6 +244,10 @@ export function extractArchivedKey(data: StellarSdk.xdr.ScVal): { keyName: strin
 
 type FailedHints = {
   contract?: number;
+  // Contract address the first error-carrying diagnostic event names. Errors
+  // abort execution, so that first event is the deepest frame — the raiser;
+  // later events for the same error are the parent frames escalating it.
+  raisedBy?: string;
   footprint: boolean;
   resource: boolean;
   archived?: { keyName: string; keyXdr: string };
@@ -248,7 +264,7 @@ function walkScVal(val: StellarSdk.xdr.ScVal, hints: FailedHints, texts: string[
     try {
       const err = val.error();
       const kind = err.switch().name;
-      if (kind === "sceContract") hints.contract = err.contractCode();
+      if (kind === "sceContract" && hints.contract == null) hints.contract = err.contractCode();
       else if (kind === "sceStorage" && err.code().name === "scecExceededLimit") hints.footprint = true;
       else if (kind === "sceBudget") hints.resource = true;
     } catch {
@@ -309,13 +325,14 @@ function contractCodeFromNative(n: unknown): number | undefined {
 function diagnoseEvent(b64: string, hints: FailedHints, texts: string[]): void {
   try {
     const ev = StellarSdk.xdr.DiagnosticEvent.fromXDR(b64, "base64");
+    const hadContract = hints.contract != null;
     const v0 = ev.event().body().v0();
     for (const topic of v0.topics()) {
       walkScVal(topic, hints, texts);
       try {
         const native = StellarSdk.scValToNative(topic);
         const code = contractCodeFromNative(native);
-        if (code != null) hints.contract = code;
+        if (code != null && hints.contract == null) hints.contract = code;
       } catch {
         /* ignore */
       }
@@ -326,9 +343,17 @@ function diagnoseEvent(b64: string, hints: FailedHints, texts: string[]): void {
     try {
       const native = StellarSdk.scValToNative(v0.data());
       const code = contractCodeFromNative(native);
-      if (code != null) hints.contract = code;
+      if (code != null && hints.contract == null) hints.contract = code;
     } catch {
       /* ignore */
+    }
+    if (!hadContract && hints.contract != null) {
+      try {
+        const id = ev.event().contractId();
+        if (id) hints.raisedBy = StellarSdk.StrKey.encodeContract(id);
+      } catch {
+        /* attribution stays unknown */
+      }
     }
   } catch {
     /* raw base64 is not searchable */
@@ -359,6 +384,7 @@ export function classifyFailedTx(
   diagnosticEventsXdr: string[] | undefined,
   hash?: string,
   at: "apply" | "simulation" = "apply",
+  invokedContract?: string,
 ): EngineResult {
   const hints: FailedHints = { footprint: false, resource: false };
   const texts: string[] = [];
@@ -376,7 +402,20 @@ export function classifyFailedTx(
     };
   }
   if (hints.contract != null) {
-    return { kind: "typed", errorCode: hints.contract, errorName: errorName(hints.contract), at, hash };
+    // Contract error codes are per-table: only decode through PageBook's table
+    // when PageBook raised it. Any other raiser is a token (the contract calls
+    // nothing else), so a foreign error decodes through the SAC table. With no
+    // attribution (no contractId in the events), keep the old PageBook decode.
+    const foreign = hints.raisedBy != null && invokedContract != null && hints.raisedBy !== invokedContract;
+    return {
+      kind: "typed",
+      errorCode: hints.contract,
+      errorName: foreign ? sacErrorName(hints.contract) : errorName(hints.contract),
+      at,
+      hash,
+      raisedBy: hints.raisedBy,
+      foreign,
+    };
   }
   if (hints.footprint) return { kind: "footprint", hash, at };
   if (hints.resource) return { kind: "resourceLimit", message: "ResourceLimitExceeded", hash, at };
@@ -409,7 +448,7 @@ function chargedFee(r: { feeCharged?: number | string; resultXdr?: string }): st
   }
 }
 
-async function waitTx(rpc: Rpc, hash: string): Promise<EngineResult> {
+async function waitTx(rpc: Rpc, hash: string, invokedContract?: string): Promise<EngineResult> {
   let delay = 400;
   for (let i = 0; i < 24; i++) {
     await new Promise((r) => setTimeout(r, delay));
@@ -418,7 +457,7 @@ async function waitTx(rpc: Rpc, hash: string): Promise<EngineResult> {
       return { kind: "ok", hash, ledger: r.ledger, fee: chargedFee(r), resultMetaXdr: r.resultMetaXdr };
     }
     if (r.status === "FAILED") {
-      return classifyFailedTx(r.resultXdr, r.diagnosticEventsXdr, hash);
+      return classifyFailedTx(r.resultXdr, r.diagnosticEventsXdr, hash, "apply", invokedContract);
     }
     delay = Math.min(Math.round(delay * 1.4), 2000);
   }
@@ -484,8 +523,10 @@ async function submitOnce(a: SubmitArgs, kp: StellarSdk.Keypair): Promise<Engine
     const raw = sim.raw as { events?: unknown };
     const events = Array.isArray(raw?.events) ? raw.events.filter((e): e is string => typeof e === "string") : [];
     if (events.length) {
-      const fromEv = classifyFailedTx(undefined, events, undefined, "simulation");
-      if (fromEv.kind === "archived") return fromEv;
+      const fromEv = classifyFailedTx(undefined, events, undefined, "simulation", a.contract);
+      // Typed errors decode from the events, not the error text: only the
+      // events say which contract raised the code (SAC table vs PageBook's).
+      if (fromEv.kind === "archived" || fromEv.kind === "typed") return fromEv;
     }
     return classifySubmit(sim.error, "simulation");
   }
@@ -521,10 +562,15 @@ async function submitOnce(a: SubmitArgs, kp: StellarSdk.Keypair): Promise<Engine
   const finalTx = StellarSdk.TransactionBuilder.cloneFrom(assembled, { fee }).setSorobanData(padded.data).build();
   finalTx.sign(kp);
 
-  return sendAndWait(a.rpc, finalTx, declared);
+  return sendAndWait(a.rpc, finalTx, declared, a.contract);
 }
 
-async function sendAndWait(rpc: Rpc, tx: StellarSdk.Transaction, declared?: DeclaredResources): Promise<EngineResult> {
+async function sendAndWait(
+  rpc: Rpc,
+  tx: StellarSdk.Transaction,
+  declared?: DeclaredResources,
+  invokedContract?: string,
+): Promise<EngineResult> {
   try {
     const sent = await rpc.sendTransaction(tx.toXDR());
     const hash = sent.hash;
@@ -534,7 +580,7 @@ async function sendAndWait(rpc: Rpc, tx: StellarSdk.Transaction, declared?: Decl
     }
     if (!hash) return { kind: "rpc", message: sent.message || sent.status || "no hash", declared };
     if (sent.status === "TRY_AGAIN_LATER") return { kind: "rpc", message: "try again later", hash, declared };
-    return { ...(await waitTx(rpc, hash)), declared };
+    return { ...(await waitTx(rpc, hash, invokedContract)), declared };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     return { ...classifySubmit(message, "send"), declared };

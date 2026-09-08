@@ -99,6 +99,16 @@ test("Unfilled is bad even at simulation: the bots never send fill_or_kill, so i
   expect(isTraderBadOutcome("sim:typed:Crossed")).toBe(false);
 });
 
+test("sac: outcomes are always bad: a token-layer failure is never a benign moving-book rejection", () => {
+  expect(isMmBadOutcome("sac:BalanceError")).toBe(true);
+  expect(isMmBadOutcome("sim:sac:BalanceError")).toBe(true);
+  expect(isMmBadOutcome("sim:sac:AllowanceError")).toBe(true);
+  expect(isMmBadOutcome("sac:TrustlineMissingError")).toBe(true);
+  expect(isTraderBadOutcome("sac:BalanceError")).toBe(true);
+  expect(isTraderBadOutcome("sim:sac:BalanceError")).toBe(true);
+  expect(isTraderBadOutcome("sim:sac:AllowanceError")).toBe(true);
+});
+
 test("readTailSync bounds the read and drops the partial first line", () => {
   const dir = mkdtempSync(join(tmpdir(), "pb-tail-"));
   const path = join(dir, "mm.log");
@@ -137,6 +147,29 @@ test("zero landed among many rejections is an alert; one landed is not", async (
     ...files([loop(9990), ...rejections, JSON.stringify({ t: 9991, action: "place", outcome: "ok" })].join("\n")),
   });
   expect(alive.alerts.some((x) => x.includes("nothing landed"))).toBe(false);
+});
+
+test("sac outcomes in the log alert and count as rejections", async () => {
+  const feed = new Feed({ get: async () => ({ data: { amount: "0.158" } }) });
+  const mm =
+    loop(9990) +
+    "\n" +
+    JSON.stringify({ t: 9995, action: "replace", outcome: "sim:sac:BalanceError", tx: "aa" }) +
+    "\n" +
+    JSON.stringify({ t: 9996, action: "place", outcome: "sac:AllowanceError", tx: "bb" });
+  const r = await runCheck(args(), {
+    now,
+    feed,
+    views: openViews(15770, 15830, 4, 4),
+    ...files(mm),
+  });
+  expect(r.ok).toBe(false);
+  expect(r.alerts.some((x) => x.includes("replace/sim:sac:BalanceError"))).toBe(true);
+  expect(r.alerts.some((x) => x.includes("place/sac:AllowanceError"))).toBe(true);
+  const hour = r.summary.last_hour as { sim_rejected: number; apply_rejected: number; bad: number };
+  expect(hour.sim_rejected).toBe(1);
+  expect(hour.apply_rejected).toBe(1);
+  expect(hour.bad).toBe(2);
 });
 
 test("clean window is MM OK", async () => {

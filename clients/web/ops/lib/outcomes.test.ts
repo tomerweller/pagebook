@@ -36,6 +36,19 @@ test("outcomeOf maps engine result kinds", () => {
   expect(outcomeOf({ kind: "typed", errorCode: 15, errorName: "UnknownOrder", at: "apply" })).toBe("typed:UnknownOrder");
 });
 
+test("outcomeOf prefixes foreign-raised (SAC-decoded) typed errors with sac:", () => {
+  const sac = "CB64D3G7SM2RTH6JSGG34DDTFTQ5CFDKVDZJZSODMCX4NJ2HV2KN7OHT";
+  expect(
+    outcomeOf({ kind: "typed", errorCode: 10, errorName: "BalanceError", at: "apply", foreign: true, raisedBy: sac }),
+  ).toBe("sac:BalanceError");
+  expect(
+    outcomeOf({ kind: "typed", errorCode: 9, errorName: "AllowanceError", at: "simulation", foreign: true, raisedBy: sac }),
+  ).toBe("sim:sac:AllowanceError");
+  expect(outcomeOf({ kind: "typed", errorCode: 10, errorName: "Unfilled", at: "apply", foreign: false })).toBe(
+    "typed:Unfilled",
+  );
+});
+
 test("classifyText matches canned RPC and SDK strings", () => {
   expect(classifyText('HostError: Error(Contract, #13)')).toBe("typed:OrderExists");
   expect(classifyText('{"error":{"contract":9}}')).toBe("typed:Crossed");
