@@ -4,8 +4,8 @@
 
 use super::harness::{mint, rest_ask, setup, window};
 use crate::{DataKey, Error, PlaceFlags};
-use pagebook_types::{bit_in_word, word_of, TickBitmap, TICK_BITMAP_BYTES};
-use soroban_sdk::{testutils::Address as _, Address, Bytes};
+use pagebook_types::{bit_in_word, word_of, TickBitmap, BITMAP_BYTES};
+use soroban_sdk::{testutils::Address as _, Address, BytesN};
 
 fn no_rest() -> PlaceFlags {
     PlaceFlags {
@@ -26,19 +26,12 @@ fn post_only() -> PlaceFlags {
 /// Reads the bit for `tick` straight out of the stored `TickWord`.
 fn bit_set(h: &super::harness::Harness, is_bid: bool, tick: u32) -> bool {
     let key = DataKey::TickWord(h.market, is_bid, word_of(tick));
-    let bytes: Option<Bytes> = h
+    let bytes: Option<BytesN<BITMAP_BYTES>> = h
         .env
         .as_contract(&h.id, || h.env.storage().persistent().get(&key));
     match bytes {
         None => false,
-        Some(b) => {
-            assert_eq!(b.len() as usize, TICK_BITMAP_BYTES);
-            let mut raw = [0u8; TICK_BITMAP_BYTES];
-            b.copy_into_slice(&mut raw);
-            TickBitmap::decode(&raw)
-                .expect("stored TickWord decodes")
-                .get(bit_in_word(tick))
-        }
+        Some(b) => TickBitmap { bits: b.to_array() }.get(bit_in_word(tick)),
     }
 }
 

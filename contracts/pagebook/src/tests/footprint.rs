@@ -300,7 +300,7 @@ fn bound_place_rest_existing_level() {
     mint(&h, &h.base, &b, 1_000);
     let fp = place_fp(&h, &b, false, 10, 2, 10, 1, flags());
     // calibrated 13 / 5 / 1,200; §17 0.9 KB is below measured (see 08).
-    assert_within("place rest existing level", &fp, 15, 6, 1_200 + 256);
+    assert_within("place rest existing level", &fp, 15, 6, 1_116 + 256);
 }
 
 #[test]
@@ -310,7 +310,7 @@ fn bound_place_rest_new_level() {
     mint(&h, &h.base, &a, 1_000);
     let fp = place_fp(&h, &a, false, 10, 2, 10, 1, flags());
     // calibrated 15 / 8 / 2,104; §17 1.2 KB is below measured (see 08).
-    assert_within("place rest new level", &fp, 17, 9, 2_104 + 256);
+    assert_within("place rest new level", &fp, 17, 9, 2_000 + 256);
 }
 
 #[test]
@@ -324,7 +324,7 @@ fn bound_place_take_eight_levels() {
     mint(&h, &h.quote, &taker, 1_000_000);
     let fp = place_fp(&h, &taker, true, 17, 8, 10, 1, no_rest());
     // calibrated 22 / 17 / 5,288; §17 6 KB holds for this same-word shape.
-    assert_within("place take 8 levels", &fp, 24, 18, 5_288 + 256);
+    assert_within("place take 8 levels", &fp, 24, 18, 4_416 + 256);
 }
 
 #[test]
@@ -353,7 +353,7 @@ fn bound_place_take_eight_levels_then_rest() {
     assert_eq!(filled, 8);
     // 8-level take plus a rest at a new level (the two rows composed).
     // calibrated 27 / 22 / 6,872.
-    assert_within("place take 8 levels + rest", &fp, 29, 23, 6_872 + 256);
+    assert_within("place take 8 levels + rest", &fp, 29, 23, 5_896 + 256);
 }
 
 #[test]
@@ -363,7 +363,7 @@ fn bound_settle() {
     rest_ask(&h, &maker, 10, 2, 1);
     let (_, fp) = footprint_of(&h.env, &h.id, || h.client().settle(&maker, &h.market, &1));
     // calibrated 9 / 5 / 924; §17 0.6 KB is below measured (see 08).
-    assert_within("settle", &fp, 11, 6, 924 + 256);
+    assert_within("settle", &fp, 11, 6, 828 + 256);
 }
 
 #[test]
@@ -376,7 +376,7 @@ fn bound_replace() {
             .replace(&maker, &h.market, &1, &false, &12, &3, &window(&h))
     });
     // calibrated 13 / 7 / 1,980; §17 1.5 KB is below measured (see 08).
-    assert_within("replace", &fp, 15, 8, 1_980 + 256);
+    assert_within("replace", &fp, 15, 8, 1_784 + 256);
 }
 
 #[test]
@@ -402,7 +402,7 @@ fn bound_replace_batch_five_items() {
     // §17: one quote ≈ 14 / 8, a 40-quote refresh ≈ 130 / 90 — so about
     // 3 footprint / 2.1 writes per extra item on top of the first.
     // calibrated 25 / 19 / 6,316.
-    assert_within("replace_batch 5", &fp, 27, 20, 6_316 + 256);
+    assert_within("replace_batch 5", &fp, 27, 20, 5_352 + 256);
 }
 
 #[test]
@@ -432,7 +432,7 @@ fn bound_route_two_legs() {
     assert_eq!(out.get(1).unwrap().1, 4);
     // Two legs sweeping 4 levels each: bounded by the 8-level take row.
     // calibrated 22 / 17 / 5,288.
-    assert_within("route 2 legs (8 levels)", &fp, 24, 18, 5_288 + 256);
+    assert_within("route 2 legs (8 levels)", &fp, 24, 18, 4_416 + 256);
 }
 
 #[test]

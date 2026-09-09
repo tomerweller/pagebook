@@ -1,24 +1,29 @@
 //! Constructed worst-case shapes for M4 resource gates (architecture §17,
 //! docs/08-worst-case-matrix.md).
 //!
-//! The 32-level / 32-word sweep is the design ceiling: one ask in each of 32
-//! words, then a bid that takes them all. §17 quoted ~70 writes / ~22 KB; the
-//! host meters 72 / 26,640 (see 08). Gates are measured + slack.
+//! The 32-level / 32-word sweep is the entry-count ceiling: one ask in each of
+//! 32 words, then a bid that takes them all — 72 writes. With occupancy-sized
+//! slot vectors (ADR-036) a swept `Level` is written empty, so the write-byte
+//! ceiling moves to rewrites of deep levels: the "deep" shapes below rest into
+//! or replace onto levels that already hold 31 orders, so every `Level` write
+//! is at its 32-slot maximum. Gates are measured + slack.
 
 extern crate std;
 
 use super::footprint::footprint_of;
 use super::harness::{flags, mint, setup, window, Harness};
 use crate::{DataKey, PlaceFlags};
-use pagebook_types::WORD_TICKS;
+use pagebook_types::{INLINE_SLOTS, WORD_TICKS};
 use soroban_sdk::{testutils::Address as _, Address};
 
 const WORDS: u32 = 32;
 const TICK_MAX: u32 = WORDS * WORD_TICKS;
 const CAL_MAX_SWEEP_WRITES: u32 = 72;
-const CAL_MAX_SWEEP_BYTES: u32 = 26_640;
+const CAL_MAX_SWEEP_BYTES: u32 = 23_052;
 const CAL_BATCH40_WRITES: u32 = 124;
-const CAL_BATCH40_BYTES: u32 = 44_256;
+const CAL_BATCH40_BYTES: u32 = 36_572;
+const CAL_DEEP_REST_BYTES: u32 = 1_476;
+const CAL_DEEP_BATCH40_BYTES: u32 = 51_080;
 const SLACK_WRITES: u32 = 2;
 const SLACK_BYTES: u32 = 512;
 
@@ -168,6 +173,105 @@ fn bound_replace_batch_forty_quotes() {
         "replace_batch 40: write_bytes {} > gate {max_bytes} (measured {})",
         fp.write_bytes,
         fp.write_bytes
+    );
+}
+
+/// Fill `tick` with `INLINE_SLOTS - 1` one-lot asks from a third party, so the
+/// next rest there writes the `Level` at its maximum size.
+fn deepen(h: &Harness, tick: u32, nonce_base: u64) {
+    let other = Address::generate(&h.env);
+    for i in 0..(INLINE_SLOTS - 1) as u64 {
+        super::harness::rest_ask(h, &other, tick, 1, nonce_base + i);
+    }
+}
+
+/// Write-byte ceiling for a rest: the 32nd order at a level (a full 32-slot
+/// `Level`, 572 B payload) plus the `Order`.
+#[test]
+fn bound_place_rest_into_deep_level() {
+    let h = setup();
+    deepen(&h, 10, 1_000);
+    let maker = Address::generate(&h.env);
+    mint(&h, &h.base, &maker, 1_000_000_000);
+    let (_, fp) = footprint_of(&h.env, &h.id, || {
+        h.client().place(
+            &maker,
+            &h.market,
+            &false,
+            &10,
+            &1,
+            &10,
+            &1,
+            &window(&h),
+            &flags(),
+        )
+    });
+    let max_bytes = CAL_DEEP_REST_BYTES + SLACK_BYTES;
+    std::println!(
+        "footprint[place rest into deep level]: memory_read_entries={} write_entries={} write_bytes={} (gate {})",
+        fp.memory_read_entries,
+        fp.write_entries,
+        fp.write_bytes,
+        max_bytes
+    );
+    assert!(
+        fp.write_bytes <= max_bytes,
+        "rest into deep level: write_bytes {} > gate {max_bytes}",
+        fp.write_bytes
+    );
+}
+
+/// Write-byte ceiling for the batch: 40 quotes each moved onto a level that
+/// already holds 31 orders, so all 40 new `Level` writes are at maximum size.
+#[test]
+fn bound_replace_batch_forty_onto_deep_levels() {
+    let h = setup();
+    let maker = Address::generate(&h.env);
+    for n in 1..=40u64 {
+        super::harness::rest_ask(&h, &maker, 10 + n as u32, 2, n);
+    }
+    for n in 1..=40u32 {
+        deepen(&h, 100 + n, 10_000 * u64::from(n));
+    }
+    let mut items = soroban_sdk::Vec::new(&h.env);
+    for n in 1..=40u64 {
+        items.push_back(crate::ReplaceItem {
+            nonce: n,
+            is_bid: false,
+            tick: 100 + n as u32,
+            qty_lots: 3,
+            window: window(&h),
+        });
+    }
+    // The SDK test host's metering scales with total storage size, not with
+    // the footprint: with the ~1,300 orders this shape seeds, the invocation
+    // costs ~100x its network instructions and `footprint_of`'s snapshot trips
+    // the 400M per-tx cap. So the budget is lifted, the host meter is read
+    // directly (any later host call resets it), and only bytes are asserted.
+    // Per-op network cost is in ADR-036: a full-level rewrite is ~+180k
+    // instructions over a one-slot one.
+    h.env.cost_estimate().budget().reset_unlimited();
+    h.client().replace_batch(&maker, &h.market, &items);
+    let res = h.env.cost_estimate().resources();
+    let max_writes = CAL_BATCH40_WRITES + SLACK_WRITES;
+    let max_bytes = CAL_DEEP_BATCH40_BYTES + SLACK_BYTES;
+    std::println!(
+        "footprint[replace_batch 40 onto deep levels]: memory_read_entries={} write_entries={} write_bytes={} (gates {} / {})",
+        res.memory_read_entries,
+        res.write_entries,
+        res.write_bytes,
+        max_writes,
+        max_bytes
+    );
+    assert!(res.write_entries <= max_writes);
+    assert!(
+        res.write_bytes <= max_bytes,
+        "replace_batch 40 onto deep levels: write_bytes {} > gate {max_bytes}",
+        res.write_bytes
+    );
+    assert!(
+        res.write_bytes <= 132_096,
+        "deep batch must fit the per-tx write-byte cap"
     );
 }
 
