@@ -35,7 +35,7 @@ import {
   type LadderParams,
 } from "./lib/math";
 import { openLog, type OpsLog } from "./lib/opslog";
-import { classicTokens, collectUniverseXdr, feeKeys, restKeys, sweepPadSizes, tokenHex } from "./lib/padkeys";
+import { classicTokens, collectUniverseXdr, feeKeys, orderClientKey, restKeys, sweepPadSizes, tokenHex } from "./lib/padkeys";
 import { loadState, saveState, type MmState, type QuoteState } from "./lib/statefile";
 import { type OutcomeInput } from "./lib/outcomes";
 import { runSubmit, sleep, type RestoreBudget, type SubmitPair } from "./lib/submitlog";
@@ -231,7 +231,11 @@ export class MM {
   }
 
   async refreshSizes(extraKeys: import("../src/engine/clientKeys").ClientKey[] = []): Promise<void> {
-    const padKeys = [...extraKeys, ...feeKeys(this.a.market, this.hex.base, this.hex.quote)];
+    const padKeys = [
+      ...extraKeys,
+      ...feeKeys(this.a.market, this.hex.base, this.hex.quote),
+      orderClientKey(this.a.market, this.ownerHex, BigInt(this.state.next_nonce)),
+    ];
     for (const q of Object.values(this.state.quotes)) {
       padKeys.push(...restKeys(this.a.market, q.side === "bid", q.tick));
     }

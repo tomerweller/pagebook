@@ -6,15 +6,19 @@ intent and signature.
 ## Boundary
 
 `prepareInvocation` takes a typed intent (`place`, `placePostOnly`,
-`settle`, `replace`, `replaceBatch`) and an optional `PadPolicy`. It returns
-a prepared unsigned transaction with declared resources, footprint, restore
-marks, dropped-key count, and observed ledger; a restore preamble; or a
-typed engine error. Callers supply trade intent and padding policy. They do
-not assemble `quoted`, `padOut`, `sizes`, and `levelCap` as independent
-inputs.
+`settle`, `replace`, `replaceBatch`, or `invoke`) and an optional
+`PadPolicy`. `invoke` is the crank escape hatch: a function name and ScVal
+args, used by keepalive. `levelCap` is a field on the request, not on the
+policy. The function returns a prepared unsigned transaction with declared
+resources, footprint, restore marks, dropped-key count, and observed
+ledger; a restore preamble; or a typed engine error. Callers supply trade
+intent and padding policy. They do not assemble `quoted`, `padOut`, and
+`sizes` as independent inputs.
 
 `submitInvocation` is prepare, sign, send. A restore preamble runs
 `submitRestorePreamble` (at most two times) and then prepare runs again.
+If a restore preamble is still present after two restores, the result is
+`{ kind: "rpc", message: "restore preamble persisted" }`.
 
 ## Caps check
 

@@ -25,6 +25,7 @@ export function outcomeOf(result: OutcomeInput, opts?: { events?: unknown }): st
     case "txBadSeq":
       return withSim(result.at, "bad_seq");
     case "resourceLimit":
+      if (result.at === "prepare") return "prepare:resource_limit";
       return withSim(result.at, "resource_limit");
     case "sorobanInvalid":
       return withSim(result.at, "soroban_invalid");

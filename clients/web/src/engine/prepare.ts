@@ -4,8 +4,6 @@ import { readAccount } from "../wallet/account";
 import { NETWORK_PASSPHRASE } from "../wallet/network";
 import { keyStr, sameKey, toLedgerKey, toPlannedKey, type ClientKey, type Hex32, type PlannedLedgerKey } from "./clientKeys";
 import { mergeSizes, sweepPadSizes } from "./liveness";
-import { plannedKeysFor, touchedKeysFor, type Quoted } from "./pad";
-import { simulate } from "./quote";
 import {
   buildPlaceArgs,
   classifyFailedTx,
@@ -18,13 +16,17 @@ import {
   type ClassicToken,
   type EngineBody,
   type PlaceArgParams,
-} from "./submit";
+} from "./op";
+import { plannedKeysFor, touchedKeysFor, type Quoted } from "./pad";
+import { simulate } from "./quote";
 import {
   applyPad,
   checkDeclared,
   classicFee,
   declaredFromSoroban,
   DEFAULT_GROWTH,
+  simRestoreKeys,
+  TX_LIMITS,
   type ApplyPadSizes,
   type DeclaredResources,
   type TxLimits,
@@ -177,15 +179,25 @@ function emptySizes(cover: "sized" | "flat", growth: number, slack?: number): Ap
   };
 }
 
+function bandLevels(intent: Intent): number | undefined {
+  if (intent.kind !== "place") return undefined;
+  const lo = Math.min(intent.quoted.startTick, intent.padEnd);
+  const hi = Math.max(intent.quoted.startTick, intent.padEnd);
+  return hi - lo + 1;
+}
+
 function bandNote(
   intent: Intent,
   sizes: ApplyPadSizes,
   ctx: { contract: string; caller: string },
+  unswept = false,
 ): string {
   if (intent.kind !== "place") return "";
+  const levels = bandLevels(intent);
+  if (levels == null) return "";
+  if (unswept) return ` (band ${fmt(levels)} levels, unswept)`;
   const lo = Math.min(intent.quoted.startTick, intent.padEnd);
   const hi = Math.max(intent.quoted.startTick, intent.padEnd);
-  const levels = hi - lo + 1;
   let exist = 0;
   for (let t = lo; t <= hi; t++) {
     const k = toLedgerKey(ctx, { t: "Level", market: intent.quoted.market, isBid: !intent.quoted.ownSide, tick: t });
@@ -194,15 +206,14 @@ function bandNote(
   return ` (band ${fmt(levels)} levels, ${fmt(exist)} exist)`;
 }
 
-function markedFrom(data: StellarSdk.xdr.SorobanTransactionData, rw: StellarSdk.xdr.LedgerKey[]): StellarSdk.xdr.LedgerKey[] {
-  if (data.ext().switch() !== 1) return [];
-  const idxs = data.ext().resourceExt().archivedSorobanEntries();
-  const out: StellarSdk.xdr.LedgerKey[] = [];
-  for (const raw of idxs) {
-    const i = Number(raw);
-    if (Number.isInteger(i) && i >= 0 && i < rw.length) out.push(rw[i]);
-  }
-  return out;
+function oversizeMessage(
+  intent: Intent,
+  over: { resource: string; declared: number; cap: number },
+  note: string,
+): string {
+  const label = RESOURCE_LABEL[over.resource] ?? over.resource;
+  const hint = intent.kind === "place" || intent.kind === "placePostOnly" ? "; narrow the limit or split the take" : "";
+  return `declared ${fmt(over.declared)} ${label} over the ${fmt(over.cap)} per-transaction cap${note}${hint}`;
 }
 
 export async function prepareInvocation(rpc: Rpc, req: PrepareRequest): Promise<PrepareResult> {
@@ -256,6 +267,42 @@ export async function prepareInvocation(rpc: Rpc, req: PrepareRequest): Promise<
     ...tokenExtraKeys(req.contract, req.source, req.tokens),
   ]);
 
+  const existing = assembled.toEnvelope().v1().tx().ext().sorobanData();
+  const simFp = new StellarSdk.SorobanDataBuilder(existing);
+  const simRo = simFp.getReadOnly();
+  const simRw = simFp.getReadWrite();
+  const simSet = new Set([...simRo, ...simRw].map((k) => k.toXDR("base64")));
+  const limits = { ...TX_LIMITS, ...policy.limits };
+
+  let cachedLive = 0;
+  let cachedNon = 0;
+  if (policy.sweep) {
+    for (const p of extra) {
+      if (simSet.has(p.key.toXDR("base64"))) continue;
+      const info = policy.sweep.sizeOf(p.key);
+      if (!info) continue;
+      if (info.liveness === "live") cachedLive += 1;
+      else if (info.liveness === "nonexistent") cachedNon += 1;
+    }
+  }
+
+  const overEntries = (live: number, nonexistent: number): { resource: string; declared: number; cap: number } | null => {
+    const added = live + nonexistent;
+    const rw = simRw.length + added;
+    const entries = simRo.length + simRw.length + added;
+    if (rw > limits.rwEntries) return { resource: "rwEntries", declared: rw, cap: limits.rwEntries };
+    if (entries > limits.entries) return { resource: "entries", declared: entries, cap: limits.entries };
+    return null;
+  };
+
+  const refuseUnswept = (over: { resource: string; declared: number; cap: number }) => {
+    const message = oversizeMessage(req.intent, over, bandNote(req.intent, emptySizes(cover, growth, policy.slack), ctx, true));
+    return { kind: "resourceLimit" as const, at: "prepare" as const, message };
+  };
+
+  const cachedOver = overEntries(cachedLive, cachedNon);
+  if (cachedOver) return refuseUnswept(cachedOver);
+
   const uncovered: StellarSdk.xdr.LedgerKey[] = [];
   for (const p of extra) {
     if (policy.sweep?.sizeOf(p.key) != null) continue;
@@ -263,7 +310,26 @@ export async function prepareInvocation(rpc: Rpc, req: PrepareRequest): Promise<
   }
   let sizes: ApplyPadSizes;
   if (uncovered.length) {
-    const fresh = await sweepPadSizes(rpc, uncovered, { growth, chunk: 100, coverBytes: cover === "sized" });
+    const fresh = await sweepPadSizes(rpc, uncovered, {
+      growth,
+      chunk: 100,
+      coverBytes: cover === "sized",
+      stopWhen: ({ live, nonexistent }) => overEntries(cachedLive + live, cachedNon + nonexistent) != null,
+    });
+    if (fresh.stoppedEarly) {
+      let live = cachedLive;
+      let nonexistent = cachedNon;
+      for (const p of extra) {
+        if (simSet.has(p.key.toXDR("base64"))) continue;
+        if (policy.sweep?.sizeOf(p.key) != null) continue;
+        const info = fresh.sizeOf(p.key);
+        if (!info) continue;
+        if (info.liveness === "live") live += 1;
+        else if (info.liveness === "nonexistent") nonexistent += 1;
+      }
+      const over = overEntries(live, nonexistent) ?? { resource: "rwEntries", declared: limits.rwEntries + 1, cap: limits.rwEntries };
+      return refuseUnswept(over);
+    }
     sizes = wrapSizes(mergeSizes(policy.sweep, fresh), cover, growth, policy.slack);
   } else if (policy.sweep) {
     sizes = wrapSizes(policy.sweep, cover, growth, policy.slack);
@@ -282,7 +348,6 @@ export async function prepareInvocation(rpc: Rpc, req: PrepareRequest): Promise<
     marks.push(toLedgerKey(ctx, k).xdr);
   }
 
-  const existing = assembled.toEnvelope().v1().tx().ext().sorobanData();
   const padded = applyPad(existing, extra, marks, sizes, req.levelCap);
   const declared = declaredFromSoroban(padded.data);
   const fee = classicFee(padded.resourceFee);
@@ -296,9 +361,12 @@ export async function prepareInvocation(rpc: Rpc, req: PrepareRequest): Promise<
   const txBytes = finalTx.toEnvelope().toXDR().length + 256;
   const over = checkDeclared(declared, txBytes, policy.limits);
   if (over) {
-    const label = RESOURCE_LABEL[over.resource] ?? over.resource;
-    const message = `declared ${fmt(over.declared)} ${label} over the ${fmt(over.cap)} per-transaction cap${bandNote(req.intent, sizes, ctx)}; narrow the limit or split the take`;
-    return { kind: "resourceLimit", at: "prepare", message, declared };
+    return {
+      kind: "resourceLimit",
+      at: "prepare",
+      message: oversizeMessage(req.intent, over, bandNote(req.intent, sizes, ctx)),
+      declared,
+    };
   }
 
   const rw = [...new StellarSdk.SorobanDataBuilder(padded.data).getReadWrite()];
@@ -308,7 +376,7 @@ export async function prepareInvocation(rpc: Rpc, req: PrepareRequest): Promise<
     tx: finalTx,
     declared,
     footprint: { ro, rw },
-    restoreMarked: markedFrom(padded.data, rw),
+    restoreMarked: simRestoreKeys(padded.data, rw),
     dropped: padded.dropped,
     observedLedger: Math.max(sizes.latestLedger ?? 0, sim.latestLedger ?? 0),
   };

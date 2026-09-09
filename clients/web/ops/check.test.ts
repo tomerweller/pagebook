@@ -78,6 +78,8 @@ test("check flags and defaults", () => {
   expect(a.window).toBe(3600);
   expect(a.maxTraderAge).toBe(600);
   expect(isMmBadOutcome("footprint")).toBe(true);
+  expect(isMmBadOutcome("prepare:resource_limit")).toBe(true);
+  expect(isMmBadOutcome("resource_limit")).toBe(true);
   expect(isMmBadOutcome("typed:LevelFull")).toBe(true);
   expect(isMmBadOutcome("typed:Crossed")).toBe(false);
   expect(isMmBadOutcome("sim:typed:LevelFull")).toBe(false);

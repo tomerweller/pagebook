@@ -281,6 +281,31 @@ test("oversized sparse band returns resourceLimit at prepare without signing", a
   expect(padEnd).toBe(300);
 });
 
+test("oversized 20000-level band stops the sweep early", async () => {
+  const kp = StellarSdk.Keypair.random();
+  const accKey = accountLedgerKey(kp.publicKey()).toXDR("base64");
+  const quoted = placeQuoted({ startTick: 1, limitTick: 20_000, crossed: [] });
+  const padEnd = 20_000;
+  let calls = 0;
+  const rpc = fakeRpc({
+    kp,
+    simData: emptyData([], []),
+    onGet: (keys) => {
+      if (keys.length === 1 && keyB64(keys[0]) === accKey) return;
+      calls += 1;
+    },
+  });
+  const intent = placeIntent(quoted, padEnd);
+  const got = await prepareInvocation(rpc, reqFor(kp, intent));
+  expect(got).toMatchObject({ kind: "resourceLimit", at: "prepare" });
+  expect(calls).toBeLessThanOrEqual(6);
+  if (got.kind !== "resourceLimit") return;
+  expect(got.message).toMatch(/unswept/);
+  expect(got.message).toMatch(/band 20,000 levels/);
+  expect(quoted.limitTick).toBe(20_000);
+  expect(padEnd).toBe(20_000);
+}, 30_000);
+
 test("batched sweep chunks planned keys by 100", async () => {
   const kp = StellarSdk.Keypair.random();
   const accKey = accountLedgerKey(kp.publicKey()).toXDR("base64");

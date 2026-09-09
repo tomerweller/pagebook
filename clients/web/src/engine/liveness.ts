@@ -1,8 +1,7 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
 import type { Rpc } from "../book";
-import { instanceKey, sacBalanceKey } from "../keys";
-import { accountLedgerKey, trustlineLedgerKey } from "../wallet/account";
 import { scValKeyName, toLedgerKey, type ClientKey } from "./clientKeys";
+import { tokenExtraKeys, type ClassicToken } from "./op";
 import { DEFAULT_GROWTH, type ApplyPadSizes, type KeyLiveness, type PadKeySize } from "./txdata";
 
 export const PAD_SWEEP_CHUNK = 100;
@@ -50,15 +49,34 @@ function createSizeFor(key: StellarSdk.xdr.LedgerKey): number | undefined {
   }
 }
 
+export type SweepClassified = { live: number; nonexistent: number };
+
+function classifyMap(byKey: Map<string, PadKeySize>, latestLedger: number): SweepClassified {
+  let live = 0;
+  let nonexistent = 0;
+  for (const info of byKey.values()) {
+    info.liveness = classifyLiveness(info.liveUntil, latestLedger, info.exists);
+    if (info.liveness === "nonexistent") nonexistent += 1;
+    else if (info.liveness === "live") live += 1;
+  }
+  return { live, nonexistent };
+}
+
 export async function sweepPadSizes(
   rpc: Rpc,
   keys: StellarSdk.xdr.LedgerKey[],
-  opts?: { growth?: number; chunk?: number; coverBytes?: boolean },
-): Promise<ApplyPadSizes> {
+  opts?: {
+    growth?: number;
+    chunk?: number;
+    coverBytes?: boolean;
+    stopWhen?: (classified: SweepClassified) => boolean;
+  },
+): Promise<ApplyPadSizes & { stoppedEarly: boolean }> {
   const growth = opts?.growth ?? DEFAULT_GROWTH;
   const chunk = opts?.chunk ?? PAD_SWEEP_CHUNK;
   const byKey = new Map<string, PadKeySize>();
   let latestLedger = 0;
+  let stoppedEarly = false;
   for (let i = 0; i < keys.length; i += chunk) {
     const group = keys.slice(i, i + chunk);
     const res = await rpc.getLedgerEntries(...group);
@@ -80,10 +98,13 @@ export async function sweepPadSizes(
         byKey.set(b64, { exists: false, actualSize: 0, createSize: createSizeFor(key) });
       }
     }
+    const classified = classifyMap(byKey, latestLedger);
+    if (opts?.stopWhen?.(classified)) {
+      stoppedEarly = true;
+      break;
+    }
   }
-  for (const info of byKey.values()) {
-    info.liveness = classifyLiveness(info.liveUntil, latestLedger, info.exists);
-  }
+  if (!stoppedEarly) classifyMap(byKey, latestLedger);
   return {
     sizeOf(key) {
       return byKey.get(key.toXDR("base64"));
@@ -91,6 +112,7 @@ export async function sweepPadSizes(
     growth,
     coverBytes: opts?.coverBytes,
     latestLedger,
+    stoppedEarly,
   };
 }
 
@@ -108,13 +130,11 @@ export function mergeSizes(cached: ApplyPadSizes | undefined, fresh: ApplyPadSiz
   };
 }
 
-type SweepToken = { sac: string; code?: string; issuer?: string };
-
 export function collectUniverseXdr(opts: {
   contract: string;
   caller: string;
   padKeys: ClientKey[];
-  tokens: SweepToken[];
+  tokens: ClassicToken[];
 }): StellarSdk.xdr.LedgerKey[] {
   const ctx = { contract: opts.contract, caller: opts.caller };
   const out: StellarSdk.xdr.LedgerKey[] = [];
@@ -126,14 +146,6 @@ export function collectUniverseXdr(opts: {
     out.push(k);
   };
   for (const k of opts.padKeys) push(toLedgerKey(ctx, k).xdr);
-  for (const t of opts.tokens) {
-    push(instanceKey(t.sac).xdr);
-    push(sacBalanceKey(t.sac, opts.contract).xdr);
-    if (t.code && t.issuer) {
-      push(trustlineLedgerKey(opts.caller, { type: "credit", code: t.code, issuer: t.issuer }));
-    } else {
-      push(accountLedgerKey(opts.caller));
-    }
-  }
+  for (const p of tokenExtraKeys(opts.contract, opts.caller, opts.tokens)) push(p.key);
   return out;
 }

@@ -101,6 +101,7 @@ export type DeclaredResources = {
   fee: number;
 };
 
+// checkDeclared omits disk-read bytes because at 400 B per padded key the 400-entry cap fires first.
 export function checkDeclared(
   declared: DeclaredResources,
   txBytes: number,
@@ -165,7 +166,7 @@ export type ApplyPadSizes = {
 // so 48 B rides out three in-flight appends.
 export const DEFAULT_GROWTH = 48;
 
-function simRestoreKeys(data: StellarSdk.xdr.SorobanTransactionData, rw: StellarSdk.xdr.LedgerKey[]): StellarSdk.xdr.LedgerKey[] {
+export function simRestoreKeys(data: StellarSdk.xdr.SorobanTransactionData, rw: StellarSdk.xdr.LedgerKey[]): StellarSdk.xdr.LedgerKey[] {
   if (data.ext().switch() !== 1) return [];
   const idxs = data.ext().resourceExt().archivedSorobanEntries();
   const out: StellarSdk.xdr.LedgerKey[] = [];

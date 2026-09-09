@@ -74,8 +74,10 @@ is how the original migration cut over).
   deliberate unwinding only.
 - Sized pad cover (existence-aware write-byte coverage, ADR-028) is the
   default for the maker; it roughly halves declared write bytes. If
-  `resource_limit` outcomes appear (the quantified in-flight race), restart
-  with `--pad-cover flat`.
+  apply-time `resource_limit` outcomes appear (the quantified in-flight
+  race), restart with `--pad-cover flat`. `prepare:resource_limit` means
+  the requested band or batch is too wide; the flat fallback does not
+  change that.
 - The trader needs nothing persistent; the watchdog needs only the volumes.
 - Feeds (Coinbase, Kraken, Bitstamp), Soroban RPC, and Horizon are the only outbound
   dependencies; all HTTPS.
