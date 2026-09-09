@@ -257,3 +257,23 @@ takes for 271 lots, 5 rests, 4 settles, 0 rejected, 0 bad. No `footprint`,
 `trapped:unknown` or `resource_limit` outcome on either side; the `main` web
 client rendered the book from the single-vector `Level` entries with no
 console errors. The smoke maker was then unquoted with `--cancel-all`.
+
+### Wind-down and cutover
+
+2026-09-09, about 13:55 to 14:15 local. As in ADR-036: the fly machine's stop
+file was set and the `CB6I…DAZB` maker and trader were sent SIGTERM (the trader
+settled its rests, the maker exited with 40 quotes live and a current state
+file, the machine halted); the machine was started once to `sftp` that state
+and stopped again; `mm.ts --cancel-all` on `CB6I…DAZB` market 0 with
+`pb-mm-fly`, run from the ADR-036 checkout so its pads matched that contract,
+settled all 40 (first tx `19d9d1…f88d`, last `f42a5f…2427`), and the `level`
+view at both recorded bests read `open_lots` 0. The old contract's keepalive
+stopped with the machine; its entries archive after testnet's minimum TTL.
+
+`fly deploy` with `CONTRACT` = the new address and `MARKET` = 0 (image
+`deployment-01M237S3F1NF3WCVCF7AA6CED7`) updated the stopped machine's config;
+it was then started by hand. The maker starts from a fresh state file
+(`/data/state/mm-<CONTRACT>-m0.json`); the keepalive and refill cranks follow
+the env; the hourly watchdog log on the volume is the acceptance record
+(`MM OK` twice, 30 minutes apart, no `footprint` / `trapped:unknown` /
+`resource_limit` outcome).
