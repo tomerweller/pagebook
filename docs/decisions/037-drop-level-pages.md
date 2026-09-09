@@ -277,3 +277,25 @@ it was then started by hand. The maker starts from a fresh state file
 the env; the hourly watchdog log on the volume is the acceptance record
 (`MM OK` twice, 30 minutes apart, no `footprint` / `trapped:unknown` /
 `resource_limit` outcome).
+
+### Duplicate-bot incident and cleanup
+
+The first boot on the new image (14:05Z) ran two makers and two traders at
+once: the entrypoint's watchdog ran before the bots had logged a loop, read
+them as stale, and its autofix `kill -TERM`ed the pid in each pid file. That
+pid was the `npx` wrapper, so the runner restarted the bot while the node
+process it had wrapped lived on. The two makers shared one state file, each
+overwriting the other's quote list, and the same thing had happened on the
+ADR-036 boot (its watchdog log shows "autofix: restarting trader" at 01:58Z).
+A batched `getLedgerEntries` scan of each identity's nonce range found what
+the state files had lost: on `CB6I…DAZB` 39 maker orders (including a 109-lot
+bid at 18833 from the duplicate) and 14 trader rests; on `CAMH…56F4` 41 maker
+orders and 1 trader rest. All 95 were settled with `mm.ts --cancel-all` over
+constructed state files (the `CB6I…DAZB` ones from the ADR-036 checkout so the
+pads matched), the rescans read zero live orders for both identities on both
+contracts, and `pb-mm-fly` ended at 89,209 XLM / 67,381 USDC.
+
+The entrypoint now launches each bot under `setsid` and signals the process
+group, and the watchdog waits five minutes after boot before its first check
+(`ops/README.md`). The machine was redeployed with that image
+(`deployment-01M238TBG4GZZV19S5P2B7KAEC`) and started fresh.
