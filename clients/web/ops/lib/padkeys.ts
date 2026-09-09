@@ -58,7 +58,7 @@ export function classicTokens(opts: {
 }
 
 export function tokenXdrKeys(pagebook: string, caller: string, tokens: ClassicToken[]): StellarSdk.xdr.LedgerKey[] {
-  return tokenExtraKeys(pagebook, caller, tokens);
+  return tokenExtraKeys(pagebook, caller, tokens).map((p) => p.key);
 }
 
 function entryDataSize(entry: { xdr?: string; val?: string | StellarSdk.xdr.LedgerEntryData }): number {

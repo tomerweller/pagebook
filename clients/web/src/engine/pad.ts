@@ -66,11 +66,11 @@ export function keysForReplace(
   return keys;
 }
 
-// The architecture §14 pad rule for a place. Everything is declared
-// read-write: the opposite-side band of levels from the start tick to the pad
-// end, the words those ticks and the limit fall in, the summaries and best
-// ticks on both sides, the taker's own rest level and word, the order, the fee
-// accruals, and the four balance entries.
+// The architecture §14 pad rule for a place. The opposite-side band of
+// levels from the start tick to the pad end, the words those ticks and the
+// limit fall in, the summaries and bests on both sides, the taker's own rest
+// level and word, the order, the fee accruals, and the four balance entries
+// are read-write. Config and Market are read-only.
 export function pad(q: Quoted, padEnd: number): ClientKey[] {
   const opp = !q.ownSide;
   const m = q.market;
@@ -106,13 +106,13 @@ export function pad(q: Quoted, padEnd: number): ClientKey[] {
 
 // Of the archived keys in a pad, the ones the call itself will touch and so
 // must be restored first: the crossed levels, the own rest, the bitmaps, and
-// the bookkeeping entries. A padded but untouched band level can stay archived.
+// the bookkeeping entries. Config and Market are read-only on a trading call,
+// so they cannot be restore-marked: archivedSorobanEntries indexes the
+// read-write list. A padded but untouched band level can stay archived.
 export function restoreMarks(q: Quoted, padKeys: ClientKey[], archived: ClientKey[]): ClientKey[] {
   const m = q.market;
   const opp = !q.ownSide;
   const touched: ClientKey[] = [
-    { t: "Config" },
-    { t: "Market", market: m },
     { t: "TickSummary", market: m, isBid: opp },
     { t: "BestTick", market: m, isBid: opp },
     { t: "Level", market: m, isBid: q.ownSide, tick: q.limitTick },

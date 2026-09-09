@@ -36,6 +36,28 @@ pub enum ClientKey {
     UserBalance([u8; 32]),
 }
 
+/// Access a trading call declares for a `ClientKey`. `Config` and `Market` are
+/// read-only; every other variant can be written after a race.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Access {
+    ReadOnly,
+    ReadWrite,
+}
+
+pub fn access_of(k: &ClientKey) -> Access {
+    match k {
+        ClientKey::Config | ClientKey::Market(_) => Access::ReadOnly,
+        ClientKey::Level(_, _, _)
+        | ClientKey::Order(_, _, _)
+        | ClientKey::FeeAccrual(_, _)
+        | ClientKey::BestTick(_, _)
+        | ClientKey::TickSummary(_, _)
+        | ClientKey::TickWord(_, _, _)
+        | ClientKey::VaultBalance(_)
+        | ClientKey::UserBalance(_) => Access::ReadWrite,
+    }
+}
+
 /// One level the simulated walk visited (mirror of the contract's `CrossedLevel`).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CrossedLevel {
@@ -61,9 +83,10 @@ pub struct Quoted {
 /// The padded declaration for one place (architecture §14).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PadOut {
-    /// Every key to declare read-write. Superset of what the contract touches
-    /// for any book state reachable between simulation and inclusion inside
-    /// the band `[start_tick, pad_end]`.
+    /// Keys to declare. `access_of` splits them: `Config` and `Market` are
+    /// read-only; every other key is read-write. Superset of what the contract
+    /// touches for any book state reachable between simulation and inclusion
+    /// inside the band `[start_tick, pad_end]`.
     pub keys: Vec<ClientKey>,
 }
 
@@ -167,12 +190,12 @@ pub fn pad(q: &Quoted, pad_end: u32) -> PadOut {
 /// The keys the simulated execution touched (as opposed to padded-only keys):
 /// mark for P23 restore exactly those of them RPC reports archived (§14
 /// "Archived keys in the pad"). `archived` is the RPC answer for `out.keys`.
+/// `Config` and `Market` are omitted: they are read-only on a trading call,
+/// and `archivedSorobanEntries` indexes the read-write list.
 pub fn restore_marks(q: &Quoted, out: &PadOut, archived: &[ClientKey]) -> Vec<ClientKey> {
     let m = q.market;
     let opp = !q.own_side;
     let mut touched = vec![
-        ClientKey::Config,
-        ClientKey::Market(m),
         ClientKey::TickSummary(m, opp),
         ClientKey::BestTick(m, opp),
         ClientKey::Level(m, q.own_side, q.limit_tick),
@@ -369,6 +392,19 @@ mod tests {
     }
 
     #[test]
+    fn restore_marks_skips_archived_config_and_market() {
+        let q = quoted();
+        let out = pad(&q, 25);
+        let archived = vec![
+            ClientKey::Config,
+            ClientKey::Market(0),
+            ClientKey::Level(0, false, 10),
+        ];
+        let marks = restore_marks(&q, &out, &archived);
+        assert_eq!(marks, vec![ClientKey::Level(0, false, 10)]);
+    }
+
+    #[test]
     fn settle_keys_are_the_order_its_level_and_the_balances() {
         let keys = keys_for_settle(3, [7; 32], 9, true, 4, [1; 32], [2; 32]);
         assert_eq!(
@@ -489,17 +525,66 @@ mod tests {
 
     const RESTORE: &[&str] = &["Level(0,false,10)", "Level(0,false,11)", "Level(0,true,20)"];
 
+    const PLACE_3CROSS_RO: &[&str] = &["Config", "Market(0)"];
+    const SETTLE_RO: &[&str] = &["Market(0)"];
+    const REPLACE_CROSS_SIDE_RO: &[&str] = &["Config", "Market(0)"];
+
+    fn read_only_of(keys: &[ClientKey]) -> Vec<String> {
+        sorted_keys(
+            &keys
+                .iter()
+                .filter(|k| access_of(k) == Access::ReadOnly)
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    #[test]
+    fn access_of_every_variant() {
+        assert_eq!(access_of(&ClientKey::Config), Access::ReadOnly);
+        assert_eq!(access_of(&ClientKey::Market(0)), Access::ReadOnly);
+        assert_eq!(access_of(&ClientKey::Level(0, true, 1)), Access::ReadWrite);
+        assert_eq!(
+            access_of(&ClientKey::Order(0, [1; 32], 7)),
+            Access::ReadWrite
+        );
+        assert_eq!(
+            access_of(&ClientKey::FeeAccrual(0, [2; 32])),
+            Access::ReadWrite
+        );
+        assert_eq!(access_of(&ClientKey::BestTick(0, true)), Access::ReadWrite);
+        assert_eq!(
+            access_of(&ClientKey::TickSummary(0, false)),
+            Access::ReadWrite
+        );
+        assert_eq!(
+            access_of(&ClientKey::TickWord(0, true, 0)),
+            Access::ReadWrite
+        );
+        assert_eq!(
+            access_of(&ClientKey::VaultBalance([2; 32])),
+            Access::ReadWrite
+        );
+        assert_eq!(
+            access_of(&ClientKey::UserBalance([3; 32])),
+            Access::ReadWrite
+        );
+    }
+
     #[test]
     fn js_fixtures() {
         let q = fixture_quoted();
         let out = pad(&q, 12);
         assert_eq!(sorted_keys(&out.keys), PLACE_3CROSS);
+        assert_eq!(read_only_of(&out.keys), PLACE_3CROSS_RO);
 
         let settle = keys_for_settle(0, [1; 32], 7, true, 20, [2; 32], [3; 32]);
         assert_eq!(sorted_keys(&settle), SETTLE);
+        assert_eq!(read_only_of(&settle), SETTLE_RO);
 
         let rep = keys_for_replace(0, [1; 32], 7, true, 20, false, 22, [2; 32], [3; 32]);
         assert_eq!(sorted_keys(&rep), REPLACE_CROSS_SIDE);
+        assert_eq!(read_only_of(&rep), REPLACE_CROSS_SIDE_RO);
 
         let archived = vec![
             ClientKey::Level(0, false, 10),
