@@ -1,9 +1,89 @@
 import { orderKey } from "../keys";
 import type { Rpc } from "../book";
 import { wordOf } from "../decode";
-import { keyStr, sameKey, type ClientKey, type Hex32 } from "./clientKeys";
+import { accessOf, addrToHex, keyStr, sameKey, type ClientKey, type Hex32 } from "./clientKeys";
 
 export const MAX_REPLACE_BATCH = 40;
+
+export function restKeys(market: number, isBid: boolean, tick: number): ClientKey[] {
+  return [
+    { t: "Level", market, isBid, tick },
+    { t: "TickWord", market, isBid, word: wordOf(tick) },
+    { t: "TickSummary", market, isBid },
+    { t: "BestTick", market, isBid },
+    { t: "BestTick", market, isBid: !isBid },
+  ];
+}
+
+export function feeKeys(market: number, base: Hex32, quote: Hex32): ClientKey[] {
+  return [
+    { t: "FeeAccrual", market, token: base },
+    { t: "FeeAccrual", market, token: quote },
+  ];
+}
+
+export function orderClientKey(market: number, owner: Hex32, nonce: bigint): ClientKey {
+  return { t: "Order", market, owner, nonce };
+}
+
+export type PlannedIntent =
+  | { kind: "place"; quoted: Quoted; padEnd: number }
+  | {
+      kind: "placePostOnly";
+      market: number;
+      isBid: boolean;
+      limitTick: number;
+      taker: string;
+      nonce: bigint;
+      base: Hex32;
+      quote: Hex32;
+    }
+  | { kind: "settle"; market: number; base: Hex32; quote: Hex32 }
+  | { kind: "replace"; market: number; isBid: boolean; tick: number; base: Hex32; quote: Hex32 }
+  | {
+      kind: "replaceBatch";
+      market: number;
+      items: { isBid: boolean; tick: number }[];
+      base: Hex32;
+      quote: Hex32;
+    }
+  | { kind: "invoke" };
+
+export function plannedKeysFor(intent: PlannedIntent): ClientKey[] {
+  switch (intent.kind) {
+    case "place":
+      return pad(intent.quoted, intent.padEnd);
+    case "placePostOnly": {
+      const keys = [
+        ...restKeys(intent.market, intent.isBid, intent.limitTick),
+        orderClientKey(intent.market, addrToHex(intent.taker), intent.nonce),
+        ...feeKeys(intent.market, intent.base, intent.quote),
+      ];
+      dedup(keys);
+      return keys;
+    }
+    case "settle":
+      return feeKeys(intent.market, intent.base, intent.quote);
+    case "replace": {
+      const keys = [...restKeys(intent.market, intent.isBid, intent.tick), ...feeKeys(intent.market, intent.base, intent.quote)];
+      dedup(keys);
+      return keys;
+    }
+    case "replaceBatch": {
+      const keys = [...feeKeys(intent.market, intent.base, intent.quote)];
+      for (const it of intent.items) keys.push(...restKeys(intent.market, it.isBid, it.tick));
+      dedup(keys);
+      return keys;
+    }
+    case "invoke":
+      return [];
+  }
+}
+
+export function touchedKeysFor(intent: PlannedIntent, planned: ClientKey[]): ClientKey[] {
+  if (intent.kind === "place") return restoreMarks(intent.quoted, planned, planned);
+  return planned.filter((k) => accessOf(k) === "rw");
+}
 
 export type CrossedLevel = {
   tick: number;

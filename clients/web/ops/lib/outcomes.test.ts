@@ -22,6 +22,7 @@ test("outcomeOf maps engine result kinds", () => {
   expect(outcomeOf({ kind: "txBadSeq", message: "txBadSeq", at: "simulation" })).toBe("sim:bad_seq");
   expect(outcomeOf({ kind: "resourceLimit", message: "ResourceLimitExceeded" })).toBe("resource_limit");
   expect(outcomeOf({ kind: "resourceLimit", message: "ResourceLimitExceeded", at: "simulation" })).toBe("sim:resource_limit");
+  expect(outcomeOf({ kind: "resourceLimit", message: "too wide", at: "prepare" })).toBe("prepare:resource_limit");
   expect(outcomeOf({ kind: "sorobanInvalid", message: "TxSorobanInvalid" })).toBe("soroban_invalid");
   expect(outcomeOf({ kind: "sorobanInvalid", message: "TxSorobanInvalid", at: "simulation" })).toBe("sim:soroban_invalid");
   expect(outcomeOf({ kind: "timeout", message: "timed out", hash: "ff" })).toBe("rpc_timeout");

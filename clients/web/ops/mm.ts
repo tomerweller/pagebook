@@ -76,7 +76,7 @@ export type MmArgs = {
   log: string;
   cancelAll: boolean;
   cancelOnExit: boolean;
-  padV2: boolean;
+  padCover: "sized" | "flat";
   fixedMid?: number;
   walkMid: boolean;
 };
@@ -116,13 +116,17 @@ export const MM_SPECS: ArgSpec<keyof MmArgs & string>[] = [
   { flag: "--log", dest: "log", default: "ops/mm.log" },
   { flag: "--cancel-all", dest: "cancelAll", type: "bool" },
   { flag: "--cancel-on-exit", dest: "cancelOnExit", type: "bool" },
-  { flag: "--pad-v2", dest: "padV2", type: "bool" },
+  { flag: "--pad-cover", dest: "padCover", default: "sized" },
   { flag: "--fixed-mid", dest: "fixedMid", type: "int" },
   { flag: "--walk-mid", dest: "walkMid", type: "bool" },
 ];
 
 export function parseMmArgs(argv: string[]): MmArgs {
-  return parseArgs<MmArgs>(argv, MM_SPECS);
+  const a = parseArgs<MmArgs>(argv, MM_SPECS);
+  if (a.padCover !== "sized" && a.padCover !== "flat") {
+    throw new Error(`argument --pad-cover: expected sized|flat, got ${a.padCover}`);
+  }
+  return a;
 }
 
 export type MmDeps = {
@@ -218,12 +222,16 @@ export class MM {
     process.on("SIGINT", stop);
   }
 
-  padSizes(): ApplyPadSizes | undefined {
-    return this.sizes;
+  private padPolicy(): { sweep?: ApplyPadSizes; cover: "sized" | "flat" } {
+    return { sweep: this.sizes, cover: this.a.padCover };
   }
 
   async refreshSizes(extraKeys: import("../src/engine/clientKeys").ClientKey[] = []): Promise<void> {
-    const padKeys = [...extraKeys, ...feeKeys(this.a.market, this.hex.base, this.hex.quote)];
+    const padKeys = [
+      ...extraKeys,
+      ...feeKeys(this.a.market, this.hex.base, this.hex.quote),
+      orderClientKey(this.a.market, this.ownerHex, BigInt(this.state.next_nonce)),
+    ];
     for (const q of Object.values(this.state.quotes)) {
       padKeys.push(...restKeys(this.a.market, q.side === "bid", q.tick));
     }
@@ -233,7 +241,7 @@ export class MM {
       padKeys,
       tokens: this.tokens,
     });
-    this.sizes = await sweepPadSizes(this.rpc, keys, { chunk: 100, coverBytes: this.a.padV2 });
+    this.sizes = await sweepPadSizes(this.rpc, keys, { chunk: 100, coverBytes: this.a.padCover === "sized" });
   }
 
   async submit(label: string, extra: Record<string, unknown>, run: () => Promise<EngineResult>): Promise<SubmitPair> {
@@ -253,11 +261,6 @@ export class MM {
     const nonce = this.nextNonce();
     const start = startTickForPostOnly(isBid, this.a.tickMin, this.a.tickMax);
     const flags = { post_only: true, fill_or_kill: false, no_rest: false };
-    const padKeys = [
-      ...restKeys(this.a.market, isBid, tick),
-      orderClientKey(this.a.market, this.ownerHex, BigInt(nonce)),
-      ...feeKeys(this.a.market, this.hex.base, this.hex.quote),
-    ];
     const { out, res } = await this.submit("place", {}, () =>
       this.postOnlyFn(this.rpc, {
         contract: this.a.contract,
@@ -270,9 +273,10 @@ export class MM {
         startTick: start,
         nonce: BigInt(nonce),
         flags,
-        padKeys,
         tokens: this.tokens,
-        sizes: this.padSizes(),
+        base: this.hex.base,
+        quote: this.hex.quote,
+        policy: this.padPolicy(),
         levelCap: this.levelCap,
       }),
     );
@@ -291,7 +295,6 @@ export class MM {
     if (!items.length) return;
     if (items.length === 1) {
       const { nonce, isBid, tick, lots, slot } = items[0];
-      const padKeys = [...restKeys(this.a.market, isBid, tick), ...feeKeys(this.a.market, this.hex.base, this.hex.quote)];
       const { out, res } = await this.submit("replace", {}, () =>
         submitReplace(this.rpc, {
           contract: this.a.contract,
@@ -302,10 +305,11 @@ export class MM {
           isBid,
           tick,
           qtyLots: BigInt(lots),
-          padKeys,
           tokens: this.tokens,
-          sizes: this.padSizes(),
-        levelCap: this.levelCap,
+          base: this.hex.base,
+          quote: this.hex.quote,
+          policy: this.padPolicy(),
+          levelCap: this.levelCap,
         }),
       );
       if (res.kind === "ok") {
@@ -327,8 +331,6 @@ export class MM {
       tick: it.tick,
       qtyLots: BigInt(it.lots),
     }));
-    const padKeys = [...feeKeys(this.a.market, this.hex.base, this.hex.quote)];
-    for (const it of items) padKeys.push(...restKeys(this.a.market, it.isBid, it.tick));
     const { out, res } = await this.submit("replace_batch", {}, () =>
       submitReplaceBatch(this.rpc, {
         contract: this.a.contract,
@@ -336,9 +338,10 @@ export class MM {
         owner: this.id.address,
         market: this.a.market,
         items: body,
-        padKeys,
         tokens: this.tokens,
-        sizes: this.padSizes(),
+        base: this.hex.base,
+        quote: this.hex.quote,
+        policy: this.padPolicy(),
         levelCap: this.levelCap,
       }),
     );
@@ -410,15 +413,14 @@ export class MM {
           quoted,
           tokens: this.tokens,
           padEnd: healTarget,
-          sizes: this.padSizes(),
-        levelCap: this.levelCap,
+          policy: this.padPolicy(),
+          levelCap: this.levelCap,
         }),
     );
     return out;
   }
 
   async settle(nonce: number): Promise<string> {
-    const padKeys = feeKeys(this.a.market, this.hex.base, this.hex.quote);
     const { out, res } = await this.submit("settle", {}, () =>
       submitSettle(this.rpc, {
         contract: this.a.contract,
@@ -426,9 +428,10 @@ export class MM {
         owner: this.id.address,
         market: this.a.market,
         nonce: BigInt(nonce),
-        padKeys,
         tokens: this.tokens,
-        sizes: this.padSizes(),
+        base: this.hex.base,
+        quote: this.hex.quote,
+        policy: this.padPolicy(),
         levelCap: this.levelCap,
       }),
     );

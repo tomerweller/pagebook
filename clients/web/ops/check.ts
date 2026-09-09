@@ -53,7 +53,7 @@ export function parseCheckArgs(argv: string[]): CheckArgs {
   return parseArgs<CheckArgs>(argv, CHECK_SPECS);
 }
 
-const MM_BAD = new Set(["footprint", "trapped:unknown", "build_error", "sign_error", "resource_limit", "soroban_invalid"]);
+const MM_BAD = new Set(["footprint", "trapped:unknown", "build_error", "sign_error", "resource_limit", "prepare:resource_limit", "soroban_invalid"]);
 
 export function archivedKeyName(outcome: string): string | null {
   const inner = outcome.startsWith("sim:") ? outcome.slice(4) : outcome;

@@ -40,7 +40,7 @@ services:
       sh -c 'exec npx tsx ops/mm.ts
       --contract $$CONTRACT --market $$MARKET --identity pb-mm
       --base-sac $$BASE_SAC --quote-sac $$QUOTE_SAC --usdc-issuer $$USDC_ISSUER
-      --levels 20 --base-lots 25 --step-lots 12 --interval 30 --pad-v2
+      --levels 20 --base-lots 25 --step-lots 12 --interval 30
       --state ops/state/mm-$$CONTRACT-m$$MARKET.json --log ops/logs/mm.log'
 
   trader:

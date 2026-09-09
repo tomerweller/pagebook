@@ -32,7 +32,7 @@ run_mm() {
     setsid npx tsx ops/mm.ts \
       --contract "$contract" --market "$market" --identity pb-mm \
       --base-sac "$base_sac" --quote-sac "$quote_sac" --usdc-issuer "$usdc_issuer" \
-      --levels 20 --base-lots 25 --step-lots 12 --interval 30 --pad-v2 \
+      --levels 20 --base-lots 25 --step-lots 12 --interval 30 \
       --state "$mm_state" --log "$log_dir/mm.log" &
     child=$!
     printf '%s\n' "$child" > "$mm_pid_file"

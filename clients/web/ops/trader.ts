@@ -1,8 +1,8 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRpc, fetchLevelCap, type Rpc } from "../src/book";
-import { addrToHex, toLedgerKey } from "../src/engine/clientKeys";
-import { pad } from "../src/engine/pad";
+import { addrToHex } from "../src/engine/clientKeys";
+import type { Quoted } from "../src/engine/pad";
 import {
   decodePlaceResult,
   restoreKeys,
@@ -14,8 +14,7 @@ import { parseArgs, type ArgSpec } from "./lib/args";
 import { loadIdentity, type Identity } from "./lib/identity";
 import { bandTooWide, drawTake, randInt, repr, takeLimit } from "./lib/math";
 import { openLog, type OpsLog } from "./lib/opslog";
-import { classicTokens, feeKeys, sweepPadSizes, tokenHex } from "./lib/padkeys";
-import type { ApplyPadSizes } from "../src/engine/txdata";
+import { classicTokens, tokenHex } from "./lib/padkeys";
 import { MAX_RESTORES_PER_CYCLE, recordSubmit, runSubmit, sleep, type RestoreBudget } from "./lib/submitlog";
 import { outcomeOf, type OutcomeInput } from "./lib/outcomes";
 import { createViews, type Views } from "./lib/views";
@@ -199,23 +198,14 @@ export class Trader {
     return { out, res, ret, nonce };
   }
 
-  private async bandSizes(quoted: Parameters<typeof pad>[0], padEnd: number): Promise<ApplyPadSizes | undefined> {
-    const keys = pad(quoted, padEnd).map((k) => toLedgerKey({ contract: this.a.contract, caller: this.id.address }, k).xdr);
-    // Pad v2 (ADR-028): cover band keys at their live size, nonexistent ones at
-    // the creation estimate. Under the flat rate a wide band would run into the
-    // per-tx write-byte cap now that a full `Level` is 1,000 B (ADR-037).
-    return sweepPadSizes(this.rpc, keys, { chunk: 100, coverBytes: true });
-  }
-
   private async submitPlaceOnce(
     isBid: boolean,
     limit: number,
     lots: number,
     nonce: number,
-    quoted: Parameters<typeof pad>[0],
+    quoted: Quoted,
     flags: { post_only: boolean; fill_or_kill: boolean; no_rest: boolean },
   ) {
-    const sizes = await this.bandSizes(quoted, limit);
     return submitPlace(this.rpc, {
       contract: this.a.contract,
       secret: this.id.secret,
@@ -230,7 +220,6 @@ export class Trader {
       quoted,
       tokens: this.tokens,
       padEnd: limit,
-      sizes,
       levelCap: this.levelCap,
     });
   }
@@ -245,7 +234,6 @@ export class Trader {
   }
 
   async settle(nonce: number): Promise<string> {
-    const padKeys = feeKeys(this.a.market, this.hex.base, this.hex.quote);
     const { out } = await runSubmit(
       this.log,
       "settle",
@@ -257,8 +245,9 @@ export class Trader {
         owner: this.id.address,
         market: this.a.market,
         nonce: BigInt(nonce),
-        padKeys,
         tokens: this.tokens,
+        base: this.hex.base,
+        quote: this.hex.quote,
         levelCap: this.levelCap,
       }),
       this.restoreCtx(),

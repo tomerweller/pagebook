@@ -1,6 +1,24 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
 import type { PlannedLedgerKey } from "./clientKeys";
 
+export type TxLimits = {
+  entries: number;
+  rwEntries: number;
+  writeBytes: number;
+  instructions: number;
+  txBytes: number;
+};
+
+export const TX_LIMITS: TxLimits = {
+  entries: 400,
+  rwEntries: 200,
+  writeBytes: 132_096,
+  instructions: 400_000_000,
+  txBytes: 132_096,
+};
+
+export const MAX_SWEEP_KEYS = 4 * TX_LIMITS.entries;
+
 export const WRITE_ENTRY_FEE = 2500;
 // Flat per-key write-byte cover (pad v1, and the creation estimate under
 // pad v2). A `Level` is one entry holding the whole queue (ADR-037): 124 B of
@@ -85,6 +103,26 @@ export type DeclaredResources = {
   fee: number;
 };
 
+// checkDeclared omits disk-read bytes because at 400 B per padded key the 400-entry cap fires first.
+export function checkDeclared(
+  declared: DeclaredResources,
+  txBytes: number,
+  limits?: Partial<TxLimits>,
+): { resource: string; declared: number; cap: number } | null {
+  const cap = { ...TX_LIMITS, ...limits };
+  const checks: [string, number, number][] = [
+    ["entries", declared.rw + declared.ro, cap.entries],
+    ["rwEntries", declared.rw, cap.rwEntries],
+    ["writeBytes", declared.wb, cap.writeBytes],
+    ["instructions", declared.instr, cap.instructions],
+    ["txBytes", txBytes, cap.txBytes],
+  ];
+  for (const [resource, value, limit] of checks) {
+    if (value > limit) return { resource, declared: value, cap: limit };
+  }
+  return null;
+}
+
 export type ApplyPadResult = {
   data: StellarSdk.xdr.SorobanTransactionData;
   added: number;
@@ -130,7 +168,7 @@ export type ApplyPadSizes = {
 // so 48 B rides out three in-flight appends.
 export const DEFAULT_GROWTH = 48;
 
-function simRestoreKeys(data: StellarSdk.xdr.SorobanTransactionData, rw: StellarSdk.xdr.LedgerKey[]): StellarSdk.xdr.LedgerKey[] {
+export function simRestoreKeys(data: StellarSdk.xdr.SorobanTransactionData, rw: StellarSdk.xdr.LedgerKey[]): StellarSdk.xdr.LedgerKey[] {
   if (data.ext().switch() !== 1) return [];
   const idxs = data.ext().resourceExt().archivedSorobanEntries();
   const out: StellarSdk.xdr.LedgerKey[] = [];
@@ -172,15 +210,18 @@ export function applyPad(
   const addedKeys: StellarSdk.xdr.LedgerKey[] = [];
   const nextRo = [...ro];
   const nextRw = [...rw];
+  const markSet = new Set(restoreMarks.map(keyB64));
   for (const planned of extra) {
     const k = planned.key;
     const s = keyB64(k);
     if (rwSet.has(s)) continue;
-    if (sizes?.sizeOf(k)?.liveness === "archived") {
+    const archived = sizes?.sizeOf(k)?.liveness === "archived";
+    const marked = markSet.has(s);
+    if (archived && !marked) {
       dropped += 1;
       continue;
     }
-    if (planned.access === "rw") {
+    if (planned.access === "rw" || marked) {
       if (roMap.has(s)) {
         const idx = nextRo.findIndex((x) => keyB64(x) === s);
         if (idx >= 0) nextRo.splice(idx, 1);

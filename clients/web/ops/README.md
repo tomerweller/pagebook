@@ -16,7 +16,7 @@ memory; nothing is written to disk.
 ## Cloud deployment (Docker Compose)
 
 `deploy/docker-compose.yml` runs three services on any Docker host: `mm`
-(maker with `--pad-v2`), `trader`, and `watchdog` (runs `check.ts` every 30
+(maker), `trader`, and `watchdog` (runs `check.ts` every 30
 minutes; its stdout is the alert surface, so `docker compose logs -f
 watchdog` and grep for `MM ALERT`). State and JSONL logs live on named
 volumes (`pagebook-state`, `pagebook-logs`).
@@ -72,10 +72,12 @@ is how the original migration cut over).
 - The maker exits on SIGTERM leaving quotes live; `restart: unless-stopped`
   plus state resume makes container restarts safe. `--cancel-on-exit` is for
   deliberate unwinding only.
-- `--pad-v2` (existence-aware write-byte coverage, ADR-028) is on for the
-  maker in the compose file; it roughly halves declared write bytes. If
-  `resource_limit` outcomes appear (the quantified in-flight race), drop the
-  flag and restart.
+- Sized pad cover (existence-aware write-byte coverage, ADR-028) is the
+  default for the maker; it roughly halves declared write bytes. If
+  apply-time `resource_limit` outcomes appear (the quantified in-flight
+  race), restart with `--pad-cover flat`. `prepare:resource_limit` means
+  the requested band or batch is too wide; the flat fallback does not
+  change that.
 - The trader needs nothing persistent; the watchdog needs only the volumes.
 - Feeds (Coinbase, Kraken, Bitstamp), Soroban RPC, and Horizon are the only outbound
   dependencies; all HTTPS.

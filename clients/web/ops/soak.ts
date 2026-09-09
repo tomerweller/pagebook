@@ -18,7 +18,7 @@ import { clipDetail } from "./lib/logparse";
 import { randInt, repr, startTickForPostOnly } from "./lib/math";
 import { openLog, type OpsLog } from "./lib/opslog";
 import { outcomeOf, type OutcomeInput } from "./lib/outcomes";
-import { classicPairTokens, feeKeys, orderClientKey, restKeys, tokenHex } from "./lib/padkeys";
+import { classicPairTokens, tokenHex } from "./lib/padkeys";
 import { resultText, sleep } from "./lib/submitlog";
 import { createViews, type Views } from "./lib/views";
 
@@ -220,11 +220,6 @@ export class Soak {
       );
       return { out, nonce };
     }
-    const padKeys = [
-      ...restKeys(this.a.market, isBid, limit),
-      orderClientKey(this.a.market, this.ownerHex(role), BigInt(nonce)),
-      ...feeKeys(this.a.market, this.hex.base, this.hex.quote),
-    ];
     const out = await this.submit(role, "place", () =>
       submitPostOnlyPlace(this.rpc, {
         contract: this.a.contract,
@@ -237,8 +232,9 @@ export class Soak {
         startTick: startTickForPostOnly(isBid, this.a.tickMin, this.a.tickMax),
         nonce: BigInt(nonce),
         flags,
-        padKeys,
         tokens: this.tokens,
+        base: this.hex.base,
+        quote: this.hex.quote,
       }),
     );
     return { out, nonce };
@@ -246,7 +242,6 @@ export class Soak {
 
   async settle(role: string, nonce: number): Promise<string> {
     const id = this.ids[role];
-    const padKeys = feeKeys(this.a.market, this.hex.base, this.hex.quote);
     return this.submit(role, "settle", () =>
       submitSettle(this.rpc, {
         contract: this.a.contract,
@@ -254,8 +249,9 @@ export class Soak {
         owner: id.address,
         market: this.a.market,
         nonce: BigInt(nonce),
-        padKeys,
         tokens: this.tokens,
+        base: this.hex.base,
+        quote: this.hex.quote,
         levelCap: this.levelCap,
       }),
     );
@@ -299,8 +295,6 @@ export class Soak {
             qtyLots: BigInt(randInt(2, 6, this.rnd)),
           };
         });
-        const padKeys = [...feeKeys(this.a.market, this.hex.base, this.hex.quote)];
-        for (const it of items) padKeys.push(...restKeys(this.a.market, it.isBid, it.tick));
         const id = this.ids[role];
         const bout = await this.submit(role, "replace_batch", () =>
           submitReplaceBatch(this.rpc, {
@@ -309,8 +303,9 @@ export class Soak {
             owner: id.address,
             market: this.a.market,
             items,
-            padKeys,
             tokens: this.tokens,
+            base: this.hex.base,
+            quote: this.hex.quote,
             levelCap: this.levelCap,
           }),
         );
@@ -351,7 +346,6 @@ export class Soak {
         await this.sleepFor(1 + this.rnd() * 2);
         const nt = Math.max(1, bb - 20);
         const id = this.ids[role];
-        const padKeys = [...feeKeys(this.a.market, this.hex.base, this.hex.quote), ...restKeys(this.a.market, true, nt)];
         await this.submit(role, "replace", () =>
           submitReplace(this.rpc, {
             contract: this.a.contract,
@@ -362,8 +356,9 @@ export class Soak {
             isBid: true,
             tick: nt,
             qtyLots: 1n,
-            padKeys,
             tokens: this.tokens,
+            base: this.hex.base,
+            quote: this.hex.quote,
             levelCap: this.levelCap,
           }),
         );
