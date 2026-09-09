@@ -49,17 +49,10 @@ function createSizeFor(key: StellarSdk.xdr.LedgerKey): number | undefined {
   }
 }
 
-export type SweepClassified = { live: number; nonexistent: number };
-
-function classifyMap(byKey: Map<string, PadKeySize>, latestLedger: number): SweepClassified {
-  let live = 0;
-  let nonexistent = 0;
+function classifyMap(byKey: Map<string, PadKeySize>, latestLedger: number): void {
   for (const info of byKey.values()) {
     info.liveness = classifyLiveness(info.liveUntil, latestLedger, info.exists);
-    if (info.liveness === "nonexistent") nonexistent += 1;
-    else if (info.liveness === "live") live += 1;
   }
-  return { live, nonexistent };
 }
 
 export async function sweepPadSizes(
@@ -69,7 +62,7 @@ export async function sweepPadSizes(
     growth?: number;
     chunk?: number;
     coverBytes?: boolean;
-    stopWhen?: (classified: SweepClassified) => boolean;
+    stopWhen?: (byKey: Map<string, PadKeySize>) => boolean;
   },
 ): Promise<ApplyPadSizes & { stoppedEarly: boolean }> {
   const growth = opts?.growth ?? DEFAULT_GROWTH;
@@ -98,8 +91,8 @@ export async function sweepPadSizes(
         byKey.set(b64, { exists: false, actualSize: 0, createSize: createSizeFor(key) });
       }
     }
-    const classified = classifyMap(byKey, latestLedger);
-    if (opts?.stopWhen?.(classified)) {
+    classifyMap(byKey, latestLedger);
+    if (i + chunk < keys.length && opts?.stopWhen?.(byKey)) {
       stoppedEarly = true;
       break;
     }

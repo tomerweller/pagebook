@@ -125,6 +125,7 @@ function fakeRpc(opts: {
   latestLedger?: number;
   onGet?: (keys: StellarSdk.xdr.LedgerKey[]) => void;
   sendTransaction?: Rpc["sendTransaction"];
+  everyArchived?: boolean;
 }): Rpc {
   const accKey = accountLedgerKey(opts.kp.publicKey()).toXDR("base64");
   const latest = opts.latestLedger ?? 200;
@@ -142,6 +143,10 @@ function fakeRpc(opts: {
         const b64 = keyB64(k);
         const hit = opts.entries?.get(b64);
         if (hit) entries.push({ key: b64, xdr: hit.xdr, liveUntilLedgerSeq: hit.liveUntil });
+        else if (opts.everyArchived) {
+          const dummy = liveEntryXdr(PAGEBOOK, k, 40);
+          entries.push({ key: b64, xdr: dummy.xdr, liveUntilLedgerSeq: 50 });
+        }
       }
       return { entries, latestLedger: latest };
     },
@@ -326,6 +331,70 @@ test("batched sweep chunks planned keys by 100", async () => {
   expect(batches).toEqual([PAD_SWEEP_CHUNK, PAD_SWEEP_CHUNK, 50]);
   expect(batches.reduce((a, b) => a + b, 0)).toBe(250);
 });
+
+test("186-level absent band on an empty sim footprint prepares at 200 read-write", async () => {
+  const kp = StellarSdk.Keypair.random();
+  const quoted = placeQuoted({ startTick: 1, limitTick: 186, crossed: [] });
+  const rpc = fakeRpc({ kp, simData: emptyData([], []) });
+  const got = await prepareInvocation(rpc, reqFor(kp, placeIntent(quoted, 186)));
+  expect(got.kind).toBe("prepared");
+  if (got.kind !== "prepared") return;
+  expect(got.declared.rw).toBe(200);
+});
+
+test("180-level band overlapping the sim footprint prepares", async () => {
+  const kp = StellarSdk.Keypair.random();
+  const ctx = { contract: PAGEBOOK, caller: kp.publicKey() };
+  const crossed = Array.from({ length: 10 }, (_, i) => ({ tick: i + 1 }));
+  const quoted = placeQuoted({ startTick: 1, limitTick: 180, crossed });
+  const padEnd = 180;
+  const planned = pad(quoted, padEnd);
+  const simRo = planned.filter((k) => accessOf(k) === "ro").map((k) => toLedgerKey(ctx, k).xdr);
+  const simRw = planned
+    .filter((k) => {
+      if (accessOf(k) !== "rw") return false;
+      if (k.t === "Level" && k.isBid === !quoted.ownSide) return k.tick >= 1 && k.tick <= 10;
+      return true;
+    })
+    .map((k) => toLedgerKey(ctx, k).xdr);
+  const rpc = fakeRpc({ kp, simData: emptyData(simRo, simRw) });
+  const got = await prepareInvocation(rpc, reqFor(kp, placeIntent(quoted, padEnd)));
+  expect(got.kind).toBe("prepared");
+  if (got.kind !== "prepared") return;
+  expect(got.declared.rw).toBe(194);
+});
+
+test("band at 201 read-write entries returns resourceLimit", async () => {
+  const kp = StellarSdk.Keypair.random();
+  const quoted = placeQuoted({ startTick: 1, limitTick: 187, crossed: [] });
+  const rpc = fakeRpc({ kp, simData: emptyData([], []) });
+  const got = await prepareInvocation(rpc, reqFor(kp, placeIntent(quoted, 187)));
+  expect(got).toMatchObject({ kind: "resourceLimit", at: "prepare" });
+  if (got.kind !== "resourceLimit") return;
+  expect(got.message).toMatch(/declared 201 read-write entries/);
+});
+
+test("mostly-archived 20000-level band refuses without sweeping", async () => {
+  const kp = StellarSdk.Keypair.random();
+  const accKey = accountLedgerKey(kp.publicKey()).toXDR("base64");
+  const quoted = placeQuoted({ startTick: 1, limitTick: 20_000, crossed: [] });
+  let calls = 0;
+  const rpc = fakeRpc({
+    kp,
+    simData: emptyData([], []),
+    everyArchived: true,
+    onGet: (keys) => {
+      if (keys.length === 1 && keyB64(keys[0]) === accKey) return;
+      calls += 1;
+    },
+  });
+  const got = await prepareInvocation(rpc, reqFor(kp, placeIntent(quoted, 20_000)));
+  expect(got).toMatchObject({ kind: "resourceLimit", at: "prepare" });
+  expect(calls).toBeLessThanOrEqual(1);
+  if (got.kind !== "resourceLimit") return;
+  expect(got.message).toMatch(/unswept/);
+  expect(got.message).toMatch(/band 20,000 levels/);
+}, 30_000);
 
 test("cover flat uses the flat rate; cached sweep skips covered keys", async () => {
   const kp = StellarSdk.Keypair.random();

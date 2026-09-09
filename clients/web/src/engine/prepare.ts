@@ -25,10 +25,12 @@ import {
   classicFee,
   declaredFromSoroban,
   DEFAULT_GROWTH,
+  MAX_SWEEP_KEYS,
   simRestoreKeys,
   TX_LIMITS,
   type ApplyPadSizes,
   type DeclaredResources,
+  type PadKeySize,
   type TxLimits,
 } from "./txdata";
 
@@ -216,6 +218,50 @@ function oversizeMessage(
   return `declared ${fmt(over.declared)} ${label} over the ${fmt(over.cap)} per-transaction cap${note}${hint}`;
 }
 
+function keyB64(k: StellarSdk.xdr.LedgerKey): string {
+  return k.toXDR("base64");
+}
+
+function countsTowardAdd(liveness: PadKeySize["liveness"], missing: "skip" | "added"): boolean {
+  if (liveness === "live" || liveness === "nonexistent") return true;
+  if (liveness === "archived") return false;
+  return missing === "added";
+}
+
+function countWouldAdd(
+  extra: PlannedLedgerKey[],
+  simRo: Set<string>,
+  simRw: Set<string>,
+  simRoLen: number,
+  simRwLen: number,
+  sizeOf: (key: StellarSdk.xdr.LedgerKey) => PadKeySize | undefined,
+  missing: "skip" | "added" = "skip",
+): { rw: number; entries: number } {
+  let addRw = 0;
+  let addEntries = 0;
+  for (const p of extra) {
+    const s = keyB64(p.key);
+    if (!countsTowardAdd(sizeOf(p.key)?.liveness, missing)) continue;
+    if (p.access === "rw") {
+      if (simRw.has(s)) continue;
+      addRw += 1;
+      if (!simRo.has(s)) addEntries += 1;
+    } else if (!simRo.has(s) && !simRw.has(s)) {
+      addEntries += 1;
+    }
+  }
+  return { rw: simRwLen + addRw, entries: simRoLen + simRwLen + addEntries };
+}
+
+function overflowOf(
+  counts: { rw: number; entries: number },
+  limits: TxLimits,
+): { resource: string; declared: number; cap: number } | null {
+  if (counts.rw > limits.rwEntries) return { resource: "rwEntries", declared: counts.rw, cap: limits.rwEntries };
+  if (counts.entries > limits.entries) return { resource: "entries", declared: counts.entries, cap: limits.entries };
+  return null;
+}
+
 export async function prepareInvocation(rpc: Rpc, req: PrepareRequest): Promise<PrepareResult> {
   const acc = await readAccount(rpc, req.source);
   if (!acc.exists) return { kind: "rpc", message: "account not funded" };
@@ -271,36 +317,24 @@ export async function prepareInvocation(rpc: Rpc, req: PrepareRequest): Promise<
   const simFp = new StellarSdk.SorobanDataBuilder(existing);
   const simRo = simFp.getReadOnly();
   const simRw = simFp.getReadWrite();
-  const simSet = new Set([...simRo, ...simRw].map((k) => k.toXDR("base64")));
+  const simRoSet = new Set(simRo.map((k) => k.toXDR("base64")));
+  const simRwSet = new Set(simRw.map((k) => k.toXDR("base64")));
   const limits = { ...TX_LIMITS, ...policy.limits };
 
-  let cachedLive = 0;
-  let cachedNon = 0;
-  if (policy.sweep) {
-    for (const p of extra) {
-      if (simSet.has(p.key.toXDR("base64"))) continue;
-      const info = policy.sweep.sizeOf(p.key);
-      if (!info) continue;
-      if (info.liveness === "live") cachedLive += 1;
-      else if (info.liveness === "nonexistent") cachedNon += 1;
-    }
-  }
-
-  const overEntries = (live: number, nonexistent: number): { resource: string; declared: number; cap: number } | null => {
-    const added = live + nonexistent;
-    const rw = simRw.length + added;
-    const entries = simRo.length + simRw.length + added;
-    if (rw > limits.rwEntries) return { resource: "rwEntries", declared: rw, cap: limits.rwEntries };
-    if (entries > limits.entries) return { resource: "entries", declared: entries, cap: limits.entries };
-    return null;
-  };
+  const wouldAdd = (
+    sizeOf: (key: StellarSdk.xdr.LedgerKey) => PadKeySize | undefined,
+    missing: "skip" | "added" = "skip",
+  ) => countWouldAdd(extra, simRoSet, simRwSet, simRo.length, simRw.length, sizeOf, missing);
 
   const refuseUnswept = (over: { resource: string; declared: number; cap: number }) => {
     const message = oversizeMessage(req.intent, over, bandNote(req.intent, emptySizes(cover, growth, policy.slack), ctx, true));
     return { kind: "resourceLimit" as const, at: "prepare" as const, message };
   };
 
-  const cachedOver = overEntries(cachedLive, cachedNon);
+  const cachedOver = overflowOf(
+    wouldAdd((k) => policy.sweep?.sizeOf(k)),
+    limits,
+  );
   if (cachedOver) return refuseUnswept(cachedOver);
 
   const uncovered: StellarSdk.xdr.LedgerKey[] = [];
@@ -308,29 +342,43 @@ export async function prepareInvocation(rpc: Rpc, req: PrepareRequest): Promise<
     if (policy.sweep?.sizeOf(p.key) != null) continue;
     uncovered.push(p.key);
   }
+  if (uncovered.length > MAX_SWEEP_KEYS) {
+    const over =
+      overflowOf(
+        wouldAdd((k) => policy.sweep?.sizeOf(k), "added"),
+        limits,
+      ) ?? { resource: "entries", declared: uncovered.length, cap: limits.entries };
+    return refuseUnswept(over);
+  }
+
   let sizes: ApplyPadSizes;
   if (uncovered.length) {
     const fresh = await sweepPadSizes(rpc, uncovered, {
       growth,
       chunk: 100,
       coverBytes: cover === "sized",
-      stopWhen: ({ live, nonexistent }) => overEntries(cachedLive + live, cachedNon + nonexistent) != null,
+      stopWhen: (byKey) =>
+        overflowOf(
+          wouldAdd((k) => byKey.get(keyB64(k)) ?? policy.sweep?.sizeOf(k)),
+          limits,
+        ) != null,
     });
     if (fresh.stoppedEarly) {
-      let live = cachedLive;
-      let nonexistent = cachedNon;
-      for (const p of extra) {
-        if (simSet.has(p.key.toXDR("base64"))) continue;
-        if (policy.sweep?.sizeOf(p.key) != null) continue;
-        const info = fresh.sizeOf(p.key);
-        if (!info) continue;
-        if (info.liveness === "live") live += 1;
-        else if (info.liveness === "nonexistent") nonexistent += 1;
+      const over = overflowOf(
+        wouldAdd((k) => fresh.sizeOf(k) ?? policy.sweep?.sizeOf(k)),
+        limits,
+      );
+      if (over) return refuseUnswept(over);
+      const rest = uncovered.filter((k) => fresh.sizeOf(k) == null);
+      if (rest.length) {
+        const more = await sweepPadSizes(rpc, rest, { growth, chunk: 100, coverBytes: cover === "sized" });
+        sizes = wrapSizes(mergeSizes(policy.sweep, mergeSizes(fresh, more)), cover, growth, policy.slack);
+      } else {
+        sizes = wrapSizes(mergeSizes(policy.sweep, fresh), cover, growth, policy.slack);
       }
-      const over = overEntries(live, nonexistent) ?? { resource: "rwEntries", declared: limits.rwEntries + 1, cap: limits.rwEntries };
-      return refuseUnswept(over);
+    } else {
+      sizes = wrapSizes(mergeSizes(policy.sweep, fresh), cover, growth, policy.slack);
     }
-    sizes = wrapSizes(mergeSizes(policy.sweep, fresh), cover, growth, policy.slack);
   } else if (policy.sweep) {
     sizes = wrapSizes(policy.sweep, cover, growth, policy.slack);
   } else {

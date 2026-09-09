@@ -17,6 +17,8 @@ export const TX_LIMITS: TxLimits = {
   txBytes: 132_096,
 };
 
+export const MAX_SWEEP_KEYS = 4 * TX_LIMITS.entries;
+
 export const WRITE_ENTRY_FEE = 2500;
 // Flat per-key write-byte cover (pad v1, and the creation estimate under
 // pad v2). A `Level` is one entry holding the whole queue (ADR-037): 124 B of

@@ -222,10 +222,6 @@ export class MM {
     process.on("SIGINT", stop);
   }
 
-  padSizes(): ApplyPadSizes | undefined {
-    return this.sizes;
-  }
-
   private padPolicy(): { sweep?: ApplyPadSizes; cover: "sized" | "flat" } {
     return { sweep: this.sizes, cover: this.a.padCover };
   }

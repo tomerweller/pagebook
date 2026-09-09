@@ -30,6 +30,13 @@ An oversize request returns `{ kind: "resourceLimit", at: "prepare" }`. The
 message names the resource, the declared value, the cap, and, for a place,
 the band shape (level count and how many of those levels exist). The intent
 is never modified. The client does not narrow `padEnd` or `limitTick`.
+The sweep counts only the read-write keys `applyPad` would add, not
+`Config`, `Market`, token instances, or keys already in the simulation
+read-write list. It stops while chunks remain once that count exceeds a
+cap, and it refuses before fetching when more than 1,600 uncovered keys
+would be read (`MAX_SWEEP_KEYS`). Those early results name the count so
+far and, for a place, `(band N levels, unswept)`; they have no `declared`
+field because padding did not run.
 
 ## Cover and extra keys
 
