@@ -130,14 +130,20 @@ not in this keychain, and the tokens are test money. The old contract's
 keepalive stopped with the machine; its entries archive after testnet's
 minimum TTL.
 
-Fly configuration (`fly.toml`: `CONTRACT` = the new address, `MARKET` = 0;
-the maker's state file now `mm-<CONTRACT>.json`) is committed. The `fly deploy`
-itself is an operator step: the maker on `pb-mm-fly` and the trader on
-`pb-trader-fly` start on the new contract from an empty book, the keepalive
-and refill cranks follow the env, and the watchdog reports hourly. Acceptance
-is the ADR-031 criterion: `MM OK` twice, 30 minutes apart, with no
-`footprint` / `trapped:unknown` / `resource_limit` outcome. A fresh
-`ops/resources.ts` sample after that replaces the 09 numbers.
+Fly cutover, 2026-09-09 01:58Z: `fly deploy` with `CONTRACT` = the new
+address and `MARKET` = 0 (image `deployment-01M21Y56M1N7HW82G9G7BFTKBY`,
+machine version 11; the machine had been stopped, so the deploy updated its
+config and it was started by hand). On boot the refill crank found both
+reserves above their floors, the keepalive crank saw nothing due on the new
+contract, and the maker (`pb-mm-fly`) started from a fresh per-contract state
+file, `/data/state/mm-<CONTRACT>.json` (the old `mm.json` stays on the volume
+as history), building its 40-quote ladder six places per cycle while the
+trader (`pb-trader-fly`) took against it from the first minute; the first
+sampled take filled 114 lots. Acceptance is the ADR-031 criterion: `MM OK`
+twice, 30 minutes apart, with no `footprint` / `trapped:unknown` /
+`resource_limit` outcome; the watchdog runs hourly from the entrypoint and its
+log on the volume is the record. A fresh `ops/resources.ts` sample after that
+replaces the 09 numbers.
 
 ## What changed
 
