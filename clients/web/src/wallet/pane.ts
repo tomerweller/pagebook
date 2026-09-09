@@ -14,13 +14,15 @@ import { addTrustline, fundWithFriendbot, type SubmitResult } from "./classic";
 import { Keystore, type Identity, type StorageLike } from "./keystore";
 import { missingCredits, planProvision, type ProvisionSource } from "./provision";
 import { checkTestnet } from "./network";
-import { createOrders, loadOpenOrders, ownTicksOf, rememberNonce, sessionRestedNonces, type OpenOrder } from "./orders";
-import { instrumentExtra, noteFills } from "./awareness";
-import { createTicket } from "./ticket";
+import { createOrders, loadOpenOrders, rememberNonce, type OpenOrder } from "./orders";
+import { instrumentExtra } from "./awareness";
+import { createTicket, type TradeIntent } from "./ticket";
+import { refreshBalances as pullBalances, refreshOrders as pullOrders } from "./refresh";
 import { priceOf } from "../view/format";
 import type { AppState } from "../view/market";
 import type { Store } from "../store";
 import { MarkupCache } from "../view/stable";
+import { createRequestGate } from "../request";
 
 export type WalletHandle = {
   prefillFromLadder(side: "bid" | "ask", tick: number): void;
@@ -231,8 +233,9 @@ export function mountWallet(opts: {
   const app = opts.store;
   const ks = new Keystore(opts.storage ?? defaultStorage());
   const el = opts.el;
-  let balGen = 0;
-  let lastSeenLedger = -1;
+  const balGate = createRequestGate<string>();
+  const orderGate = createRequestGate<{ sequence: string }>();
+  let lastSeenKey = "";
   let shellReady = false;
   let bound = false;
   const cache = new MarkupCache();
@@ -258,9 +261,8 @@ export function mountWallet(opts: {
     getPublic: () => app.read().wallet.active?.publicKey ?? null,
     getMarket: opts.getMarket,
     onRefresh: opts.onRefresh,
-    onRested: (nonce) => {
-      const id = app.read().wallet.active;
-      if (id) rememberNonce(id.publicKey, app.read().book.contract, opts.getMarket(), nonce);
+    onRested: (nonce: bigint, intent: TradeIntent) => {
+      rememberNonce(intent.taker, intent.contract, intent.market, nonce);
       void refreshOrders();
     },
     onLog: (text, hash) => {
@@ -283,67 +285,22 @@ export function mountWallet(opts: {
   }
 
   async function refreshOrders(): Promise<void> {
-    const w = app.read().wallet;
-    const id = w.active;
-    if (!w.enabled || !id || !w.account?.exists) {
-      app.update((s) => {
-        s.wallet.openOrders = [];
-        s.book.ownTicks = { bid: new Set(), ask: new Set() };
-      });
-      return;
-    }
-    const events = app.read().book.eventState.events;
-    const extra = sessionRestedNonces(events, id.publicKey);
-    const openOrders = await loadOpenOrders(
-      opts.rpc,
-      app.read().book.contract,
-      id.publicKey,
-      w.account.sequence.toString(),
-      opts.getMarket(),
-      id.publicKey,
-      extra,
-      events,
-    );
-    app.update((s) => {
-      const noted = noteFills(s.wallet.lastFilled, openOrders);
-      s.wallet.lastFilled = noted.next;
-      s.wallet.unseenFills += noted.added;
-      s.wallet.openOrders = openOrders;
-      s.book.ownTicks = ownTicksOf(openOrders);
+    await pullOrders(app, orderGate, {
+      loadOpenOrders: (contract, source, sequence, market, owner, extraNonces, events) =>
+        loadOpenOrders(opts.rpc, contract, source, sequence, market, owner, extraNonces, events),
     });
   }
 
   async function refreshBalances(): Promise<void> {
-    const w = app.read().wallet;
-    const id = w.active;
-    if (!w.enabled || !id) {
-      app.update((s) => {
-        s.wallet.account = null;
-        s.wallet.trustlines = [];
-        s.wallet.openOrders = [];
-      });
-      return;
+    const committed = await pullBalances(app, balGate, {
+      readAccount: (pubkey) => readAccount(opts.rpc, pubkey),
+      readTrustlines: (pubkey, assets) => readTrustlines(opts.rpc, pubkey, assets),
+      credits: () => creditAssets(marketRows(app.read().book.snapshot)),
+    });
+    if (committed) {
+      void refreshOrders();
+      void maybeProvision();
     }
-    const gen = ++balGen;
-    try {
-      const acc = await readAccount(opts.rpc, id.publicKey);
-      if (gen !== balGen) return;
-      const credits = creditAssets(marketRows(app.read().book.snapshot));
-      const trustlines = credits.length ? await readTrustlines(opts.rpc, id.publicKey, credits) : [];
-      if (gen !== balGen) return;
-      app.update((s) => {
-        s.wallet.account = acc;
-        s.wallet.trustlines = trustlines;
-      });
-    } catch (e) {
-      if (gen !== balGen) return;
-      const msg = e instanceof Error ? e.message : String(e);
-      app.update((s) => {
-        s.wallet.status = `RPC: ${msg}`;
-      });
-    }
-    void refreshOrders();
-    void maybeProvision();
   }
 
   function ensureShell(): void {
@@ -918,11 +875,13 @@ export function mountWallet(opts: {
   }
 
   function maybeRefreshOnLedger(): void {
-    const snap = app.read().book.snapshot;
-    const w = app.read().wallet;
-    if (!snap || snap.latestLedger === lastSeenLedger) return;
-    lastSeenLedger = snap.latestLedger;
-    if (w.enabled && w.active) void refreshBalances();
+    const { book, wallet } = app.read();
+    const snap = book.snapshot;
+    if (!snap) return;
+    const key = `${book.market ?? 0}|${snap.latestLedger}`;
+    if (key === lastSeenKey) return;
+    lastSeenKey = key;
+    if (wallet.enabled && wallet.active) void refreshBalances();
   }
 
   async function boot(): Promise<void> {
