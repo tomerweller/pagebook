@@ -206,6 +206,32 @@ test("live, absent, and archived band entries", async () => {
   expect(got.declared.wb).toBe(50 + live.size + DEFAULT_GROWTH + CREATE_SIZES.Level);
 });
 
+test("archived extraKeys Level on replaceBatch is dropped and not marked", async () => {
+  const kp = StellarSdk.Keypair.random();
+  const ctx = { contract: PAGEBOOK, caller: kp.publicKey() };
+  const extraLevel: ClientKey = { t: "Level", market: 0, isBid: false, tick: 99 };
+  const extraXdr = toLedgerKey(ctx, extraLevel).xdr;
+  const arch = liveEntryXdr(PAGEBOOK, extraXdr, 40);
+  const intent: Intent = {
+    kind: "replaceBatch",
+    owner: kp.publicKey(),
+    market: 0,
+    items: [{ nonce: 1n, isBid: true, tick: 10, qtyLots: 1n }],
+    base: T2,
+    quote: T3,
+  };
+  const rpc = fakeRpc({
+    kp,
+    simData: emptyData([], []),
+    entries: new Map([[keyB64(extraXdr), { xdr: arch.xdr, liveUntil: 50 }]]),
+  });
+  const got = await prepareInvocation(rpc, reqFor(kp, intent, { policy: { extraKeys: [extraLevel] } }));
+  expect(got.kind).toBe("prepared");
+  if (got.kind !== "prepared") return;
+  expect(got.dropped).toBe(1);
+  expect(got.restoreMarked.map(keyB64)).not.toContain(keyB64(extraXdr));
+});
+
 test("archived touched rest Level is kept and marked; nonexistent Order is not", async () => {
   const kp = StellarSdk.Keypair.random();
   const ctx = { contract: PAGEBOOK, caller: kp.publicKey() };
@@ -263,12 +289,18 @@ test("preserved simulation restore marks keep the same key at its new index", as
 
 test("oversized sparse band returns resourceLimit at prepare without signing", async () => {
   const kp = StellarSdk.Keypair.random();
+  const accKey = accountLedgerKey(kp.publicKey()).toXDR("base64");
   const quoted = placeQuoted({ startTick: 1, limitTick: 300, crossed: [] });
   const padEnd = 300;
   let sent = 0;
+  const batches: number[] = [];
   const rpc = fakeRpc({
     kp,
     simData: emptyData([], []),
+    onGet: (keys) => {
+      if (keys.length === 1 && keyB64(keys[0]) === accKey) return;
+      batches.push(keys.length);
+    },
     sendTransaction: async () => {
       sent += 1;
       return { status: "PENDING", hash: "aa".repeat(32) };
@@ -281,12 +313,13 @@ test("oversized sparse band returns resourceLimit at prepare without signing", a
   expect(got.message).toMatch(/read-write entries|write bytes|footprint entries/);
   expect(got.message).toMatch(/200|132,096|400/);
   expect(got.message).toMatch(/band 300 levels/);
+  expect(batches).toEqual([PAD_SWEEP_CHUNK, PAD_SWEEP_CHUNK, PAD_SWEEP_CHUNK]);
   expect(sent).toBe(0);
   expect(quoted.limitTick).toBe(300);
   expect(padEnd).toBe(300);
 });
 
-test("oversized 20000-level band stops the sweep early", async () => {
+test("oversized 20000-level band refuses at the sweep ceiling", async () => {
   const kp = StellarSdk.Keypair.random();
   const accKey = accountLedgerKey(kp.publicKey()).toXDR("base64");
   const quoted = placeQuoted({ startTick: 1, limitTick: 20_000, crossed: [] });
@@ -303,8 +336,9 @@ test("oversized 20000-level band stops the sweep early", async () => {
   const intent = placeIntent(quoted, padEnd);
   const got = await prepareInvocation(rpc, reqFor(kp, intent));
   expect(got).toMatchObject({ kind: "resourceLimit", at: "prepare" });
-  expect(calls).toBeLessThanOrEqual(6);
+  expect(calls).toBe(0);
   if (got.kind !== "resourceLimit") return;
+  expect(got.message).toMatch(/20,000 keys to sweep exceed the 1,600 sweep ceiling/);
   expect(got.message).toMatch(/unswept/);
   expect(got.message).toMatch(/band 20,000 levels/);
   expect(quoted.limitTick).toBe(20_000);
@@ -374,7 +408,7 @@ test("band at 201 read-write entries returns resourceLimit", async () => {
   expect(got.message).toMatch(/declared 201 read-write entries/);
 });
 
-test("mostly-archived 20000-level band refuses without sweeping", async () => {
+test("mostly-archived 20000-level band refuses at the sweep ceiling", async () => {
   const kp = StellarSdk.Keypair.random();
   const accKey = accountLedgerKey(kp.publicKey()).toXDR("base64");
   const quoted = placeQuoted({ startTick: 1, limitTick: 20_000, crossed: [] });
@@ -390,8 +424,9 @@ test("mostly-archived 20000-level band refuses without sweeping", async () => {
   });
   const got = await prepareInvocation(rpc, reqFor(kp, placeIntent(quoted, 20_000)));
   expect(got).toMatchObject({ kind: "resourceLimit", at: "prepare" });
-  expect(calls).toBeLessThanOrEqual(1);
+  expect(calls).toBe(0);
   if (got.kind !== "resourceLimit") return;
+  expect(got.message).toMatch(/20,000 keys to sweep exceed the 1,600 sweep ceiling/);
   expect(got.message).toMatch(/unswept/);
   expect(got.message).toMatch(/band 20,000 levels/);
 }, 30_000);

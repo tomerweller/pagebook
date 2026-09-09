@@ -218,6 +218,13 @@ function oversizeMessage(
   return `declared ${fmt(over.declared)} ${label} over the ${fmt(over.cap)} per-transaction cap${note}${hint}`;
 }
 
+function ceilingMessage(intent: Intent, keyCount: number): string {
+  const levels = bandLevels(intent);
+  const band = levels != null ? ` (band ${fmt(levels)} levels, unswept)` : "";
+  const hint = intent.kind === "place" || intent.kind === "placePostOnly" ? "; narrow the limit" : "";
+  return `${fmt(keyCount)} keys to sweep exceed the ${fmt(MAX_SWEEP_KEYS)} sweep ceiling${band}${hint}`;
+}
+
 function keyB64(k: StellarSdk.xdr.LedgerKey): string {
   return k.toXDR("base64");
 }
@@ -307,9 +314,15 @@ export async function prepareInvocation(rpc: Rpc, req: PrepareRequest): Promise<
   const cover = policy.cover ?? "sized";
   const growth = policy.growth ?? DEFAULT_GROWTH;
   const ctx = { contract: req.contract, caller: req.source };
-  const planned = unionClient([...plannedKeysFor(req.intent), ...(policy.extraKeys ?? [])]);
+  if (!policy.sweep && req.intent.kind === "place") {
+    const levels = bandLevels(req.intent);
+    if (levels != null && levels > MAX_SWEEP_KEYS) {
+      return { kind: "resourceLimit", at: "prepare", message: ceilingMessage(req.intent, levels) };
+    }
+  }
+  const planned = plannedKeysFor(req.intent);
   const extra = unionPlanned([
-    ...planned.map((k) => toPlannedKey(ctx, k)),
+    ...unionClient([...planned, ...(policy.extraKeys ?? [])]).map((k) => toPlannedKey(ctx, k)),
     ...tokenExtraKeys(req.contract, req.source, req.tokens),
   ]);
 
@@ -321,10 +334,8 @@ export async function prepareInvocation(rpc: Rpc, req: PrepareRequest): Promise<
   const simRwSet = new Set(simRw.map((k) => k.toXDR("base64")));
   const limits = { ...TX_LIMITS, ...policy.limits };
 
-  const wouldAdd = (
-    sizeOf: (key: StellarSdk.xdr.LedgerKey) => PadKeySize | undefined,
-    missing: "skip" | "added" = "skip",
-  ) => countWouldAdd(extra, simRoSet, simRwSet, simRo.length, simRw.length, sizeOf, missing);
+  const wouldAdd = (sizeOf: (key: StellarSdk.xdr.LedgerKey) => PadKeySize | undefined) =>
+    countWouldAdd(extra, simRoSet, simRwSet, simRo.length, simRw.length, sizeOf);
 
   const refuseUnswept = (over: { resource: string; declared: number; cap: number }) => {
     const message = oversizeMessage(req.intent, over, bandNote(req.intent, emptySizes(cover, growth, policy.slack), ctx, true));
@@ -343,12 +354,7 @@ export async function prepareInvocation(rpc: Rpc, req: PrepareRequest): Promise<
     uncovered.push(p.key);
   }
   if (uncovered.length > MAX_SWEEP_KEYS) {
-    const over =
-      overflowOf(
-        wouldAdd((k) => policy.sweep?.sizeOf(k), "added"),
-        limits,
-      ) ?? { resource: "entries", declared: uncovered.length, cap: limits.entries };
-    return refuseUnswept(over);
+    return { kind: "resourceLimit", at: "prepare", message: ceilingMessage(req.intent, uncovered.length) };
   }
 
   let sizes: ApplyPadSizes;
@@ -369,16 +375,8 @@ export async function prepareInvocation(rpc: Rpc, req: PrepareRequest): Promise<
         limits,
       );
       if (over) return refuseUnswept(over);
-      const rest = uncovered.filter((k) => fresh.sizeOf(k) == null);
-      if (rest.length) {
-        const more = await sweepPadSizes(rpc, rest, { growth, chunk: 100, coverBytes: cover === "sized" });
-        sizes = wrapSizes(mergeSizes(policy.sweep, mergeSizes(fresh, more)), cover, growth, policy.slack);
-      } else {
-        sizes = wrapSizes(mergeSizes(policy.sweep, fresh), cover, growth, policy.slack);
-      }
-    } else {
-      sizes = wrapSizes(mergeSizes(policy.sweep, fresh), cover, growth, policy.slack);
     }
+    sizes = wrapSizes(mergeSizes(policy.sweep, fresh), cover, growth, policy.slack);
   } else if (policy.sweep) {
     sizes = wrapSizes(policy.sweep, cover, growth, policy.slack);
   } else {
