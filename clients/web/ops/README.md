@@ -63,6 +63,12 @@ is how the original migration cut over).
 
 ## Operational notes
 
+- The fly entrypoint launches each bot under `setsid` and its watchdog autofix
+  signals the process group. Signalling only the `npx` wrapper lets the node
+  process survive while the runner starts another: two makers then share one
+  state file and quotes fall out of it (the 2026-09-09 duplicate-maker
+  incident, ADR-037). The watchdog also waits five minutes after boot before
+  its first check, since a fresh log has no loop line yet.
 - The maker exits on SIGTERM leaving quotes live; `restart: unless-stopped`
   plus state resume makes container restarts safe. `--cancel-on-exit` is for
   deliberate unwinding only.
