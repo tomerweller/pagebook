@@ -667,6 +667,21 @@ test("decodePlaceResult reads the place 3-tuple from TransactionMeta", () => {
   });
 });
 
+test("applyPad keeps a restore-marked archived planned key", () => {
+  const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+  const a = ck(contract, "Level", 0, true, 20).xdr;
+  const data = emptyData([], []);
+  const map = new Map([[a.toXDR("base64"), { exists: true, actualSize: 100, liveness: "archived" as const }]]);
+  const { data: out, added, dropped } = applyPad(data, [rw(a)], [a], sizesOf(map));
+  expect(dropped).toBe(0);
+  expect(added).toBe(1);
+  const finalRw = new StellarSdk.SorobanDataBuilder(out).getReadWrite();
+  expect(finalRw.map(keyB64)).toContain(keyB64(a));
+  expect(out.ext().switch()).toBe(1);
+  const idxs = out.ext().resourceExt().archivedSorobanEntries();
+  expect(idxs.map((i) => keyB64(finalRw[Number(i)]))).toEqual([keyB64(a)]);
+});
+
 test("applyPad drops archived pad keys and reports dropped", () => {
   const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
   const a = ck(contract, "Level", 0, false, 10).xdr;
@@ -909,12 +924,18 @@ test("submitInvocation attributes a simulation contract error via the diagnostic
       events: [contractErrorEvent(10, SAC)],
     }),
   });
-  const got = await submitInvocation({
-    rpc,
+  const got = await submitInvocation(rpc, kp.secret(), {
     contract: PAGEBOOK,
-    sourceSecret: kp.secret(),
-    fn: "place",
-    args: [StellarSdk.xdr.ScVal.scvU32(1)],
+    source: kp.publicKey(),
+    intent: {
+      kind: "settle",
+      owner: kp.publicKey(),
+      market: 1,
+      nonce: 1n,
+      base: addrToHex(SAC),
+      quote: addrToHex(SAC),
+    },
+    tokens: [],
   });
   expect(got).toMatchObject({
     kind: "typed",
@@ -931,12 +952,18 @@ test("submitInvocation attributes a simulation contract error via the diagnostic
   const { rpc: bare, kp: kp2 } = mockRpc({
     simulateTransaction: async () => ({ error: "HostError: Error(Contract, #10)" }),
   });
-  const fallback = await submitInvocation({
-    rpc: bare,
+  const fallback = await submitInvocation(bare, kp2.secret(), {
     contract: PAGEBOOK,
-    sourceSecret: kp2.secret(),
-    fn: "place",
-    args: [StellarSdk.xdr.ScVal.scvU32(1)],
+    source: kp2.publicKey(),
+    intent: {
+      kind: "settle",
+      owner: kp2.publicKey(),
+      market: 1,
+      nonce: 1n,
+      base: addrToHex(SAC),
+      quote: addrToHex(SAC),
+    },
+    tokens: [],
   });
   expect(fallback).toMatchObject({ kind: "typed", errorName: "Unfilled", at: "simulation" });
   expect(outcomeOf(fallback)).toBe("sim:typed:Unfilled");
@@ -978,12 +1005,18 @@ test("submitInvocation restores a simulate restorePreamble then re-simulates", a
     },
     getTransaction: async () => ({ status: "SUCCESS", resultMetaXdr: undefined }),
   });
-  const got = await submitInvocation({
-    rpc,
+  const got = await submitInvocation(rpc, kp.secret(), {
     contract,
-    sourceSecret: kp.secret(),
-    fn: "best",
-    args: [StellarSdk.xdr.ScVal.scvU32(1), StellarSdk.xdr.ScVal.scvBool(true)],
+    source: kp.publicKey(),
+    intent: {
+      kind: "settle",
+      owner: kp.publicKey(),
+      market: 1,
+      nonce: 1n,
+      base: addrToHex(SAC),
+      quote: addrToHex(SAC),
+    },
+    tokens: [],
   });
   expect(restores).toBe(1);
   expect(sims).toBe(2);

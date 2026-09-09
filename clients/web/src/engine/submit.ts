@@ -5,11 +5,14 @@ import { sacBalanceKey } from "../keys";
 import { accountLedgerKey, trustlineLedgerKey } from "../wallet/account";
 import { readAccount } from "../wallet/account";
 import { NETWORK_PASSPHRASE } from "../wallet/network";
-import { scValKeyName, toLedgerKey, toPlannedKey, type ClientKey, type PlannedLedgerKey } from "./clientKeys";
+import { scValKeyName, type Hex32, type PlannedLedgerKey } from "./clientKeys";
 import { errorName, hostErrorMessage, parseContractError, sacErrorName } from "./errors";
-import { pad, restoreMarks, type Quoted } from "./pad";
+import { type Quoted } from "./pad";
 import { simulate } from "./quote";
-import { applyPad, classicFee, declaredFromSoroban, type ApplyPadSizes, type DeclaredResources } from "./txdata";
+import { classicFee, type DeclaredResources } from "./txdata";
+import { prepareInvocation, type Intent, type PadPolicy, type PrepareRequest } from "./prepare";
+
+export type { Intent, PadPolicy, PrepareRequest };
 
 export type { DeclaredResources };
 
@@ -19,7 +22,7 @@ export type PlaceFlags = {
   no_rest: boolean;
 };
 
-export type EnginePhase = "simulation" | "apply" | "send";
+export type EnginePhase = "simulation" | "apply" | "send" | "prepare";
 export type EngineOk = { kind: "ok"; hash: string; ledger?: number; fee?: string; resultMetaXdr?: string };
 // `raisedBy` is the contract the diagnostic events attribute the error to,
 // when they carry one. `foreign` means it was some contract other than the
@@ -36,7 +39,13 @@ export type EngineTyped = {
 };
 export type EngineFootprint = { kind: "footprint"; missingKey?: string; hash?: string; at?: EnginePhase };
 export type EngineBadSeq = { kind: "txBadSeq"; message: string; hash?: string; reachedLedger?: boolean; at?: EnginePhase };
-export type EngineResourceLimit = { kind: "resourceLimit"; message: string; hash?: string; at?: EnginePhase };
+export type EngineResourceLimit = {
+  kind: "resourceLimit";
+  message: string;
+  hash?: string;
+  at?: EnginePhase;
+  declared?: DeclaredResources;
+};
 export type EngineSorobanInvalid = { kind: "sorobanInvalid"; message: string; hash?: string; at?: EnginePhase };
 export type EngineTimeout = { kind: "timeout"; message: string; hash: string };
 export type EngineRpc = { kind: "rpc"; message: string; hash?: string; at?: EnginePhase };
@@ -163,7 +172,7 @@ export function classifySubmit(
   at: EnginePhase,
   hash?: string,
 ): EngineResult {
-  const typedAt = at === "send" ? "apply" : at;
+  const typedAt: "simulation" | "apply" = at === "simulation" ? "simulation" : "apply";
   const host = hostErrorMessage(text);
   if (host) return { kind: "rpc", message: host, hash, at };
   const archived = archivedFromText(text);
@@ -442,105 +451,29 @@ async function waitTx(rpc: Rpc, hash: string, invokedContract?: string): Promise
   return { kind: "timeout", message: "timed out waiting for transaction", hash };
 }
 
-export type SubmitArgs = {
-  rpc: Rpc;
-  contract: string;
-  sourceSecret: string;
-  fn: string;
-  args: StellarSdk.xdr.ScVal[];
-  padKeys?: ClientKey[];
-  quoted?: Quoted;
-  padOut?: ClientKey[];
-  tokens?: ClassicToken[];
-  sizes?: ApplyPadSizes;
-  /** The market's `level_cap`, for the flat write-byte cover on a raised
-   *  market (ADR-037). Omitted, the default-cap rate applies. */
-  levelCap?: number;
-};
-
-export async function submitInvocation(a: SubmitArgs): Promise<EngineResult> {
-  const kp = StellarSdk.Keypair.fromSecret(a.sourceSecret);
+export async function submitInvocation(rpc: Rpc, secret: string, req: PrepareRequest): Promise<EngineResult> {
+  const kp = StellarSdk.Keypair.fromSecret(secret);
   let retriedBadSeq = false;
+  let restores = 0;
   for (;;) {
-    const result = await submitOnce(a, kp);
+    const prepared = await prepareInvocation(rpc, { ...req, source: req.source || kp.publicKey() });
+    if (prepared.kind === "restoreNeeded") {
+      if (restores >= 2) return { kind: "rpc", message: "restore preamble persisted" };
+      const restored = await submitRestorePreamble(rpc, secret, prepared.preamble);
+      if (restored.kind !== "ok") return restored;
+      restores += 1;
+      continue;
+    }
+    if (prepared.kind !== "prepared") return prepared;
+    const tx = prepared.tx;
+    tx.sign(kp);
+    const result = await sendAndWait(rpc, tx, prepared.declared, req.contract);
     if (result.kind === "txBadSeq" && !result.reachedLedger && !retriedBadSeq) {
       retriedBadSeq = true;
       continue;
     }
     return result;
   }
-}
-
-async function submitOnce(a: SubmitArgs, kp: StellarSdk.Keypair): Promise<EngineResult> {
-  const acc = await readAccount(a.rpc, kp.publicKey());
-  if (!acc.exists) return { kind: "rpc", message: "account not funded" };
-  const account = new StellarSdk.Account(kp.publicKey(), acc.sequence.toString());
-  const c = new StellarSdk.Contract(a.contract);
-  const op = c.call(a.fn, ...a.args);
-  const tx = new StellarSdk.TransactionBuilder(account, {
-    fee: "100",
-    networkPassphrase: NETWORK_PASSPHRASE,
-  })
-    .addOperation(op)
-    .setTimeout(60)
-    .build();
-
-  let sim;
-  for (let restores = 0; ; ) {
-    try {
-      sim = await simulate(a.rpc, tx.toXDR());
-    } catch (e) {
-      return { kind: "rpc", message: e instanceof Error ? e.message : String(e) };
-    }
-    if (sim.restorePreamble?.transactionData && restores < 2) {
-      const restored = await submitRestorePreamble(a.rpc, a.sourceSecret, sim.restorePreamble);
-      if (restored.kind !== "ok") return restored;
-      restores += 1;
-      continue;
-    }
-    break;
-  }
-  if (sim.error) {
-    const raw = sim.raw as { events?: unknown };
-    const events = Array.isArray(raw?.events) ? raw.events.filter((e): e is string => typeof e === "string") : [];
-    if (events.length) {
-      const fromEv = classifyFailedTx(undefined, events, undefined, "simulation", a.contract);
-      // Typed errors decode from the events, not the error text: only the
-      // events say which contract raised the code (SAC table vs PageBook's).
-      if (fromEv.kind === "archived" || fromEv.kind === "typed") return fromEv;
-    }
-    return classifySubmit(sim.error, "simulation");
-  }
-  if (!sim.transactionData) return { kind: "rpc", message: "simulation returned no transactionData" };
-
-  let assembled: StellarSdk.Transaction;
-  try {
-    assembled = StellarSdk.rpc.assembleTransaction(tx, sim.raw as StellarSdk.rpc.Api.SimulateTransactionResponse).build();
-  } catch (e) {
-    return { kind: "rpc", message: e instanceof Error ? e.message : String(e) };
-  }
-
-  const extra: PlannedLedgerKey[] = [];
-  if (a.padKeys) {
-    const ctx = { contract: a.contract, caller: kp.publicKey() };
-    for (const k of a.padKeys) extra.push(toPlannedKey(ctx, k));
-  }
-  if (a.tokens) extra.push(...tokenExtraKeys(a.contract, kp.publicKey(), a.tokens));
-
-  const env = assembled.toEnvelope();
-  const existing = env.v1().tx().ext().sorobanData();
-  let restoreMarkKeys: StellarSdk.xdr.LedgerKey[] = [];
-  if (a.quoted && a.padOut) {
-    const marks = await archivedTouched(a.rpc, a.contract, kp.publicKey(), a.quoted, a.padOut);
-    restoreMarkKeys = marks.map((k) => toLedgerKey({ contract: a.contract, caller: kp.publicKey() }, k).xdr);
-  }
-  const padded = applyPad(existing, extra, restoreMarkKeys, a.sizes, a.levelCap);
-  const declared = declaredFromSoroban(padded.data);
-  const fee = classicFee(padded.resourceFee);
-  const finalTx = StellarSdk.TransactionBuilder.cloneFrom(assembled, { fee }).setSorobanData(padded.data).build();
-  finalTx.sign(kp);
-
-  return sendAndWait(a.rpc, finalTx, declared, a.contract);
 }
 
 async function sendAndWait(
@@ -710,24 +643,6 @@ export async function extendKeys(
   return sendAndWait(rpc, finalTx);
 }
 
-async function archivedTouched(
-  rpc: Rpc,
-  contract: string,
-  caller: string,
-  quoted: Quoted,
-  out: ClientKey[],
-): Promise<ClientKey[]> {
-  const ctx = { contract, caller };
-  const wraps = out.map((k) => toLedgerKey(ctx, k));
-  const res = await rpc.getLedgerEntries(...wraps.map((w) => w.xdr));
-  const present = new Set((res.entries ?? []).map((e) => (typeof e.key === "string" ? e.key : null)).filter((k): k is string => !!k));
-  const missing: ClientKey[] = [];
-  wraps.forEach((w, i) => {
-    if (!present.has(w.base64)) missing.push(out[i]);
-  });
-  return restoreMarks(quoted, out, missing);
-}
-
 export type PlaceArgParams = {
   taker: string;
   market: number;
@@ -752,6 +667,21 @@ export function buildPlaceArgs(opts: PlaceArgParams): StellarSdk.xdr.ScVal[] {
   ];
 }
 
+function invocationReq(
+  secret: string,
+  opts: { contract: string; tokens: ClassicToken[]; policy?: PadPolicy; levelCap?: number },
+  intent: Intent,
+): PrepareRequest {
+  return {
+    contract: opts.contract,
+    source: StellarSdk.Keypair.fromSecret(secret).publicKey(),
+    intent,
+    tokens: opts.tokens,
+    policy: opts.policy,
+    levelCap: opts.levelCap,
+  };
+}
+
 export async function submitPlace(
   rpc: Rpc,
   opts: PlaceArgParams & {
@@ -760,26 +690,27 @@ export async function submitPlace(
     quoted: Quoted;
     tokens: ClassicToken[];
     padEnd: number;
-    extraPadKeys?: ClientKey[];
-    sizes?: ApplyPadSizes;
+    policy?: PadPolicy;
     levelCap?: number;
   },
 ): Promise<EngineResult> {
-  const out = pad(opts.quoted, opts.padEnd);
-  const padKeys = opts.extraPadKeys ? [...out, ...opts.extraPadKeys] : out;
-  return submitInvocation({
+  return submitInvocation(
     rpc,
-    contract: opts.contract,
-    sourceSecret: opts.secret,
-    fn: "place",
-    args: buildPlaceArgs(opts),
-    padKeys,
-    quoted: opts.quoted,
-    padOut: out,
-    tokens: opts.tokens,
-    sizes: opts.sizes,
-    levelCap: opts.levelCap,
-  });
+    opts.secret,
+    invocationReq(opts.secret, opts, {
+      kind: "place",
+      taker: opts.taker,
+      market: opts.market,
+      isBid: opts.isBid,
+      limitTick: opts.limitTick,
+      qtyLots: opts.qtyLots,
+      startTick: opts.startTick,
+      nonce: opts.nonce,
+      flags: opts.flags,
+      quoted: opts.quoted,
+      padEnd: opts.padEnd,
+    }),
+  );
 }
 
 export async function submitPostOnlyPlace(
@@ -787,23 +718,30 @@ export async function submitPostOnlyPlace(
   opts: PlaceArgParams & {
     contract: string;
     secret: string;
-    padKeys: ClientKey[];
     tokens: ClassicToken[];
-    sizes?: ApplyPadSizes;
+    base: Hex32;
+    quote: Hex32;
+    policy?: PadPolicy;
     levelCap?: number;
   },
 ): Promise<EngineResult> {
-  return submitInvocation({
+  return submitInvocation(
     rpc,
-    contract: opts.contract,
-    sourceSecret: opts.secret,
-    fn: "place",
-    args: buildPlaceArgs(opts),
-    padKeys: opts.padKeys,
-    tokens: opts.tokens,
-    sizes: opts.sizes,
-    levelCap: opts.levelCap,
-  });
+    opts.secret,
+    invocationReq(opts.secret, opts, {
+      kind: "placePostOnly",
+      taker: opts.taker,
+      market: opts.market,
+      isBid: opts.isBid,
+      limitTick: opts.limitTick,
+      qtyLots: opts.qtyLots,
+      startTick: opts.startTick,
+      nonce: opts.nonce,
+      flags: opts.flags,
+      base: opts.base,
+      quote: opts.quote,
+    }),
+  );
 }
 
 export async function submitSettle(
@@ -814,23 +752,25 @@ export async function submitSettle(
     owner: string;
     market: number;
     nonce: bigint;
-    padKeys: ClientKey[];
     tokens: ClassicToken[];
-    sizes?: ApplyPadSizes;
+    base: Hex32;
+    quote: Hex32;
+    policy?: PadPolicy;
     levelCap?: number;
   },
 ): Promise<EngineResult> {
-  return submitInvocation({
+  return submitInvocation(
     rpc,
-    contract: opts.contract,
-    sourceSecret: opts.secret,
-    fn: "settle",
-    args: [scvAddr(opts.owner), scvU32(opts.market), scvU64(opts.nonce)],
-    padKeys: opts.padKeys,
-    tokens: opts.tokens,
-    sizes: opts.sizes,
-    levelCap: opts.levelCap,
-  });
+    opts.secret,
+    invocationReq(opts.secret, opts, {
+      kind: "settle",
+      owner: opts.owner,
+      market: opts.market,
+      nonce: opts.nonce,
+      base: opts.base,
+      quote: opts.quote,
+    }),
+  );
 }
 
 export async function submitReplaceBatch(
@@ -841,23 +781,25 @@ export async function submitReplaceBatch(
     owner: string;
     market: number;
     items: { nonce: bigint; isBid: boolean; tick: number; qtyLots: bigint }[];
-    padKeys: ClientKey[];
     tokens: ClassicToken[];
-    sizes?: ApplyPadSizes;
+    base: Hex32;
+    quote: Hex32;
+    policy?: PadPolicy;
     levelCap?: number;
   },
 ): Promise<EngineResult> {
-  return submitInvocation({
+  return submitInvocation(
     rpc,
-    contract: opts.contract,
-    sourceSecret: opts.secret,
-    fn: "replace_batch",
-    args: [scvAddr(opts.owner), scvU32(opts.market), StellarSdk.xdr.ScVal.scvVec(opts.items.map(scReplaceItem))],
-    padKeys: opts.padKeys,
-    tokens: opts.tokens,
-    sizes: opts.sizes,
-    levelCap: opts.levelCap,
-  });
+    opts.secret,
+    invocationReq(opts.secret, opts, {
+      kind: "replaceBatch",
+      owner: opts.owner,
+      market: opts.market,
+      items: opts.items,
+      base: opts.base,
+      quote: opts.quote,
+    }),
+  );
 }
 
 export async function submitReplace(
@@ -871,28 +813,26 @@ export async function submitReplace(
     isBid: boolean;
     tick: number;
     qtyLots: bigint;
-    padKeys: ClientKey[];
     tokens: ClassicToken[];
-    sizes?: ApplyPadSizes;
+    base: Hex32;
+    quote: Hex32;
+    policy?: PadPolicy;
     levelCap?: number;
   },
 ): Promise<EngineResult> {
-  return submitInvocation({
+  return submitInvocation(
     rpc,
-    contract: opts.contract,
-    sourceSecret: opts.secret,
-    fn: "replace",
-    args: [
-      scvAddr(opts.owner),
-      scvU32(opts.market),
-      scvU64(opts.nonce),
-      scvBool(opts.isBid),
-      scvU32(opts.tick),
-      scvU64(opts.qtyLots),
-    ],
-    padKeys: opts.padKeys,
-    tokens: opts.tokens,
-    sizes: opts.sizes,
-    levelCap: opts.levelCap,
-  });
+    opts.secret,
+    invocationReq(opts.secret, opts, {
+      kind: "replace",
+      owner: opts.owner,
+      market: opts.market,
+      nonce: opts.nonce,
+      isBid: opts.isBid,
+      tick: opts.tick,
+      qtyLots: opts.qtyLots,
+      base: opts.base,
+      quote: opts.quote,
+    }),
+  );
 }

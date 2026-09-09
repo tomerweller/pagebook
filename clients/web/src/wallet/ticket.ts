@@ -642,6 +642,13 @@ export function createTicket(opts: {
         s.ticket.lastHash = res.hash ?? "";
       });
       opts.onLog("place footprint", res.hash);
+    } else if (res.kind === "resourceLimit" && res.at === "prepare") {
+      app.update((s) => {
+        s.ticket.phase = "failed";
+        s.ticket.phaseDetail = res.message;
+        s.ticket.lastHash = res.hash ?? "";
+      });
+      opts.onLog("place oversized", res.hash);
     } else {
       app.update((s) => {
         s.ticket.phase = "failed";

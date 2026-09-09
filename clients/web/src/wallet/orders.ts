@@ -2,7 +2,7 @@ import * as StellarSdk from "@stellar/stellar-sdk";
 import type { BookEvent, BookSnapshot, MarketInfo, Rpc } from "../book";
 import { formatAtoms, formatInt } from "../decode";
 import { accessOf, addrToHex } from "../engine/clientKeys";
-import { keysForReplace, keysForSettle, MAX_REPLACE_BATCH } from "../engine/pad";
+import { keysForReplace, MAX_REPLACE_BATCH } from "../engine/pad";
 import { simulate } from "../engine/quote";
 import { submitReplace, submitReplaceBatch, submitSettle, type ClassicToken, type EngineResult } from "../engine/submit";
 import { estimatePaddedFee } from "../engine/txdata";
@@ -711,23 +711,15 @@ export function createOrders(opts: {
       s.orders.phase = "settling";
       s.orders.lastHash = "";
     });
-    const keys = keysForSettle(
-      opts.getMarket(),
-      addrToHex(pub),
-      nonce,
-      o.isBid,
-      o.tick,
-      addrToHex(book.base),
-      addrToHex(book.quote),
-    );
     const res = await submitSettle(opts.rpc, {
       contract: opts.contract,
       secret,
       owner: pub,
       market: opts.getMarket(),
       nonce,
-      padKeys: keys,
       tokens: padTokens(book),
+      base: addrToHex(book.base),
+      quote: addrToHex(book.quote),
       levelCap: market()?.level_cap,
     });
     finish("settle", res, nonce);
@@ -750,17 +742,6 @@ export function createOrders(opts: {
       s.orders.phase = "replacing";
       s.orders.lastHash = "";
     });
-    const keys = keysForReplace(
-      opts.getMarket(),
-      addrToHex(pub),
-      nonce,
-      o.isBid,
-      o.tick,
-      st.replaceBid,
-      st.replaceTick,
-      addrToHex(book.base),
-      addrToHex(book.quote),
-    );
     const res = await submitReplace(opts.rpc, {
       contract: opts.contract,
       secret,
@@ -770,8 +751,9 @@ export function createOrders(opts: {
       isBid: st.replaceBid,
       tick: st.replaceTick,
       qtyLots: st.replaceLots,
-      padKeys: keys,
       tokens: padTokens(book),
+      base: addrToHex(book.base),
+      quote: addrToHex(book.quote),
       levelCap: market()?.level_cap,
     });
     finish("replace", res);
@@ -797,27 +779,15 @@ export function createOrders(opts: {
       tick: p.newTick,
       qtyLots: p.order.qtyLots,
     }));
-    const padKeys = planned.flatMap((p) =>
-      keysForReplace(
-        opts.getMarket(),
-        addrToHex(pub),
-        p.order.nonce,
-        p.order.isBid,
-        p.order.tick,
-        p.order.isBid,
-        p.newTick,
-        addrToHex(book!.base!),
-        addrToHex(book!.quote!),
-      ),
-    );
     const res = await submitReplaceBatch(opts.rpc, {
       contract: opts.contract,
       secret,
       owner: pub,
       market: opts.getMarket(),
       items,
-      padKeys,
       tokens: padTokens(book),
+      base: addrToHex(book.base),
+      quote: addrToHex(book.quote),
       levelCap: market()?.level_cap,
     });
     finish("replace_batch", res);

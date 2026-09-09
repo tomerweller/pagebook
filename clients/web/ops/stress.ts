@@ -1,8 +1,7 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRpc, type Rpc } from "../src/book";
-import { addrToHex, type ClientKey } from "../src/engine/clientKeys";
-import { wordOf } from "../src/decode";
+import type { ClientKey, Hex32 } from "../src/engine/clientKeys";
 import { submitPostOnlyPlace, submitReplaceBatch, type ClassicToken } from "../src/engine/submit";
 import { parseArgs, type ArgSpec } from "./lib/args";
 import { loadIdentity, type Identity } from "./lib/identity";
@@ -21,7 +20,7 @@ import { randInt, repr } from "./lib/math";
 import { openLog, type OpsLog } from "./lib/opslog";
 import { parseLogLines } from "./lib/logparse";
 import { outcomeOf, type OutcomeInput } from "./lib/outcomes";
-import { classicPairTokens, feeKeys, orderClientKey, restKeys, tokenHex } from "./lib/padkeys";
+import { classicPairTokens, tokenHex } from "./lib/padkeys";
 import { mapPool } from "./lib/pool";
 import { percentiles } from "./lib/stats";
 import { resultText, sleep } from "./lib/submitlog";
@@ -103,7 +102,7 @@ export class Stress {
   log: OpsLog;
   counts: Record<string, number> = {};
   tokens: ClassicToken[];
-  hex: { base: ReturnType<typeof addrToHex>; quote: ReturnType<typeof addrToHex> };
+  hex: { base: Hex32; quote: Hex32 };
   stop = false;
   private now: () => number;
   private sleepFn: (ms: number) => Promise<void>;
@@ -159,10 +158,6 @@ export class Stress {
     this.log.record(String(kw.action ?? ""), outcome, { ...kw, t: this.now() });
   }
 
-  tokenPadKeys(): ClientKey[] {
-    return feeKeys(MARKET, this.hex.base, this.hex.quote);
-  }
-
   async submit(source: string, fn: string, run: () => Promise<OutcomeInput>, extra: Record<string, unknown> = {}): Promise<string | null> {
     const t0 = this.now();
     let l0: number | null = null;
@@ -216,7 +211,6 @@ export class Stress {
     const src = this.src(i);
     const id = this.idOf(src);
     const views = this.viewsOf(src);
-    const ownerHex = addrToHex(id.address);
     for (let j = 0; j < ticksFor(i).length; j++) {
       const tick = ticksFor(i)[j];
       const nonce = NONCE_BASE + i * 1000 + j;
@@ -226,11 +220,6 @@ export class Stress {
       } catch {
         /* place */
       }
-      const padKeys: ClientKey[] = [
-        ...restKeys(MARKET, false, tick),
-        orderClientKey(MARKET, ownerHex, BigInt(nonce)),
-        ...this.tokenPadKeys(),
-      ];
       await this.submit(
         src,
         "place",
@@ -246,8 +235,9 @@ export class Stress {
             startTick: 65535,
             nonce: BigInt(nonce),
             flags: { post_only: true, fill_or_kill: false, no_rest: false },
-            padKeys,
             tokens: this.tokens,
+            base: this.hex.base,
+            quote: this.hex.quote,
           }),
         { seed: 1 },
       );
@@ -259,7 +249,6 @@ export class Stress {
     const src = this.src(i);
     const id = this.idOf(src);
     const items: { nonce: bigint; isBid: boolean; tick: number; qtyLots: bigint }[] = [];
-    const padKeys: ClientKey[] = [...this.tokenPadKeys()];
     for (let j = 0; j < ticksFor(i).length; j++) {
       const tick = ticksFor(i)[j];
       const nonce = NONCE_BASE + i * 1000 + j;
@@ -269,14 +258,10 @@ export class Stress {
         tick,
         qtyLots: BigInt(randInt(2, 5, this.rnd)),
       });
-      padKeys.push({ t: "Level", market: MARKET, isBid: false, tick });
-      padKeys.push({ t: "TickWord", market: MARKET, isBid: false, word: wordOf(tick) });
     }
-    padKeys.push({ t: "TickSummary", market: MARKET, isBid: false });
-    padKeys.push({ t: "BestTick", market: MARKET, isBid: false });
-    padKeys.push({ t: "BestTick", market: MARKET, isBid: true });
+    const extraKeys: ClientKey[] = [];
     for (const tick of ticksFor((i + 1) % this.a.accounts).slice(0, this.a.extraPad)) {
-      padKeys.push({ t: "Level", market: MARKET, isBid: false, tick });
+      extraKeys.push({ t: "Level", market: MARKET, isBid: false, tick });
     }
     return this.submit(src, "replace_batch", () =>
       submitReplaceBatch(this.rpc, {
@@ -285,8 +270,10 @@ export class Stress {
         owner: id.address,
         market: MARKET,
         items,
-        padKeys,
         tokens: this.tokens,
+        base: this.hex.base,
+        quote: this.hex.quote,
+        policy: extraKeys.length ? { extraKeys } : undefined,
       }),
     );
   }

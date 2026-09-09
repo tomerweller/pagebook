@@ -827,6 +827,10 @@ a nonce whose rent is already paid, plus a `Level` that must be created or resto
 each new tick (§17 "rent bounds holding, not churn"). Even at the churn price the
 attack is one-shot per bit and 120 days per level.
 
+The client checks the final declaration against the per-transaction caps
+before signing and refuses an oversized band with a typed result rather than
+narrowing the user's limit.
+
 **Submit, and what can happen**, the contract's side of this contract is §15: only
 walking past `pad_end` traps; every other race degrades gracefully or returns a typed
 error the client can act on (`Crossed`, `LevelFull`, `Unfilled` ⇒ the client's

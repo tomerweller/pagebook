@@ -1,0 +1,315 @@
+import * as StellarSdk from "@stellar/stellar-sdk";
+import type { Rpc } from "../book";
+import { readAccount } from "../wallet/account";
+import { NETWORK_PASSPHRASE } from "../wallet/network";
+import { keyStr, sameKey, toLedgerKey, toPlannedKey, type ClientKey, type Hex32, type PlannedLedgerKey } from "./clientKeys";
+import { mergeSizes, sweepPadSizes } from "./liveness";
+import { plannedKeysFor, touchedKeysFor, type Quoted } from "./pad";
+import { simulate } from "./quote";
+import {
+  buildPlaceArgs,
+  classifyFailedTx,
+  classifySubmit,
+  scReplaceItem,
+  scvAddr,
+  scvU32,
+  scvU64,
+  tokenExtraKeys,
+  type ClassicToken,
+  type EngineBody,
+  type PlaceArgParams,
+} from "./submit";
+import {
+  applyPad,
+  checkDeclared,
+  classicFee,
+  declaredFromSoroban,
+  DEFAULT_GROWTH,
+  type ApplyPadSizes,
+  type DeclaredResources,
+  type TxLimits,
+} from "./txdata";
+
+export type Intent =
+  | ({ kind: "place" } & PlaceArgParams & { quoted: Quoted; padEnd: number })
+  | ({ kind: "placePostOnly" } & PlaceArgParams & { base: Hex32; quote: Hex32 })
+  | { kind: "settle"; owner: string; market: number; nonce: bigint; base: Hex32; quote: Hex32 }
+  | {
+      kind: "replace";
+      owner: string;
+      market: number;
+      nonce: bigint;
+      isBid: boolean;
+      tick: number;
+      qtyLots: bigint;
+      base: Hex32;
+      quote: Hex32;
+    }
+  | {
+      kind: "replaceBatch";
+      owner: string;
+      market: number;
+      items: { nonce: bigint; isBid: boolean; tick: number; qtyLots: bigint }[];
+      base: Hex32;
+      quote: Hex32;
+    }
+  | { kind: "invoke"; fn: string; args: StellarSdk.xdr.ScVal[] };
+
+export type PadPolicy = {
+  cover?: "sized" | "flat";
+  sweep?: ApplyPadSizes;
+  extraKeys?: ClientKey[];
+  growth?: number;
+  slack?: number;
+  limits?: Partial<TxLimits>;
+};
+
+export type PrepareRequest = {
+  contract: string;
+  source: string;
+  intent: Intent;
+  tokens: ClassicToken[];
+  policy?: PadPolicy;
+  levelCap?: number;
+};
+
+export type Prepared = {
+  kind: "prepared";
+  tx: StellarSdk.Transaction;
+  declared: DeclaredResources;
+  footprint: { ro: StellarSdk.xdr.LedgerKey[]; rw: StellarSdk.xdr.LedgerKey[] };
+  restoreMarked: StellarSdk.xdr.LedgerKey[];
+  dropped: number;
+  observedLedger: number;
+};
+
+export type PrepareResult =
+  | Prepared
+  | { kind: "restoreNeeded"; preamble: { transactionData?: unknown; minResourceFee?: string } }
+  | EngineBody;
+
+const RESOURCE_LABEL: Record<string, string> = {
+  entries: "footprint entries",
+  rwEntries: "read-write entries",
+  writeBytes: "write bytes",
+  instructions: "instructions",
+  txBytes: "transaction bytes",
+};
+
+function fmt(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
+function operationFor(intent: Intent): { fn: string; args: StellarSdk.xdr.ScVal[] } {
+  switch (intent.kind) {
+    case "place":
+    case "placePostOnly":
+      return { fn: "place", args: buildPlaceArgs(intent) };
+    case "settle":
+      return { fn: "settle", args: [scvAddr(intent.owner), scvU32(intent.market), scvU64(intent.nonce)] };
+    case "replace":
+      return {
+        fn: "replace",
+        args: [
+          scvAddr(intent.owner),
+          scvU32(intent.market),
+          scvU64(intent.nonce),
+          StellarSdk.xdr.ScVal.scvBool(intent.isBid),
+          scvU32(intent.tick),
+          scvU64(intent.qtyLots),
+        ],
+      };
+    case "replaceBatch":
+      return {
+        fn: "replace_batch",
+        args: [scvAddr(intent.owner), scvU32(intent.market), StellarSdk.xdr.ScVal.scvVec(intent.items.map(scReplaceItem))],
+      };
+    case "invoke":
+      return { fn: intent.fn, args: intent.args };
+  }
+}
+
+function unionPlanned(keys: PlannedLedgerKey[]): PlannedLedgerKey[] {
+  const seen = new Set<string>();
+  const out: PlannedLedgerKey[] = [];
+  for (const p of keys) {
+    const s = p.key.toXDR("base64");
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(p);
+  }
+  return out;
+}
+
+function unionClient(keys: ClientKey[]): ClientKey[] {
+  const seen = new Set<string>();
+  const out: ClientKey[] = [];
+  for (const k of keys) {
+    const s = keyStr(k);
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(k);
+  }
+  return out;
+}
+
+function wrapSizes(sizes: ApplyPadSizes, cover: "sized" | "flat", growth: number, slack?: number): ApplyPadSizes {
+  return {
+    sizeOf(key) {
+      return sizes.sizeOf(key);
+    },
+    growth,
+    slack: slack ?? sizes.slack,
+    coverBytes: cover === "sized",
+    latestLedger: sizes.latestLedger,
+  };
+}
+
+function emptySizes(cover: "sized" | "flat", growth: number, slack?: number): ApplyPadSizes {
+  return {
+    sizeOf() {
+      return undefined;
+    },
+    growth,
+    slack,
+    coverBytes: cover === "sized",
+    latestLedger: 0,
+  };
+}
+
+function bandNote(
+  intent: Intent,
+  sizes: ApplyPadSizes,
+  ctx: { contract: string; caller: string },
+): string {
+  if (intent.kind !== "place") return "";
+  const lo = Math.min(intent.quoted.startTick, intent.padEnd);
+  const hi = Math.max(intent.quoted.startTick, intent.padEnd);
+  const levels = hi - lo + 1;
+  let exist = 0;
+  for (let t = lo; t <= hi; t++) {
+    const k = toLedgerKey(ctx, { t: "Level", market: intent.quoted.market, isBid: !intent.quoted.ownSide, tick: t });
+    if (sizes.sizeOf(k.xdr)?.exists) exist += 1;
+  }
+  return ` (band ${fmt(levels)} levels, ${fmt(exist)} exist)`;
+}
+
+function markedFrom(data: StellarSdk.xdr.SorobanTransactionData, rw: StellarSdk.xdr.LedgerKey[]): StellarSdk.xdr.LedgerKey[] {
+  if (data.ext().switch() !== 1) return [];
+  const idxs = data.ext().resourceExt().archivedSorobanEntries();
+  const out: StellarSdk.xdr.LedgerKey[] = [];
+  for (const raw of idxs) {
+    const i = Number(raw);
+    if (Number.isInteger(i) && i >= 0 && i < rw.length) out.push(rw[i]);
+  }
+  return out;
+}
+
+export async function prepareInvocation(rpc: Rpc, req: PrepareRequest): Promise<PrepareResult> {
+  const acc = await readAccount(rpc, req.source);
+  if (!acc.exists) return { kind: "rpc", message: "account not funded" };
+  const account = new StellarSdk.Account(req.source, acc.sequence.toString());
+  const { fn, args } = operationFor(req.intent);
+  const op = new StellarSdk.Contract(req.contract).call(fn, ...args);
+  const tx = new StellarSdk.TransactionBuilder(account, {
+    fee: "100",
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(op)
+    .setTimeout(60)
+    .build();
+
+  let sim;
+  try {
+    sim = await simulate(rpc, tx.toXDR());
+  } catch (e) {
+    return { kind: "rpc", message: e instanceof Error ? e.message : String(e) };
+  }
+  if (sim.restorePreamble?.transactionData) {
+    return { kind: "restoreNeeded", preamble: sim.restorePreamble };
+  }
+  if (sim.error) {
+    const raw = sim.raw as { events?: unknown };
+    const events = Array.isArray(raw?.events) ? raw.events.filter((e): e is string => typeof e === "string") : [];
+    if (events.length) {
+      const fromEv = classifyFailedTx(undefined, events, undefined, "simulation", req.contract);
+      if (fromEv.kind === "archived" || fromEv.kind === "typed") return fromEv;
+    }
+    return classifySubmit(sim.error, "simulation");
+  }
+  if (!sim.transactionData) return { kind: "rpc", message: "simulation returned no transactionData" };
+
+  let assembled: StellarSdk.Transaction;
+  try {
+    assembled = StellarSdk.rpc.assembleTransaction(tx, sim.raw as StellarSdk.rpc.Api.SimulateTransactionResponse).build();
+  } catch (e) {
+    return { kind: "rpc", message: e instanceof Error ? e.message : String(e) };
+  }
+
+  const policy = req.policy ?? {};
+  const cover = policy.cover ?? "sized";
+  const growth = policy.growth ?? DEFAULT_GROWTH;
+  const ctx = { contract: req.contract, caller: req.source };
+  const planned = unionClient([...plannedKeysFor(req.intent), ...(policy.extraKeys ?? [])]);
+  const extra = unionPlanned([
+    ...planned.map((k) => toPlannedKey(ctx, k)),
+    ...tokenExtraKeys(req.contract, req.source, req.tokens),
+  ]);
+
+  const uncovered: StellarSdk.xdr.LedgerKey[] = [];
+  for (const p of extra) {
+    if (policy.sweep?.sizeOf(p.key) != null) continue;
+    uncovered.push(p.key);
+  }
+  let sizes: ApplyPadSizes;
+  if (uncovered.length) {
+    const fresh = await sweepPadSizes(rpc, uncovered, { growth, chunk: 100, coverBytes: cover === "sized" });
+    sizes = wrapSizes(mergeSizes(policy.sweep, fresh), cover, growth, policy.slack);
+  } else if (policy.sweep) {
+    sizes = wrapSizes(policy.sweep, cover, growth, policy.slack);
+  } else {
+    sizes = emptySizes(cover, growth, policy.slack);
+  }
+
+  const archived: ClientKey[] = [];
+  for (const k of planned) {
+    if (sizes.sizeOf(toLedgerKey(ctx, k).xdr)?.liveness === "archived") archived.push(k);
+  }
+  const touched = touchedKeysFor(req.intent, planned);
+  const marks: StellarSdk.xdr.LedgerKey[] = [];
+  for (const k of touched) {
+    if (!archived.some((a) => sameKey(a, k))) continue;
+    marks.push(toLedgerKey(ctx, k).xdr);
+  }
+
+  const existing = assembled.toEnvelope().v1().tx().ext().sorobanData();
+  const padded = applyPad(existing, extra, marks, sizes, req.levelCap);
+  const declared = declaredFromSoroban(padded.data);
+  const fee = classicFee(padded.resourceFee);
+  let finalTx: StellarSdk.Transaction;
+  try {
+    finalTx = StellarSdk.TransactionBuilder.cloneFrom(assembled, { fee }).setSorobanData(padded.data).build();
+  } catch (e) {
+    return { kind: "rpc", message: e instanceof Error ? e.message : String(e) };
+  }
+
+  const txBytes = finalTx.toEnvelope().toXDR().length + 256;
+  const over = checkDeclared(declared, txBytes, policy.limits);
+  if (over) {
+    const label = RESOURCE_LABEL[over.resource] ?? over.resource;
+    const message = `declared ${fmt(over.declared)} ${label} over the ${fmt(over.cap)} per-transaction cap${bandNote(req.intent, sizes, ctx)}; narrow the limit or split the take`;
+    return { kind: "resourceLimit", at: "prepare", message, declared };
+  }
+
+  const rw = [...new StellarSdk.SorobanDataBuilder(padded.data).getReadWrite()];
+  const ro = [...new StellarSdk.SorobanDataBuilder(padded.data).getReadOnly()];
+  return {
+    kind: "prepared",
+    tx: finalTx,
+    declared,
+    footprint: { ro, rw },
+    restoreMarked: markedFrom(padded.data, rw),
+    dropped: padded.dropped,
+    observedLedger: Math.max(sizes.latestLedger ?? 0, sim.latestLedger ?? 0),
+  };
+}

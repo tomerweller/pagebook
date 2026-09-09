@@ -154,11 +154,11 @@ test("mm and trader argparse flags and defaults", () => {
   expect(mm.maxFeedAge).toBe(240);
   expect(mm.healBand).toBe(150);
   expect(mm.maxHealsPerCycle).toBe(6);
-  expect(mm.padV2).toBe(false);
+  expect(mm.padCover).toBe("sized");
   expect(mm.walkMid).toBe(false);
   expect(mm.cancelAll).toBe(false);
-  const mm2 = parseMmArgs(["--contract", "C1", "--market", "1", "--base-sac", "B", "--quote-sac", "Q", "--usdc-issuer", "G", "--pad-v2", "--fixed-mid", "15800", "--walk-mid", "--cancel-on-exit"]);
-  expect(mm2.padV2).toBe(true);
+  const mm2 = parseMmArgs(["--contract", "C1", "--market", "1", "--base-sac", "B", "--quote-sac", "Q", "--usdc-issuer", "G", "--pad-cover", "flat", "--fixed-mid", "15800", "--walk-mid", "--cancel-on-exit"]);
+  expect(mm2.padCover).toBe("flat");
   expect(mm2.fixedMid).toBe(15800);
   expect(mm2.walkMid).toBe(true);
   expect(mm2.cancelOnExit).toBe(true);

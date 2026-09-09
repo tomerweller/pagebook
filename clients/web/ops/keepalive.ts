@@ -268,7 +268,13 @@ export async function runKeepalive(a: KeepaliveArgs, deps: KeepaliveDeps = {}): 
       instance = "dry";
     } else {
       const doInvoke = deps.invoke ?? submitInvocation;
-      const call = () => doInvoke({ rpc, contract: a.contract, sourceSecret: id.secret, fn: "keepalive", args: [] });
+      const call = () =>
+        doInvoke(rpc, id.secret, {
+          contract: a.contract,
+          source: id.address,
+          intent: { kind: "invoke", fn: "keepalive", args: [] },
+          tokens: [],
+        });
       let res = await call();
       if (res.kind === "txBadSeq") {
         res = await call();
