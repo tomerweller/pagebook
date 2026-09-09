@@ -77,7 +77,10 @@ is how the original migration cut over).
 
 `clients/web/fly.toml` runs the maker, trader, and watchdog on one Fly Machine
 in `iad`; its `[env]` block carries `CONTRACT`, `MARKET` (0), both SAC ids and
-the USDC issuer, which `deploy/fly-entrypoint.sh` passes to every bot. The app has no public service. A 1 GB volume mounted at `/data`
+the USDC issuer, which `deploy/fly-entrypoint.sh` passes to every bot. The
+maker's state file on the volume is `/data/state/mm-<CONTRACT>.json`, so a
+redeploy to a new contract starts from an empty book rather than adopting the
+previous contract's quote list; the old file stays on the volume as history. The app has no public service. A 1 GB volume mounted at `/data`
 holds `mm.json`, the bot logs, and the hourly watchdog log across restarts and
 deploys. The watchdog runs once an hour. If it finds a stale bot or a hard
 runtime error, it restarts that bot through the supervisor. Price-move and

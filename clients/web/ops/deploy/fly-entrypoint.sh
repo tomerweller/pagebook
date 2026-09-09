@@ -16,6 +16,10 @@ rm -f "$mm_pid_file" "$trader_pid_file" "$stop_file"
 contract=${CONTRACT:?CONTRACT is required}
 market=${MARKET:-0}
 base_sac=${BASE_SAC:?BASE_SAC is required}
+# The maker's quote list is only meaningful on the contract that holds those
+# orders, so the state file is keyed by contract: a redeploy to a new address
+# starts from an empty book instead of adopting the old one's nonces (ADR-036).
+mm_state="$state_dir/mm-$contract.json"
 quote_sac=${QUOTE_SAC:?QUOTE_SAC is required}
 usdc_issuer=${USDC_ISSUER:?USDC_ISSUER is required}
 
@@ -25,7 +29,7 @@ run_mm() {
       --contract "$contract" --market "$market" --identity pb-mm \
       --base-sac "$base_sac" --quote-sac "$quote_sac" --usdc-issuer "$usdc_issuer" \
       --levels 20 --base-lots 25 --step-lots 12 --interval 30 --pad-v2 \
-      --state "$state_dir/mm.json" --log "$log_dir/mm.log" &
+      --state "$mm_state" --log "$log_dir/mm.log" &
     child=$!
     printf '%s\n' "$child" > "$mm_pid_file"
     wait "$child" || true
@@ -104,7 +108,7 @@ watchdog() {
     set +e
     output=$(npx tsx ops/check.ts \
       --contract "$contract" --market "$market" --identity pb-mm \
-      --log "$log_dir/mm.log" --state "$state_dir/mm.json" \
+      --log "$log_dir/mm.log" --state "$mm_state" \
       --trader-log "$log_dir/trader.log" 2>&1)
     status=$?
     set -e
