@@ -9,6 +9,7 @@ import { emptyWalletDomain } from "./pane";
 import { emptyTicketDomain } from "./ticket";
 import { refreshBalances, refreshOrders, type OrderInput } from "./refresh";
 import type { AccountState } from "./account";
+import { deriveFromSeed } from "./keystore";
 
 const emptyOv: UrlOverrides = { baseSym: null, quoteSym: null, baseDec: null, quoteDec: null };
 
@@ -17,11 +18,7 @@ const idA = {
   publicKey: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
   secret: "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHW4",
 };
-const idB = {
-  name: "b",
-  publicKey: "GBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHKY",
-  secret: "SBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADYK",
-};
+const idB = { ...deriveFromSeed("x"), name: "b" };
 
 function emptyApp(): AppState {
   return {

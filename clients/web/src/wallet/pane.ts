@@ -114,6 +114,9 @@ function resetIdentityState(s: AppState): void {
   s.wallet.trustlines = [];
   s.wallet.openOrders = [];
   s.book.ownTicks = { bid: new Set(), ask: new Set() };
+  s.wallet.provisionStatus = "";
+  s.wallet.busy = false;
+  s.wallet.provisioning = false;
   resetAwareness(s);
 }
 
@@ -775,6 +778,7 @@ export function mountWallet(opts: {
     const id = w.active;
     if (!w.enabled || !id || !w.autoSource || w.autoSource === "import" || !w.account) return;
     if (w.provisioning || w.busy || w.provisionedKeys.has(id.publicKey)) return;
+    const pub = id.publicKey;
     const credits = creditsReady(book.snapshot);
     if (credits == null && w.account.exists) return;
     const missing = missingCredits(credits ?? [], w.trustlines);
@@ -795,11 +799,12 @@ export function mountWallet(opts: {
     for (const step of plan) {
       if (step.op === "fund") {
         app.update((s) => {
+          if (s.wallet.active?.publicKey !== pub) return;
           s.wallet.provisionStatus = "funding…";
           s.wallet.status = "";
         });
         const res = await fundWithFriendbot(id.publicKey);
-        noteResult("funded", res);
+        noteResult("funded", res, pub);
         if (res.status === "FAILED") {
           failed = true;
           break;
@@ -807,17 +812,19 @@ export function mountWallet(opts: {
         if (!(await waitAccountExists(id.publicKey))) {
           failed = true;
           app.update((s) => {
+            if (s.wallet.active?.publicKey !== pub) return;
             s.wallet.status = "account not funded";
           });
           break;
         }
       } else {
         app.update((s) => {
+          if (s.wallet.active?.publicKey !== pub) return;
           s.wallet.provisionStatus = `adding ${step.asset.code} trustline…`;
           s.wallet.status = "";
         });
         const res = await addTrustlineRetry(id.secret, step.asset);
-        noteResult(`trustline ${step.asset.code} · 0.5 XLM reserve (5,000,000 stroops)`, res);
+        noteResult(`trustline ${step.asset.code} · 0.5 XLM reserve (5,000,000 stroops)`, res, pub);
         if (res.status === "FAILED") {
           failed = true;
           break;
@@ -826,6 +833,7 @@ export function mountWallet(opts: {
     }
     app.update((s) => {
       if (failed || credits != null) s.wallet.provisionedKeys.add(id.publicKey);
+      if (s.wallet.active?.publicKey !== pub) return;
       s.wallet.provisioning = false;
       s.wallet.busy = false;
       s.wallet.provisionStatus = "";
@@ -837,15 +845,17 @@ export function mountWallet(opts: {
     const w = app.read().wallet;
     const id = w.active;
     if (!w.enabled || !id || w.busy) return;
+    const pub = id.publicKey;
     app.update((s) => {
       s.wallet.busy = true;
       s.wallet.status = "funding…";
     });
     const res = await fundWithFriendbot(id.publicKey);
     app.update((s) => {
+      if (s.wallet.active?.publicKey !== pub) return;
       s.wallet.busy = false;
     });
-    noteResult("funded", res);
+    noteResult("funded", res, pub);
     await refreshBalances();
   }
 
@@ -854,21 +864,24 @@ export function mountWallet(opts: {
     const id = w.active;
     const asset = w.confirmTrust;
     if (!w.enabled || !id || !asset || w.busy) return;
+    const pub = id.publicKey;
     app.update((s) => {
       s.wallet.busy = true;
       s.wallet.status = "submitting trustline…";
     });
     const res = await addTrustline(opts.rpc, id.secret, asset);
     app.update((s) => {
+      if (s.wallet.active?.publicKey !== pub) return;
       s.wallet.busy = false;
       s.wallet.confirmTrust = null;
     });
-    noteResult(`trustline ${asset.code}`, res);
+    noteResult(`trustline ${asset.code}`, res, pub);
     await refreshBalances();
   }
 
-  function noteResult(label: string, res: SubmitResult): void {
+  function noteResult(label: string, res: SubmitResult, pub: string): void {
     app.update((s) => {
+      if (s.wallet.active?.publicKey !== pub) return;
       if (res.status === "SUCCESS") {
         s.wallet.status = "";
         pushLogInto(s, { text: label, hash: res.hash });

@@ -44,11 +44,7 @@ const testId = {
   secret: "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHW4",
 };
 
-const otherId = {
-  name: "u",
-  publicKey: "GBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHKY",
-  secret: "SBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADYK",
-};
+const otherId = { ...deriveFromSeed("x"), name: "u" };
 
 function ticketOpts(rpc: Rpc, store: ReturnType<typeof createStore<AppState>>) {
   return {
@@ -1002,6 +998,12 @@ test("waitAccountExists drops a stale identity's account after a switch", async 
   try {
     document.body.innerHTML = `<aside id="wallet"></aside>`;
     const store = createStore<AppState>(emptyApp());
+    const sequences: Array<bigint | undefined> = [];
+    const origUpdate = store.update.bind(store);
+    store.update = (fn) => {
+      origUpdate(fn);
+      sequences.push(store.read().wallet.account?.sequence);
+    };
     mountWallet({
       store,
       el: document.getElementById("wallet")!,
@@ -1032,7 +1034,10 @@ test("waitAccountExists drops a stale identity's account after a switch", async 
     allowStale = true;
     await new Promise((r) => setTimeout(r, 500));
     expect(store.read().wallet.active?.publicKey).toBe(otherId.publicKey);
-    expect(store.read().wallet.account?.sequence).not.toBe(staleSeq);
+    expect(sequences).not.toContain(staleSeq);
+    expect(store.read().wallet.status).toBe("");
+    expect(store.read().wallet.provisionStatus).toBe("");
+    expect(store.read().wallet.busy).toBe(false);
   } finally {
     globalThis.fetch = origFetch;
   }

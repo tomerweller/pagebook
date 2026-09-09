@@ -10,12 +10,18 @@ import type { UrlOverrides } from "../view/format";
 import { emptyBookDomain, type AppState } from "../view/market";
 import { emptyOrdersDomain } from "./orders";
 import { emptyWalletDomain } from "./pane";
+import { deriveFromSeed } from "./keystore";
 import {
   createTicket,
   emptyTicketDomain,
   type TicketEngine,
   type TradeIntent,
 } from "./ticket";
+
+const nodeBuffer = (globalThis as typeof globalThis & { Buffer?: { alloc(n: number): object; prototype: object } }).Buffer;
+if (nodeBuffer && !(nodeBuffer.alloc(1) instanceof Uint8Array)) {
+  Object.setPrototypeOf(nodeBuffer.prototype, Uint8Array.prototype);
+}
 
 const emptyOv: UrlOverrides = { baseSym: null, quoteSym: null, baseDec: null, quoteDec: null };
 
@@ -25,11 +31,7 @@ const testId = {
   secret: "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHW4",
 };
 
-const otherId = {
-  name: "u",
-  publicKey: "GBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHKY",
-  secret: "SBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADYK",
-};
+const otherId = { ...deriveFromSeed("x"), name: "u" };
 
 function emptyApp(): AppState {
   return {

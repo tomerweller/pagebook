@@ -25,13 +25,16 @@ market A to B to A round trip, including on the same ledger, because the
 pane keys ledger refresh on market plus `latestLedger`.
 
 Identity-changing handlers clear `wallet.account`, `wallet.trustlines`,
-`wallet.openOrders`, and `book.ownTicks`. The ticket quote key carries
-account sequence and spendable balance, not the public key, so only a
-cleared account object changes that key and re-runs the preview on the
-invalid path. `waitAccountExists` captures the public key it is polling
-and writes `wallet.account` only while that key is still
-`wallet.active.publicKey`. A switch mid-poll leaves the loop and drops
-the result.
+`wallet.openOrders`, `book.ownTicks`, `provisionStatus`, `busy`, and
+`provisioning`. The ticket quote key carries account sequence and
+spendable balance, not the public key, so only a cleared account object
+changes that key and re-runs the preview on the invalid path.
+`waitAccountExists` captures the public key it is polling and writes
+`wallet.account` only while that key is still `wallet.active.publicKey`.
+A switch mid-poll leaves the loop and drops the result. Friendbot,
+trustline, and auto-provision capture the public key at start and write
+`status`, `provisionStatus`, `busy`, and `provisioning` only while that
+key is still active.
 
 ## Intent rule
 
