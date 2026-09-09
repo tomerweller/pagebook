@@ -2,7 +2,6 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRpc, type Rpc } from "../src/book";
 import { addrToHex } from "../src/engine/clientKeys";
-import { pad } from "../src/engine/pad";
 import {
   submitPlace,
   submitPostOnlyPlace,
@@ -21,7 +20,6 @@ import {
   banKey,
   clampHealTarget,
   crosses,
-  emptyRestWindow,
   HEAL_DEBOUNCE_S,
   healTargetFromQuote,
   inTickBand,
@@ -36,7 +34,7 @@ import {
   type LadderParams,
 } from "./lib/math";
 import { openLog, type OpsLog } from "./lib/opslog";
-import { classicTokens, collectUniverseXdr, feeKeys, orderClientKey, restKeys, settlePageKeys, sweepPadSizes, tokenHex } from "./lib/padkeys";
+import { classicTokens, collectUniverseXdr, feeKeys, orderClientKey, restKeys, sweepPadSizes, tokenHex } from "./lib/padkeys";
 import { loadState, saveState, type MmState, type QuoteState } from "./lib/statefile";
 import { type OutcomeInput } from "./lib/outcomes";
 import { runSubmit, sleep, type RestoreBudget, type SubmitPair } from "./lib/submitlog";
@@ -252,7 +250,6 @@ export class MM {
   async place(isBid: boolean, tick: number, lots: number, slot: number): Promise<string> {
     const nonce = this.nextNonce();
     const start = startTickForPostOnly(isBid, this.a.tickMin, this.a.tickMax);
-    const window = emptyRestWindow();
     const flags = { post_only: true, fill_or_kill: false, no_rest: false };
     const padKeys = [
       ...restKeys(this.a.market, isBid, tick),
@@ -270,7 +267,6 @@ export class MM {
         qtyLots: BigInt(lots),
         startTick: start,
         nonce: BigInt(nonce),
-        window,
         flags,
         padKeys,
         tokens: this.tokens,
@@ -290,7 +286,6 @@ export class MM {
 
   async replaceItems(items: ReplaceItem[]): Promise<string | undefined> {
     if (!items.length) return;
-    const window = emptyRestWindow();
     if (items.length === 1) {
       const { nonce, isBid, tick, lots, slot } = items[0];
       const padKeys = [...restKeys(this.a.market, isBid, tick), ...feeKeys(this.a.market, this.hex.base, this.hex.quote)];
@@ -304,7 +299,6 @@ export class MM {
           isBid,
           tick,
           qtyLots: BigInt(lots),
-          window,
           padKeys,
           tokens: this.tokens,
           sizes: this.padSizes(),
@@ -328,7 +322,6 @@ export class MM {
       isBid: it.isBid,
       tick: it.tick,
       qtyLots: BigInt(it.lots),
-      window,
     }));
     const padKeys = [...feeKeys(this.a.market, this.hex.base, this.hex.quote)];
     for (const it of items) padKeys.push(...restKeys(this.a.market, it.isBid, it.tick));
@@ -383,13 +376,11 @@ export class MM {
       limitTick: healTarget,
       startTick: q.start_tick,
       crossed: q.crossed,
-      tailSeq: q.tail_seq,
       taker: this.ownerHex,
       nonce: BigInt(nonce),
       base: this.hex.base,
       quote: this.hex.quote,
     };
-    const outPad = pad(quoted, healTarget, { pagesForEmpty: false });
     const flags = { post_only: false, fill_or_kill: false, no_rest: true };
     const { out } = await this.submit(
       "heal",
@@ -405,20 +396,18 @@ export class MM {
           qtyLots: 1n,
           startTick: q.start_tick,
           nonce: BigInt(nonce),
-          window: outPad.window,
           flags,
           quoted,
           tokens: this.tokens,
           padEnd: healTarget,
-          pagesForEmpty: false,
           sizes: this.padSizes(),
         }),
     );
     return out;
   }
 
-  async settle(nonce: number, isBid: boolean, tick: number): Promise<string> {
-    const padKeys = [...feeKeys(this.a.market, this.hex.base, this.hex.quote), ...settlePageKeys(this.a.market, isBid, tick)];
+  async settle(nonce: number): Promise<string> {
+    const padKeys = feeKeys(this.a.market, this.hex.base, this.hex.quote);
     const { out, res } = await this.submit("settle", {}, () =>
       submitSettle(this.rpc, {
         contract: this.a.contract,
@@ -439,8 +428,8 @@ export class MM {
   }
 
   async cancelAll(): Promise<void> {
-    for (const [n, q] of Object.entries(this.state.quotes)) {
-      await this.settle(Number(n), q.side === "bid", q.tick);
+    for (const n of Object.keys(this.state.quotes)) {
+      await this.settle(Number(n));
     }
   }
 

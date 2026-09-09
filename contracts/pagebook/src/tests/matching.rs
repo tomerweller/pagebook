@@ -1,4 +1,4 @@
-use super::harness::{flags, mint, rest_ask, rest_bid, setup, window};
+use super::harness::{flags, mint, rest_ask, rest_bid, setup};
 use crate::{Error, PlaceFlags};
 use soroban_sdk::{testutils::Address as _, Address};
 
@@ -19,7 +19,6 @@ fn multi_level_take_sweeps_in_price_order() {
         &5,
         &10,
         &1,
-        &window(&h),
         &PlaceFlags {
             post_only: false,
             fill_or_kill: false,
@@ -66,7 +65,6 @@ fn start_tick_clamps_better_rest() {
         &5,
         &12,
         &1,
-        &window(&h),
         &PlaceFlags {
             post_only: false,
             fill_or_kill: false,
@@ -91,7 +89,6 @@ fn fok_unfilled() {
             &5,
             &10,
             &1,
-            &window(&h),
             &PlaceFlags {
                 post_only: false,
                 fill_or_kill: true,
@@ -117,7 +114,6 @@ fn reliquify_after_sweep() {
         &2,
         &10,
         &1,
-        &window(&h),
         &PlaceFlags {
             post_only: false,
             fill_or_kill: false,
@@ -152,7 +148,6 @@ fn better_priced_inflight_rest_blocks_crossing_rest() {
         &5,
         &q.start_tick,
         &9,
-        &window(&h),
         &flags(),
     );
     assert_eq!(filled, 1, "takes the level at start_tick");
@@ -183,7 +178,6 @@ fn replace_batch_too_large() {
         is_bid: false,
         tick: 10,
         qty_lots: 1,
-        window: window(&h),
     };
     for _ in 0..(pagebook_types::MAX_REPLACE_BATCH + 1) {
         items.push_back(dummy.clone());
@@ -204,17 +198,9 @@ fn sweep_to_gap_then_rest_remainder() {
     rest_ask(&h, &maker, 20, 2, 2);
     let taker = Address::generate(&h.env);
     mint(&h, &h.quote, &taker, 1_000_000);
-    let (rested, filled, _q) = h.client().place(
-        &taker,
-        &h.market,
-        &true,
-        &15,
-        &5,
-        &10,
-        &1,
-        &window(&h),
-        &flags(),
-    );
+    let (rested, filled, _q) =
+        h.client()
+            .place(&taker, &h.market, &true, &15, &5, &10, &1, &flags());
     assert_eq!(filled, 2);
     assert!(rested, "remainder rests at 15");
     assert_eq!(h.client().best(&h.market, &false), Some(20));
@@ -235,17 +221,9 @@ fn stale_best_after_cancel_does_not_block_rest_in_gap() {
     );
     let taker = Address::generate(&h.env);
     mint(&h, &h.quote, &taker, 1_000_000);
-    let (rested, filled, _) = h.client().place(
-        &taker,
-        &h.market,
-        &true,
-        &15,
-        &5,
-        &10,
-        &1,
-        &window(&h),
-        &flags(),
-    );
+    let (rested, filled, _) =
+        h.client()
+            .place(&taker, &h.market, &true, &15, &5, &10, &1, &flags());
     assert_eq!(filled, 0);
     assert!(rested);
     assert_eq!(
@@ -266,17 +244,9 @@ fn worse_start_tick_never_moves_best_tick() {
     rest_ask(&h, &maker, 180, 5, 2);
     let taker = Address::generate(&h.env);
     mint(&h, &h.quote, &taker, 10_000_000);
-    let (rested, filled, _) = h.client().place(
-        &taker,
-        &h.market,
-        &true,
-        &200,
-        &7,
-        &150,
-        &1,
-        &window(&h),
-        &flags(),
-    );
+    let (rested, filled, _) =
+        h.client()
+            .place(&taker, &h.market, &true, &200, &7, &150, &1, &flags());
     assert_eq!(filled, 5);
     assert!(!rested, "recorded best 100 crosses 200: refund");
     assert_eq!(h.client().best(&h.market, &false), Some(100));
@@ -286,17 +256,9 @@ fn worse_start_tick_never_moves_best_tick() {
     rest_ask(&h, &maker, 100, 5, 1);
     let taker = Address::generate(&h.env);
     mint(&h, &h.quote, &taker, 10_000_000);
-    let (rested, filled, _) = h.client().place(
-        &taker,
-        &h.market,
-        &true,
-        &200,
-        &7,
-        &150,
-        &1,
-        &window(&h),
-        &flags(),
-    );
+    let (rested, filled, _) =
+        h.client()
+            .place(&taker, &h.market, &true, &200, &7, &150, &1, &flags());
     assert_eq!(filled, 0);
     assert!(!rested);
     assert_eq!(h.client().best(&h.market, &false), Some(100));
@@ -308,7 +270,6 @@ fn worse_start_tick_never_moves_best_tick() {
         &1,
         &120,
         &2,
-        &window(&h),
         &PlaceFlags {
             post_only: true,
             fill_or_kill: false,
@@ -326,20 +287,12 @@ fn remainder_below_min_is_refunded_not_reverted() {
     let maker = Address::generate(&h.env);
     rest_ask(&h, &maker, 10, 15, 1);
     h.client()
-        .set_market_caps(&h.market, &32, &64, &10, &10, &1_000_000, &1);
+        .set_market_caps(&h.market, &32, &64, &10, &10, &1_000_000, &64);
     let taker = Address::generate(&h.env);
     mint(&h, &h.quote, &taker, 1_000_000);
-    let (rested, filled, _) = h.client().place(
-        &taker,
-        &h.market,
-        &true,
-        &10,
-        &20,
-        &10,
-        &1,
-        &window(&h),
-        &flags(),
-    );
+    let (rested, filled, _) =
+        h.client()
+            .place(&taker, &h.market, &true, &10, &20, &10, &1, &flags());
     assert_eq!(filled, 15);
     assert!(!rested, "5-lot remainder is below min_order_lots: refunded");
 }
@@ -361,7 +314,6 @@ fn route_two_legs_shares_budget_and_nets() {
         qty_lots: qty,
         start_tick: 10,
         nonce,
-        window: window(&h),
         flags: PlaceFlags {
             post_only: false,
             fill_or_kill: false,
@@ -382,7 +334,7 @@ fn route_two_legs_shares_budget_and_nets() {
 fn route_shared_levels_budget_caps_second_leg() {
     let h = setup();
     h.client()
-        .set_market_caps(&h.market, &2, &64, &10, &1, &1_000_000, &1);
+        .set_market_caps(&h.market, &2, &64, &10, &1, &1_000_000, &64);
     let maker = Address::generate(&h.env);
     for (i, t) in [10u32, 11, 12, 13].iter().enumerate() {
         rest_ask(&h, &maker, *t, 1, i as u64 + 1);
@@ -396,7 +348,6 @@ fn route_shared_levels_budget_caps_second_leg() {
         qty_lots: qty,
         start_tick: 10,
         nonce,
-        window: window(&h),
         flags: PlaceFlags {
             post_only: false,
             fill_or_kill: false,
@@ -424,7 +375,6 @@ fn replace_batch_two_items_succeeds() {
             is_bid: false,
             tick,
             qty_lots: 2,
-            window: window(&h),
         });
     }
     let out = h.client().replace_batch(&owner, &h.market, &items);
@@ -449,17 +399,8 @@ fn walk_never_reads_word_past_limit() {
     let taker = Address::generate(&h.env);
     mint(&h, &h.quote, &taker, 1_000_000);
     let touched = super::footprint::keys_touched(&h, || {
-        h.client().place(
-            &taker,
-            &h.market,
-            &true,
-            &100,
-            &5,
-            &50,
-            &1,
-            &window(&h),
-            &flags(),
-        );
+        h.client()
+            .place(&taker, &h.market, &true, &100, &5, &50, &1, &flags());
     });
     assert!(!touched.contains(&crate::DataKey::TickWord(h.market, false, 2)));
     assert!(touched.contains(&crate::DataKey::TickWord(h.market, false, 0)));
@@ -479,7 +420,6 @@ fn walk_never_reads_word_past_limit() {
         &1,
         &60,
         &9,
-        &window(&h),
         &PlaceFlags {
             post_only: true,
             fill_or_kill: false,
@@ -496,7 +436,6 @@ fn walk_never_reads_word_past_limit() {
         &1,
         &4096,
         &3,
-        &window(&h),
         &PlaceFlags {
             post_only: false,
             fill_or_kill: false,
@@ -532,7 +471,6 @@ fn sweep_at_a_word_edge_marks_empty_or_next_word_never_the_swept_tick() {
         &3,
         &2047,
         &1,
-        &window(&h),
         &PlaceFlags {
             post_only: false,
             fill_or_kill: false,
@@ -556,7 +494,6 @@ fn sweep_at_a_word_edge_marks_empty_or_next_word_never_the_swept_tick() {
         &1,
         &2047,
         &9,
-        &window(&h),
         &PlaceFlags {
             post_only: true,
             fill_or_kill: false,
@@ -582,7 +519,6 @@ fn sweep_at_a_word_edge_marks_empty_or_next_word_never_the_swept_tick() {
         &3,
         &2048,
         &1,
-        &window(&h2),
         &PlaceFlags {
             post_only: false,
             fill_or_kill: false,
@@ -598,9 +534,9 @@ fn sweep_at_a_word_edge_marks_empty_or_next_word_never_the_swept_tick() {
 }
 
 #[test]
-fn quote_place_reports_fills_when_head_is_paged() {
-    // 40 asks @50, another taker takes 35 (head now in page 0). quote_place for
-    // 3 lots must report filled_lots 3, mirroring the window a client declares.
+fn quote_place_reports_fills_deep_in_queue() {
+    // 40 asks @50, another taker takes 35 (head at seq 35). quote_place for 3
+    // lots reports filled_lots 3 and the level's remaining open lots.
     let h = setup();
     let maker = Address::generate(&h.env);
     for n in 1..=40u64 {
@@ -608,20 +544,12 @@ fn quote_place_reports_fills_when_head_is_paged() {
     }
     let t1 = Address::generate(&h.env);
     mint(&h, &h.quote, &t1, 1_000_000);
-    let mut consume = soroban_sdk::Vec::new(&h.env);
-    consume.push_back(crate::ConsumeWindow {
-        tick: 50,
-        pages: crate::PageRange { first: 0, last: 1 },
-    });
-    let w = crate::SlotWindow {
-        consume,
-        append: crate::PageRange { first: 0, last: 1 },
-    };
     let (_, filled, _) = h
         .client()
-        .place(&t1, &h.market, &true, &50, &35, &50, &1, &w, &flags());
+        .place(&t1, &h.market, &true, &50, &35, &50, &1, &flags());
     assert_eq!(filled, 35);
     let q = h.client().quote_place(&h.market, &true, &50, &3);
     assert_eq!(q.filled_lots, 3);
-    assert_eq!(q.crossed.get(0).unwrap().head_seq, 35);
+    assert_eq!(q.crossed.get(0).unwrap().open_lots, 5);
+    assert_eq!(h.client().level(&h.market, &false, &50).head_seq, 35);
 }

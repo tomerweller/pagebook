@@ -10,12 +10,11 @@ import {
   submitSettle,
   type ClassicToken,
 } from "../src/engine/submit";
-import type { WindowSpec } from "../src/engine/pad";
 import { parseArgs, type ArgSpec } from "./lib/args";
 import { loadIdentity, type Identity } from "./lib/identity";
 import { bandTooWide, drawTake, randInt, repr, takeLimit } from "./lib/math";
 import { openLog, type OpsLog } from "./lib/opslog";
-import { classicTokens, feeKeys, settlePageKeys, sweepPadSizes, tokenHex } from "./lib/padkeys";
+import { classicTokens, feeKeys, sweepPadSizes, tokenHex } from "./lib/padkeys";
 import type { ApplyPadSizes } from "../src/engine/txdata";
 import { MAX_RESTORES_PER_CYCLE, recordSubmit, runSubmit, sleep, type RestoreBudget } from "./lib/submitlog";
 import { outcomeOf, type OutcomeInput } from "./lib/outcomes";
@@ -155,13 +154,11 @@ export class Trader {
       limitTick: limit,
       startTick: q.start_tick,
       crossed: q.crossed,
-      tailSeq: q.tail_seq,
       taker: this.ownerHex,
       nonce: BigInt(nonce),
       base: this.hex.base,
       quote: this.hex.quote,
     };
-    const outPad = pad(quoted, limit);
     const flags = { post_only: false, fill_or_kill: false, no_rest: noRest };
     const extra = {
       side: isBid ? "bid" : "ask",
@@ -173,7 +170,7 @@ export class Trader {
     };
     let res: OutcomeInput;
     try {
-      res = await this.submitPlaceOnce(isBid, limit, lots, nonce, quoted, outPad.window, flags);
+      res = await this.submitPlaceOnce(isBid, limit, lots, nonce, quoted, flags);
     } catch (e) {
       res = { kind: "build_error", message: repr(e) };
     }
@@ -183,7 +180,7 @@ export class Trader {
       this.record("restore", outcomeOf(rr), { key: res.keyName });
       if (rr.kind === "ok") {
         try {
-          res = await this.submitPlaceOnce(isBid, limit, lots, nonce, quoted, outPad.window, flags);
+          res = await this.submitPlaceOnce(isBid, limit, lots, nonce, quoted, flags);
         } catch (e) {
           res = { kind: "build_error", message: repr(e) };
         }
@@ -206,7 +203,7 @@ export class Trader {
     const keys = pad(quoted, padEnd).keys.map((k) => toLedgerKey({ contract: this.a.contract, caller: this.id.address }, k).xdr);
     // Pad v2 (ADR-028): cover band keys at their live size, nonexistent ones at
     // the creation estimate. Under the flat rate a wide band would run into the
-    // per-tx write-byte cap now that a full `Level` covers at 680 B (ADR-036).
+    // per-tx write-byte cap now that a full `Level` is 1,000 B (ADR-037).
     return sweepPadSizes(this.rpc, keys, { chunk: 100, coverBytes: true });
   }
 
@@ -216,7 +213,6 @@ export class Trader {
     lots: number,
     nonce: number,
     quoted: Parameters<typeof pad>[0],
-    window: WindowSpec,
     flags: { post_only: boolean; fill_or_kill: boolean; no_rest: boolean },
   ) {
     const sizes = await this.bandSizes(quoted, limit);
@@ -230,7 +226,6 @@ export class Trader {
       qtyLots: BigInt(lots),
       startTick: quoted.startTick,
       nonce: BigInt(nonce),
-      window,
       flags,
       quoted,
       tokens: this.tokens,
@@ -248,8 +243,8 @@ export class Trader {
     };
   }
 
-  async settle(nonce: number, isBid: boolean, tick: number): Promise<string> {
-    const padKeys = [...feeKeys(this.a.market, this.hex.base, this.hex.quote), ...settlePageKeys(this.a.market, isBid, tick)];
+  async settle(nonce: number): Promise<string> {
+    const padKeys = feeKeys(this.a.market, this.hex.base, this.hex.quote);
     const { out } = await runSubmit(
       this.log,
       "settle",
@@ -276,7 +271,7 @@ export class Trader {
     const due = this.resting.filter((r) => r.tCancel <= now);
     this.resting = this.resting.filter((r) => r.tCancel > now);
     for (const r of due) {
-      if ((await this.settle(r.nonce, r.isBid, r.tick)) === "ok") this.stats.settles += 1;
+      if ((await this.settle(r.nonce)) === "ok") this.stats.settles += 1;
     }
 
     const isBid = this.rnd() < 0.5;
@@ -321,7 +316,7 @@ export class Trader {
       const wait = aUniform(this.a.minWait, this.a.maxWait, this.rnd) - (this.now() - t0);
       await this.sleep(Math.max(0, wait) * 1000);
     }
-    for (const r of this.resting) await this.settle(r.nonce, r.isBid, r.tick);
+    for (const r of this.resting) await this.settle(r.nonce);
     this.record("shutdown", "done");
   }
 }

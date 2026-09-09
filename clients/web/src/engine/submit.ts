@@ -7,7 +7,7 @@ import { readAccount } from "../wallet/account";
 import { NETWORK_PASSPHRASE } from "../wallet/network";
 import { scValKeyName, toLedgerKey, type ClientKey } from "./clientKeys";
 import { errorName, hostErrorMessage, parseContractError, sacErrorName } from "./errors";
-import { pad, restoreMarks, type PadOut, type Quoted, type WindowSpec } from "./pad";
+import { pad, restoreMarks, type PadOut, type Quoted } from "./pad";
 import { simulate } from "./quote";
 import { applyPad, classicFee, declaredFromSoroban, footprintIndexes, type ApplyPadSizes, type DeclaredResources } from "./txdata";
 
@@ -144,39 +144,17 @@ export function scPlaceFlags(f: PlaceFlags): StellarSdk.xdr.ScVal {
   ]);
 }
 
-export function scPageRange(r: { first: number; last: number }): StellarSdk.xdr.ScVal {
-  return scvMap([
-    ["first", scvU32(r.first)],
-    ["last", scvU32(r.last)],
-  ]);
-}
-
-export function scSlotWindow(w: WindowSpec): StellarSdk.xdr.ScVal {
-  const consume = w.consume.map((c) =>
-    scvMap([
-      ["tick", scvU32(c.tick)],
-      ["pages", scPageRange(c.pages)],
-    ]),
-  );
-  return scvMap([
-    ["consume", StellarSdk.xdr.ScVal.scvVec(consume)],
-    ["append", scPageRange(w.append)],
-  ]);
-}
-
 export function scReplaceItem(item: {
   nonce: bigint;
   isBid: boolean;
   tick: number;
   qtyLots: bigint;
-  window: WindowSpec;
 }): StellarSdk.xdr.ScVal {
   return scvMap([
     ["nonce", scvU64(item.nonce)],
     ["is_bid", scvBool(item.isBid)],
     ["tick", scvU32(item.tick)],
     ["qty_lots", scvU64(item.qtyLots)],
-    ["window", scSlotWindow(item.window)],
   ]);
 }
 
@@ -758,7 +736,6 @@ export type PlaceArgParams = {
   qtyLots: bigint;
   startTick: number;
   nonce: bigint;
-  window: WindowSpec;
   flags: PlaceFlags;
 };
 
@@ -771,7 +748,6 @@ export function buildPlaceArgs(opts: PlaceArgParams): StellarSdk.xdr.ScVal[] {
     scvU64(opts.qtyLots),
     scvU32(opts.startTick),
     scvU64(opts.nonce),
-    scSlotWindow(opts.window),
     scPlaceFlags(opts.flags),
   ];
 }
@@ -784,12 +760,11 @@ export async function submitPlace(
     quoted: Quoted;
     tokens: ClassicToken[];
     padEnd: number;
-    pagesForEmpty?: boolean;
     extraPadKeys?: ClientKey[];
     sizes?: ApplyPadSizes;
   },
 ): Promise<EngineResult> {
-  const out = pad(opts.quoted, opts.padEnd, { pagesForEmpty: opts.pagesForEmpty });
+  const out = pad(opts.quoted, opts.padEnd);
   const padKeys = opts.extraPadKeys ? [...out.keys, ...opts.extraPadKeys] : out.keys;
   return submitInvocation({
     rpc,
@@ -859,7 +834,7 @@ export async function submitReplaceBatch(
     secret: string;
     owner: string;
     market: number;
-    items: { nonce: bigint; isBid: boolean; tick: number; qtyLots: bigint; window: WindowSpec }[];
+    items: { nonce: bigint; isBid: boolean; tick: number; qtyLots: bigint }[];
     padKeys: ClientKey[];
     tokens: ClassicToken[];
     sizes?: ApplyPadSizes;
@@ -888,7 +863,6 @@ export async function submitReplace(
     isBid: boolean;
     tick: number;
     qtyLots: bigint;
-    window: WindowSpec;
     padKeys: ClientKey[];
     tokens: ClassicToken[];
     sizes?: ApplyPadSizes;
@@ -906,7 +880,6 @@ export async function submitReplace(
       scvBool(opts.isBid),
       scvU32(opts.tick),
       scvU64(opts.qtyLots),
-      scSlotWindow(opts.window),
     ],
     padKeys: opts.padKeys,
     tokens: opts.tokens,

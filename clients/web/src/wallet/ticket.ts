@@ -167,7 +167,6 @@ export type TicketDomain = {
   phaseDetail: string;
   lastHash: string;
   lastNonce: bigint | null;
-  retryable: boolean;
   focusQty: boolean;
   previewGen: number;
   previewQuoteKey: string;
@@ -189,7 +188,6 @@ export function emptyTicketDomain(): TicketDomain {
     phaseDetail: "",
     lastHash: "",
     lastNonce: null,
-    retryable: false,
     focusQty: false,
     previewGen: 0,
     previewQuoteKey: "",
@@ -312,7 +310,6 @@ export function createTicket(opts: {
     if (s.ticket.phase === "confirmed" || s.ticket.phase === "failed") {
       s.ticket.phase = "idle";
       s.ticket.phaseDetail = "";
-      s.ticket.retryable = false;
     }
   }
 
@@ -530,7 +527,7 @@ export function createTicket(opts: {
     }
   }
 
-  async function submit(reuseNonce: boolean): Promise<void> {
+  async function submit(): Promise<void> {
     const secret = opts.getSecret();
     const pub = opts.getPublic();
     const m = market();
@@ -543,7 +540,6 @@ export function createTicket(opts: {
     if (t.submitting) return;
     app.update((s) => {
       s.ticket.submitting = true;
-      s.ticket.retryable = false;
       s.ticket.phase = "simulating";
       s.ticket.phaseDetail = "";
       s.ticket.lastHash = "";
@@ -551,7 +547,7 @@ export function createTicket(opts: {
     try {
       const hint = BigInt(Date.now()) * 1000n + BigInt(Math.floor(Math.random() * 1000));
       const cur = tkt();
-      const nonce = reuseNonce && cur.lastNonce != null ? cur.lastNonce : await allocNonce(opts.rpc, opts.contract, opts.getMarket(), pub, hint);
+      const nonce = await allocNonce(opts.rpc, opts.contract, opts.getMarket(), pub, hint);
       app.update((s) => {
         s.ticket.lastNonce = nonce;
       });
@@ -583,7 +579,6 @@ export function createTicket(opts: {
       app.update((s) => {
         s.ticket.phase = "sending";
       });
-      const out = pad(q.quoted, now.tick);
       const res = await submitPlace(opts.rpc, {
         contract: opts.contract,
         secret,
@@ -594,7 +589,6 @@ export function createTicket(opts: {
         qtyLots: now.lots,
         startTick: q.quoted.startTick,
         nonce,
-        window: out.window,
         flags: now.flags,
         quoted: q.quoted,
         tokens: padTokens(),
@@ -631,7 +625,6 @@ export function createTicket(opts: {
         s.ticket.phase = "failed";
         s.ticket.phaseDetail = plainError(res.errorName);
         s.ticket.lastHash = res.hash ?? "";
-        s.ticket.retryable = res.errorName === "RetryRest";
       });
       opts.onLog(`place ${res.errorName}`, res.hash);
     } else if (res.kind === "footprint") {
@@ -688,8 +681,7 @@ export function createTicket(opts: {
               ? "confirmed"
               : "failed";
     const hash = t.lastHash ? ` ${txLink(t.lastHash)}` : "";
-    const retry = t.retryable ? ` <button type="button" data-act="retry">retry</button>` : "";
-    return `${esc(label)}${t.phaseDetail ? ` · ${esc(t.phaseDetail)}` : ""}${hash}${retry}`;
+    return `${esc(label)}${t.phaseDetail ? ` · ${esc(t.phaseDetail)}` : ""}${hash}`;
   }
 
   function fullHtml(): string {
@@ -786,9 +778,7 @@ export function createTicket(opts: {
         });
         kickPreview();
       } else if (act === "place") {
-        void submit(false);
-      } else if (act === "retry") {
-        void submit(true);
+        void submit();
       } else if (act === "status-ack") {
         app.update((s) => {
           clearDonePhase(s);

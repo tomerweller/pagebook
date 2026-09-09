@@ -1,6 +1,6 @@
 use crate::errors::Error;
 use crate::events;
-use crate::iface::{CrossedLevel, PlaceFlags, QuoteResult, SlotWindow};
+use crate::iface::{CrossedLevel, PlaceFlags, QuoteResult};
 use crate::keys::DataKey;
 use crate::level;
 use crate::math::{quote_atoms, taker_fee};
@@ -45,7 +45,6 @@ pub fn place(
     qty_lots: u64,
     start_tick: u32,
     nonce: u64,
-    window: SlotWindow,
     flags: PlaceFlags,
 ) -> (bool, u64, i128) {
     taker.require_auth();
@@ -63,7 +62,6 @@ pub fn place(
         qty_lots,
         start_tick,
         nonce,
-        &window,
         &flags,
         &mut budget,
         &mut net,
@@ -84,7 +82,6 @@ pub fn place_body(
     qty_lots: u64,
     start_tick: u32,
     nonce: u64,
-    window: &SlotWindow,
     flags: &PlaceFlags,
     budget: &mut Budget,
     net: &mut Netting,
@@ -92,7 +89,6 @@ pub fn place_body(
     crate::market::require_qty(env, m, qty_lots);
     crate::market::require_tick(env, m, limit_tick);
     crate::market::require_start(env, m, start_tick);
-    crate::iface::validate_window(env, m, window);
 
     let recorded = store::load_best(env, market, !is_bid);
     if flags.post_only && !recorded.empty && rest::crosses(is_bid, recorded.tick, limit_tick) {
@@ -108,7 +104,6 @@ pub fn place_body(
         qty_lots,
         start_tick,
         &recorded,
-        window,
         budget,
         Mode::Apply,
         None,
@@ -125,7 +120,7 @@ pub fn place_body(
     let mut rested = false;
     if out.left > 0 && !flags.no_rest && !out.crossing_remains && out.left >= m.min_order_lots {
         rest::rest(
-            env, taker, market, m, is_bid, limit_tick, out.left, nonce, window, false,
+            env, taker, market, m, is_bid, limit_tick, out.left, nonce, false,
         );
         rested = true;
     }
@@ -178,7 +173,7 @@ pub struct WalkOut {
     pub quote: i128,
     pub left: u64,
     /// True when the walk stopped while a level at-or-better than `limit_tick`
-    /// may still hold liquidity (cap hit, window edge, or the recorded best was
+    /// may still hold liquidity (cap hit, or the recorded best was
     /// better than `start_tick` and crosses the limit) — the remainder must be
     /// refunded, never rested.
     pub crossing_remains: bool,
@@ -197,7 +192,6 @@ fn walk(
     qty: u64,
     start_tick: u32,
     recorded: &BestTick,
-    window: &SlotWindow,
     budget: &mut Budget,
     mode: Mode,
     mut trace: Option<&mut Vec<CrossedLevel>>,
@@ -271,7 +265,6 @@ fn walk(
         if let Some(t) = trace.as_deref_mut() {
             t.push_back(CrossedLevel {
                 tick: cur,
-                head_seq: lvl.head_seq,
                 open_lots: lvl.open_lots,
             });
         }
@@ -351,19 +344,11 @@ fn walk(
                 }
             }
         }
-        // Partial: consume from the head inside the declared window and the
-        // shared slot budget; progress persists even if a cap ends it.
-        // Apply: the client's declared window. DryRun: what the client will
-        // declare for this level from the returned head position (§14: pages
-        // [page(head_sim), page(head_sim)+1]), so quoted fills match.
-        let range = if apply {
-            consume_range(window, cur)
-        } else {
-            let p = pagebook_types::page(lvl.head_seq);
-            Some((p, p.saturating_add(1)))
-        };
+        // Partial: consume from the head within the shared slot budget; the
+        // whole queue is in the loaded entry. Progress persists even if the
+        // cap ends it.
         let head_before = lvl.head_seq;
-        let took = consume_partial(env, market, opp, cur, &mut lvl, left, range, budget);
+        let took = consume_partial(env, &mut lvl, left, budget);
         let q = quote_atoms(env, took, cur, m.tick_size);
         filled += took;
         quote = crate::math::chk_add(env, quote, q);
@@ -379,7 +364,7 @@ fn walk(
         }
         moved = true;
         if left > 0 {
-            // Window edge or scan cap stopped us at a level that still crosses.
+            // The scan cap stopped us at a level that still crosses.
             crossing_remains = true;
         }
         break;
@@ -437,48 +422,31 @@ fn word_frontier(w: u32, ascend: bool) -> u32 {
     }
 }
 
-/// The page range the client declared for consumption at `tick`; a level absent
-/// from the consume window is inline-only (05 "Encoding decisions").
-fn consume_range(window: &SlotWindow, tick: u32) -> Option<(u32, u32)> {
-    for w in window.consume.iter() {
-        if w.tick == tick {
-            return Some((w.pages.first, w.pages.last));
-        }
-    }
-    None
-}
-
-#[allow(clippy::too_many_arguments)]
+/// Consume from the head of `lvl` toward `want`, one slot per unit of the shared
+/// slot budget. A zero slot (a tombstone or a consumed head) is skipped; the
+/// head slot holds its open lots and is decremented in place, and the head
+/// advances the moment it reaches zero (§2, eager advance). Returns the lots
+/// taken.
 fn consume_partial(
     env: &Env,
-    market: u32,
-    is_bid: bool,
-    tick: u32,
     lvl: &mut pagebook_types::Level,
     want: u64,
-    window: Option<(u32, u32)>,
     budget: &mut Budget,
 ) -> u64 {
     let mut left = want;
-    while left > 0 && lvl.head_seq < lvl.tail_seq && budget.slots > 0 {
-        if !level::head_in_window(lvl, window) {
-            break;
-        }
+    while left > 0 && lvl.head_seq < lvl.tail() && budget.slots > 0 {
         budget.slots -= 1;
-        let qty = level::slot_qty(env, market, is_bid, tick, lvl, lvl.head_seq);
-        if qty == 0 || lvl.head_consumed_lots >= qty {
+        let open = lvl.slot(lvl.head_seq);
+        if open == 0 {
             lvl.head_seq += 1;
-            lvl.head_consumed_lots = 0;
             continue;
         }
-        let open = qty - lvl.head_consumed_lots;
         let take = core::cmp::min(open, left);
-        lvl.head_consumed_lots += take;
+        lvl.set_slot(lvl.head_seq, open - take);
         level::consume_open(env, lvl, take);
         left -= take;
-        if lvl.head_consumed_lots >= qty {
+        if take == open {
             lvl.head_seq += 1;
-            lvl.head_consumed_lots = 0;
         }
     }
     want - left
@@ -499,7 +467,6 @@ pub fn quote_place(env: &Env, market: u32, is_bid: bool, limit_tick: u32, qty: u
     } else {
         core::cmp::max(recorded.tick, limit_tick)
     };
-    let window = crate::iface::empty_window(env);
     let mut budget = Budget::from_market(&m);
     let mut crossed: Vec<CrossedLevel> = Vec::new(env);
     let out = walk(
@@ -511,7 +478,6 @@ pub fn quote_place(env: &Env, market: u32, is_bid: bool, limit_tick: u32, qty: u
         qty,
         start_tick,
         &recorded,
-        &window,
         &mut budget,
         Mode::DryRun,
         Some(&mut crossed),
@@ -546,13 +512,11 @@ pub fn quote_place(env: &Env, market: u32, is_bid: bool, limit_tick: u32, qty: u
     keys.push_back(DataKey::BestTick(market, is_bid));
     keys.push_back(DataKey::FeeAccrual(market, m.base.clone()));
     keys.push_back(DataKey::FeeAccrual(market, m.quote.clone()));
-    let own = store::load_level(env, market, is_bid, limit_tick);
     QuoteResult {
         start_tick,
         crossed,
         filled_lots: out.filled,
         quote_atoms: out.quote,
-        tail_seq: own.tail_seq,
         keys,
     }
 }

@@ -9,7 +9,6 @@ pub enum DataKey {
     Config,
     Market(u32),
     Level(u32, bool, u32),
-    LevelPage(u32, bool, u32, u32),
     Order(u32, Address, u64),
     FeeAccrual(u32, Address),
     BestTick(u32, bool),

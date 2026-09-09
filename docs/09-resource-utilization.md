@@ -1,12 +1,15 @@
 # Resource utilization per invocation, measured on testnet
 
-> These samples predate ADR-036. They were taken on the retired
+> These samples predate ADR-036 and ADR-037. They were taken on the retired
 > `CDX3…U2RO` deployment, whose `Level` and `LevelPage` entries were packed
-> `Bytes` (404 B and 376 B on ledger). The live deployment stores them as named
-> structs with occupancy-sized slot vectors (296 to 680 B by depth), so the
-> declared and metered write bytes here are an upper bound for sparse books and
-> a lower bound for deep ones; entry counts and instructions carry over. A fresh
-> sample from the live contract is the follow-up recorded in ADR-036.
+> `Bytes` (404 B and 376 B on ledger) and whose pads declared page keys and
+> slot windows. The live deployment stores a level's whole queue in one named
+> `Level` struct with an occupancy-sized slot vector (232 to 1,000 B by depth)
+> and declares no page keys, so the declared and metered write bytes here are
+> an upper bound for sparse books and a lower bound for deep ones, and the
+> declared entry counts include page keys the live pad does not have;
+> instructions carry over. A fresh sample from the live contract is the
+> follow-up recorded in ADR-036.
 
 Every number in this document comes from a landed transaction on the live
 XLM/USDC market (market 1 on

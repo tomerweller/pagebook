@@ -2,9 +2,10 @@ import * as StellarSdk from "@stellar/stellar-sdk";
 
 export const WRITE_ENTRY_FEE = 2500;
 // Flat per-key write-byte cover (pad v1, and the creation estimate under
-// pad v2). A `Level` covers at 296 B empty and grows 12 B per resting order to
-// 680 B at INLINE_SLOTS (ADR-036); the flat rate must clear the full one.
-export const WRITE_BYTES_PER = 720;
+// pad v2). A `Level` is one entry holding the whole queue (ADR-037): 124 B of
+// payload empty, 12 B more per resting order, 1,000 B on the ledger at the
+// default level_cap of 64. The flat rate must clear a full one plus growth.
+export const WRITE_BYTES_PER = 1100;
 export const DISK_READ_PER = 400;
 // Instruction headroom mirrors tools/soak apply_pad: a walk can do more work
 // at apply than simulation saw (levels appear in flight during a trend);
@@ -37,7 +38,7 @@ function writeBytesFor(added: number, addedKeys: StellarSdk.xdr.LedgerKey[], siz
       extra += info.actualSize + growth;
     } else {
       // A key that does not exist yet is free ONLY if nothing writes it. The
-      // operation itself may create it (a fresh level, its page, the order),
+      // operation itself may create it (a fresh level, the order),
       // and a created entry must be covered at its post-creation size:
       // measured shortfalls of exactly one entry (204 to 300 bytes) took the
       // maker down on 2026-08-26. Cover at the per-type budget estimate.

@@ -7,11 +7,10 @@ use soroban_sdk::{
 
 extern crate std;
 
-const DATA_KEY_NAMES: [&str; 9] = [
+const DATA_KEY_NAMES: [&str; 8] = [
     "Config",
     "Market",
     "Level",
-    "LevelPage",
     "Order",
     "FeeAccrual",
     "BestTick",
@@ -175,7 +174,6 @@ fn place_rest_does_not_extend_existing_ttl() {
             &2,
             &10,
             &2,
-            &super::harness::window(&h),
             &super::harness::flags(),
         );
     });
@@ -189,17 +187,8 @@ fn place_take_does_not_extend_existing_ttl() {
     let taker = Address::generate(&h.env);
     super::harness::mint(&h, &h.quote, &taker, 1_000_000);
     assert_hot_path_unchanged(&h, || {
-        h.client().place(
-            &taker,
-            &h.market,
-            &true,
-            &10,
-            &2,
-            &10,
-            &1,
-            &super::harness::window(&h),
-            &no_rest(),
-        );
+        h.client()
+            .place(&taker, &h.market, &true, &10, &2, &10, &1, &no_rest());
     });
 }
 
@@ -219,15 +208,7 @@ fn replace_does_not_extend_existing_ttl() {
     let maker = Address::generate(&h.env);
     super::harness::rest_ask(&h, &maker, 10, 2, 1);
     assert_hot_path_unchanged(&h, || {
-        h.client().replace(
-            &maker,
-            &h.market,
-            &1,
-            &false,
-            &12,
-            &3,
-            &super::harness::window(&h),
-        );
+        h.client().replace(&maker, &h.market, &1, &false, &12, &3);
     });
 }
 
@@ -238,17 +219,8 @@ fn collect_fees_does_not_extend_existing_ttl() {
     super::harness::rest_ask(&h, &maker, 10, 100, 1);
     let taker = Address::generate(&h.env);
     super::harness::mint(&h, &h.quote, &taker, 1_000_000);
-    h.client().place(
-        &taker,
-        &h.market,
-        &true,
-        &10,
-        &100,
-        &10,
-        &1,
-        &super::harness::window(&h),
-        &no_rest(),
-    );
+    h.client()
+        .place(&taker, &h.market, &true, &10, &100, &10, &1, &no_rest());
     assert_hot_path_unchanged(&h, || {
         h.client().collect_fees(&h.market, &h.base);
     });
@@ -269,7 +241,6 @@ fn route_does_not_extend_existing_ttl() {
         qty_lots: 2,
         start_tick: 10,
         nonce,
-        window: super::harness::window(&h),
         flags: no_rest(),
     };
     let mut legs = soroban_sdk::Vec::new(&h.env);
@@ -293,7 +264,6 @@ fn replace_batch_does_not_extend_existing_ttl() {
             is_bid: false,
             tick,
             qty_lots: 2,
-            window: super::harness::window(&h),
         });
     }
     assert_hot_path_unchanged(&h, || {

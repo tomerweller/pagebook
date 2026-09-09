@@ -1,4 +1,4 @@
-use crate::{empty_window, PageBook, PageBookClient, PlaceFlags, SlotWindow};
+use crate::{PageBook, PageBookClient, PlaceFlags};
 use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env};
 
 pub struct Harness {
@@ -46,10 +46,6 @@ pub fn mint(h: &Harness, token: &Address, to: &Address, amount: i128) {
     StellarAssetClient::new(&h.env, token).mint(to, &amount);
 }
 
-pub fn window(h: &Harness) -> SlotWindow {
-    empty_window(&h.env)
-}
-
 pub fn flags() -> PlaceFlags {
     PlaceFlags::none()
 }
@@ -64,7 +60,6 @@ pub fn rest_ask(h: &Harness, maker: &Address, tick: u32, qty: u64, nonce: u64) {
         &qty,
         &tick,
         &nonce,
-        &window(h),
         &flags(),
     );
 }
@@ -79,7 +74,6 @@ pub fn rest_bid(h: &Harness, maker: &Address, tick: u32, qty: u64, nonce: u64) {
         &qty,
         &tick,
         &nonce,
-        &window(h),
         &flags(),
     );
 }

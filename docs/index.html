@@ -332,7 +332,7 @@
     <li><b>Price Quantization.</b> SDEX matches rational prices with no market configuration. PageBook quantizes each market with an admin-configured lot size, tick size, and tick range. The example market sets the lot to 10&nbsp;XLM, the tick to <code>0.00001 USDC/XLM</code>, and the range to the whole index. One lot at tick <code>15,800</code> (<code>0.15800 USDC/XLM</code>) costs <code>1.58 USDC</code>.</li>
     <li><b>Async Maker Settlement.</b> SDEX credits both sides during execution. In PageBook, the taker settles during execution and makers claim later.</li>
     <li><b>(Slightly) Stale Best Prices.</b> SDEX matches against the best offer at apply time. PageBook starts from the best price seen during simulation, so better offers added before inclusion are not visible to that transaction.</li>
-    <li><b>Footprint Padding.</b> This one is against Soroban convention rather than SDEX. A typical invocation submits the footprint returned by simulation as-is; PageBook clients pad the simulated footprint with a tick band and queue page windows.</li>
+    <li><b>Footprint Padding.</b> This one is against Soroban convention rather than SDEX. A typical invocation submits the footprint returned by simulation as-is; PageBook clients pad the simulated footprint with a band of price levels around the simulated best.</li>
   </ul>
 </section>
 
@@ -450,24 +450,24 @@
   <p>Each active tick has one FIFO queue per market side. Each slot stores one maker order's quantity in lots. New maker orders append at the tail; takers consume from the head. The queue stores quantities only: maker identity and settlement data live in the order record.</p>
   <p>At tick <code>15,800</code>, every slot trades at <code>0.15800 USDC/XLM</code>. A slot containing <code>25</code> represents 25 lots, or 250&nbsp;XLM. A taker consumes older slots before newer ones at the same price.</p>
   <h3>Implementation</h3>
-  <p>The FIFO never moves data. It appends quantities to a vector and advances head and tail coordinates through it. Each queue is split across two entry types: <code>Level</code> stores queue counters, total open lots, and the first 32 quantity slots (188 bytes empty, 12 more per resting order, 572 bytes full); <code>LevelPage</code> adds 32 slots, sized the same way, when the inline slots are full. Together they cap a level at 64 resting orders; a rest against a full level fails with a typed error. <code>LevelPage</code> is declared in footprints but written only when an order actually spills past the inline slots.</p>
-  <p>Each quantity is written to one slot. Filled slots remain as history; cancelled slots become tombstones. Neither is moved or compacted.</p>
+  <p>The FIFO never moves data. It appends quantities to a vector and advances a head coordinate through it. Each queue is one <code>Level</code> entry: the generation and head counters, total open lots, and the quantity slots, a vector as long as the queue has reached (124 bytes empty, 12 more per resting order, 892 bytes at 64). A level holds up to 64 resting orders per generation by default; a rest against a full level fails with a typed error. The whole queue sits under one key, so a deep queue adds bytes to that entry rather than entries to the footprint.</p>
+  <p>Each slot holds one order's open lots. A partial take decrements the head slot in place; filled slots remain as history; cancelled slots become tombstones. Nothing is moved or compacted.</p>
   <p><code>open_lots</code> tracks aggregate supply at the level. A taker that consumes the whole level can price and sweep it with one <code>Level</code> write, without reading each maker slot. Partial consumption walks slots from the head under a fixed scan limit.</p>
-  <p><code>Level</code> entries are never deleted; a level's slots are reused across generations. Whenever the level empties &mdash; swept by a taker, or vacated by cancels &mdash; the generation increments and sequence numbers restart, reopening all 64 slots. The generation preserves settlement correctness for makers from the previous queue.</p>
+  <p><code>Level</code> entries are never deleted; a level's slots are reused across generations. Whenever the level empties &mdash; swept by a taker, or vacated by cancels &mdash; the generation increments, the vector empties, and sequence numbers restart. The generation preserves settlement correctness for makers from the previous queue.</p>
 
   <figure>
     <div class="fig">
-    <svg viewBox="0 0 940 356" role="img" aria-label="One level queue at tick 15,800, stored as two entries. The Level entry holds the generation, head and tail sequence numbers, open_lots, and 32 inline quantity slots; a LevelPage entry adds 32 more slots when the inline ones fill. Slots hold consumed history, a cancelled tombstone, open quantities, or empty space; head and tail advance through the vector and nothing moves.">
+    <svg viewBox="0 0 940 356" role="img" aria-label="One level queue at tick 15,800, stored as one Level entry holding the generation, the head sequence number, open_lots, and a vector of quantity slots whose length is the tail. Slots hold consumed history, a cancelled tombstone, or open quantities; the head advances through the vector, appends push onto its end, and nothing moves.">
       <g fill="currentColor" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">
         <text x="30" y="36" font-weight="700" font-size="13" font-family="inherit">Level queue</text>
         <text x="30" y="54" fill="var(--muted)" font-size="11">asks at tick 15,800 &#183; one FIFO per market side per active tick</text>
 
         <!-- Level entry -->
-        <rect x="180" y="84" width="470" height="124" fill="none" stroke="currentColor"/>
+        <rect x="180" y="84" width="730" height="124" fill="none" stroke="currentColor"/>
         <text x="194" y="110" font-weight="700">Level</text>
         <text x="194" y="132" fill="var(--muted)" font-size="11">gen 3</text>
         <text x="194" y="150" fill="var(--muted)" font-size="11">head_seq 2</text>
-        <text x="194" y="168" fill="var(--muted)" font-size="11">tail_seq 5</text>
+        <text x="194" y="168" fill="var(--muted)" font-size="11">slots.len() 5</text>
         <text x="194" y="186" fill="var(--muted)" font-size="11">open_lots 80</text>
 
         <!-- head / tail markers -->
@@ -500,38 +500,27 @@
         <text x="517" y="190" text-anchor="middle" font-size="10" fill="var(--muted)">5</text>
         <text x="553" y="190" text-anchor="middle" font-size="10" fill="var(--muted)">6</text>
 
-        <text x="180" y="228" fill="var(--muted)" font-size="11">counters + 32 inline slots &#183; 285 B</text>
-
-        <!-- LevelPage entry -->
-        <rect x="690" y="84" width="220" height="124" fill="none" stroke="currentColor"/>
-        <text x="704" y="110" font-weight="700">LevelPage 0</text>
-        <rect x="704" y="140" width="34" height="34" fill="none" stroke="var(--line)" stroke-dasharray="3 3"/>
-        <rect x="740" y="140" width="34" height="34" fill="none" stroke="var(--line)" stroke-dasharray="3 3"/>
-        <rect x="776" y="140" width="34" height="34" fill="none" stroke="var(--line)" stroke-dasharray="3 3"/>
-        <rect x="812" y="140" width="34" height="34" fill="none" stroke="var(--line)" stroke-dasharray="3 3"/>
-        <text x="858" y="162" fill="var(--muted)">&#8230;</text>
-        <text x="690" y="228" fill="var(--muted)" font-size="11">32 more slots &#183; 257 B &#183; created</text>
-        <text x="690" y="244" fill="var(--muted)" font-size="11">when the inline slots fill</text>
+        <text x="180" y="228" fill="var(--muted)" font-size="11">counters + slots &#183; 124 B empty, 12 B per slot, 892 B at the default cap of 64</text>
 
         <!-- legend -->
         <rect x="180" y="262" width="13" height="13" fill="var(--dead)" stroke="var(--line)"/>
-        <text x="203" y="273" font-size="11" fill="var(--muted)">filled: consumed history, keeps its original quantity</text>
+        <text x="203" y="273" font-size="11" fill="var(--muted)">filled: consumed history behind the head</text>
         <rect x="180" y="284" width="13" height="13" fill="none" stroke="var(--line)"/>
         <line x1="181" y1="296" x2="192" y2="285" stroke="var(--muted)"/>
         <text x="203" y="295" font-size="11" fill="var(--muted)">cancelled: tombstone; never moved or compacted</text>
         <rect x="180" y="306" width="13" height="13" fill="var(--ask-soft)" stroke="var(--ask)"/>
-        <text x="203" y="317" font-size="11" fill="var(--muted)">open: one maker order's quantity in lots</text>
+        <text x="203" y="317" font-size="11" fill="var(--muted)">open: one maker order's open lots (the head slot shrinks as it is taken)</text>
         <rect x="180" y="328" width="13" height="13" fill="none" stroke="var(--line)" stroke-dasharray="3 3"/>
         <text x="203" y="339" font-size="11" fill="var(--muted)">empty: the next append lands at the tail</text>
 
         <!-- reuse note -->
         <text x="560" y="273" fill="var(--muted)" font-size="11">the entry is never deleted: a sweep or</text>
         <text x="560" y="289" fill="var(--muted)" font-size="11">a reuse of an emptied queue increments</text>
-        <text x="560" y="305" fill="var(--muted)" font-size="11">gen and restarts sequence numbers</text>
+        <text x="560" y="305" fill="var(--muted)" font-size="11">gen, empties the vector, and restarts seqs</text>
       </g>
     </svg>
     </div>
-    <figcaption><b>One queue, two entries.</b> <code>Level</code> carries the counters and the first 32 quantity slots; <code>LevelPage</code> adds 32 more when those fill. Each slot is written once: filled slots stay behind the head as history, a cancelled slot becomes a tombstone, and head and tail advance through the vector without moving data. Here seqs 0 and 1 are history, the head sits on 25, and <code>open_lots</code> totals the three open slots.</figcaption>
+    <figcaption><b>One queue, one entry.</b> <code>Level</code> carries the counters and every quantity slot of the current generation; the vector's length is the tail. Filled slots stay behind the head as history, a cancelled slot becomes a tombstone, a partial take shrinks the head slot in place, and the head advances through the vector without moving data. Here seqs 0 and 1 are history, the head sits on 25, and <code>open_lots</code> totals the three open slots.</figcaption>
   </figure>
 </section>
 
@@ -732,9 +721,9 @@
   </figure>
 
   <h3>Implementation</h3>
-  <p>The client simulates the take to get its starting tick and expected queue positions, then pads the footprint with a tick band and queue page windows.</p>
+  <p>The client simulates the take to get its starting tick and the levels it expects to cross, then pads the footprint with a band of level keys around that path.</p>
   <p>During execution, the walk alternates between the tick index and level queues. A full-level sweep uses <code>open_lots</code> and does not read individual slots. Partial consumption reads from the queue head under a fixed slot limit.</p>
-  <p>The walk stops when it fills the requested quantity, reaches the limit price, hits a configured work limit, or reaches the edge of a declared queue window. Depending on the order flags, any remainder rests at the limit price or is refunded. Walking beyond the padded tick band is the remaining footprint failure case.</p>
+  <p>The walk stops when it fills the requested quantity, reaches the limit price, or hits a configured work limit. Depending on the order flags, any remainder rests at the limit price or is refunded. Walking beyond the padded tick band is the remaining footprint failure case.</p>
   <p>Liquidity added at a better price after simulation is outside this walk. Covered changes inside the padded range are handled at execution without adding maker-specific entries to the footprint.</p>
 
   <h3>Observations</h3>

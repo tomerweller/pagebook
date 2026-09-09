@@ -1,6 +1,5 @@
 use crate::errors::Error;
 use crate::events;
-use crate::iface::SlotWindow;
 use crate::level;
 use crate::store;
 use pagebook_types::{BestTick, Market, Order};
@@ -15,7 +14,6 @@ pub fn rest(
     tick: u32,
     qty: u64,
     nonce: u64,
-    window: &SlotWindow,
     reuse_order: bool,
 ) {
     crate::market::require_qty(env, m, qty);
@@ -25,17 +23,7 @@ pub fn rest(
     }
     let mut lvl = store::load_level(env, market, is_bid, tick);
     let was_empty = lvl.open_lots == 0;
-    let seq = level::append(
-        env,
-        market,
-        is_bid,
-        tick,
-        m,
-        &mut lvl,
-        qty,
-        window.append.first,
-        window.append.last,
-    );
+    let seq = level::append(env, m, &mut lvl, qty);
     store::save_level(env, market, is_bid, tick, &lvl);
     if was_empty {
         crate::bitmap::set_tick(env, market, is_bid, tick);

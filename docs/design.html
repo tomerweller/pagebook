@@ -418,7 +418,7 @@
     <strong>The footprint is declared before execution.</strong> A transaction lists every ledger entry it will read or write; simulation computes the list, and the host rejects any access to an entry not on it. The classic DEX does not have this problem, because the protocol is the one doing the reading. A contract's matching walk has to name every entry it might touch before it runs, and the book keeps moving between simulation and inclusion. PageBook's answer is to make the footprint computable: every key is a pure function of identifiers the client already knows (market, side, tick, owner, nonce), and every loop bounds on a config constant, so a client can take one simulation, pad the key set against whatever the book does next, and submit a transaction that still fits.
   </p>
   <p>
-    <strong>Write bytes are the scarce shared resource.</strong> Each ledger, about five seconds, allows 286,720 bytes of Soroban writes, and Soroban charges for every byte of every entry a transaction rewrites, whether or not that byte changed. A classic offer is one small entry the protocol rewrites; a contract book that stores more than it must rewrites the excess on every place and every settle. A persistent entry also prepays about 120 days of storage as rent, and going too small does not help either, because every entry carries 100 to 200 bytes of key and framing on top of its payload. PageBook's answer is to keep every hot entry at a few hundred bytes and to pay for it once: the bulk-rewritten queues and bitmaps are packed bytes with tested size budgets, the smaller named entries are readable <code>#[contracttype]</code> structs, and long-lived entries are reused in place rather than deleted and recreated, with archival as the garbage collector.
+    <strong>Write bytes are the scarce shared resource.</strong> Each ledger, about five seconds, allows 286,720 bytes of Soroban writes, and Soroban charges for every byte of every entry a transaction rewrites, whether or not that byte changed. A classic offer is one small entry the protocol rewrites; a contract book that stores more than it must rewrites the excess on every place and every settle. A persistent entry also prepays about 120 days of storage as rent, and going too small does not help either, because every entry carries 100 to 200 bytes of key and framing on top of its payload. PageBook's answer is to keep every hot entry at a few hundred bytes and to pay for it once: every entry is a readable <code>#[contracttype]</code> struct with a tested size budget, the queue entry is exactly as large as the queue is deep, and long-lived entries are reused in place rather than deleted and recreated, with archival as the garbage collector.
   </p>
   <p>
     Most of what follows is those two answers worked out.
@@ -438,7 +438,7 @@
 <section id="storage">
   <h3>Storage map <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#part-i-data-structures">04 Part I</a></span></h3>
   <p>
-    Keys are one <code>#[contracttype]</code> <code>DataKey</code> enum: the variant name is the type, the fields are coordinates. Nothing that execution assigns (a generation, a queue position, a page index) may appear in a key the client has to put in the footprint. All entries are persistent except <code>Config</code>. Sizes are XDR-serialized budgets at max occupancy, enforced by tests. Every entry is a named <code>#[contracttype]</code> struct except the two 2,048-bit bitmaps, <code>TickWord</code> and <code>TickSummary</code>, which are 256-byte values. <code>Level</code> and <code>LevelPage</code> hold their quantity slots in a vector as long as the queue has reached, so a level's size follows its queue: 188 bytes empty, 12 more per resting order.
+    Keys are one <code>#[contracttype]</code> <code>DataKey</code> enum: the variant name is the type, the fields are coordinates. Nothing that execution assigns (a generation, a queue position) may appear in a key the client has to put in the footprint. All entries are persistent except <code>Config</code>. Sizes are XDR-serialized budgets at max occupancy, enforced by tests. Every entry is a named <code>#[contracttype]</code> struct except the two 2,048-bit bitmaps, <code>TickWord</code> and <code>TickSummary</code>, which are 256-byte values. <code>Level</code> holds a price's whole queue in one vector as long as the queue has reached, so a level's size follows its queue: 124 bytes empty, 12 more per resting order.
   </p>
   <div class="tablewrap">
     <table>
@@ -446,10 +446,9 @@
       <tbody>
         <tr class="band"><td colspan="4">Configuration: money-free, admin-governed</td></tr>
         <tr><td class="k">Config</td><td class="k">Config</td><td>admin, fee recipient, paused flag, market counter (instance storage)</td><td class="num">~190 B</td></tr>
-        <tr><td class="k">Market</td><td class="k">Market(market_id)</td><td>token pair, lot_size, tick_size, tick band, fee bps, order-size bounds, loop caps, queue geometry</td><td class="num">≤ 500 B</td></tr>
+        <tr><td class="k">Market</td><td class="k">Market(market_id)</td><td>token pair, lot_size, tick_size, tick band, fee bps, order-size bounds, loop caps, level capacity</td><td class="num">≤ 500 B</td></tr>
         <tr class="band"><td colspan="4">Order store: authoritative, funds-bearing, never stale</td></tr>
-        <tr><td class="k">Level</td><td class="k">Level(market, side, tick)</td><td>five counters + the inline quantity slots, a vector as long as the queue has reached (up to <code>INLINE_SLOTS</code>)</td><td class="num">188 B empty, 572 B full</td></tr>
-        <tr><td class="k">LevelPage</td><td class="k">LevelPage(market, side, tick, page)</td><td>up to <code>PAGE_SLOTS</code> more quantity slots (overflow), sized the same way</td><td class="num">40 B empty, 424 B full</td></tr>
+        <tr><td class="k">Level</td><td class="k">Level(market, side, tick)</td><td>generation, head_seq, open_lots + the quantity slots, one vector as long as the queue has reached (up to <code>level_cap</code>, 64 by default)</td><td class="num">124 B empty, 892 B at 64</td></tr>
         <tr><td class="k">Order</td><td class="k">Order(market, owner, nonce)</td><td>side, tick, generation, seq, qty</td><td class="num">≤ 160 B</td></tr>
         <tr><td class="k">FeeAccrual</td><td class="k">FeeAccrual(market, token)</td><td>fees collected, not yet paid out</td><td class="num">~50 B</td></tr>
         <tr class="band"><td colspan="4">Tick index: derived, money-free, may run stale</td></tr>
@@ -468,65 +467,53 @@
 </section>
 
 <section id="level">
-  <h3>The level queue <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#2-the-level-queue-level-and-levelpage">04 §2</a></span></h3>
+  <h3>The level queue <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#2-the-level-queue-level">04 §2</a></span></h3>
   <p>
-    A <code>Level</code> is one price's queue: five counters and a run of quantity slots. Queue position is by seq, and seq is implicit in slot position, so a slot stores only a quantity. Seqs beyond the inline slots spill into <code>LevelPage</code> entries. Nothing is ever moved or compacted; "remove the head" means a counter advanced.
+    A <code>Level</code> is one price's queue: two counters, an open-lots total, and one vector of quantity slots. Queue position is by seq, and seq is implicit in slot position, so a slot stores only a quantity: the order's open lots. The vector's length is the tail. Nothing is ever moved or compacted; "remove the head" means a counter advanced.
   </p>
   <figure>
     <div class="fig">
-      <svg viewBox="0 0 880 290" role="img" aria-label="One ask level at tick 101 drawn with 8 inline slots and one overflow page of 4. Counters: generation 2, head_seq 3, head_consumed_lots 4, tail_seq 10, open_lots 36. Slots 0 to 2 are filled history, slot 3 is the head with 4 of 10 consumed, slot 4 is a tombstone, slots 5 to 9 are open, seqs 8 and 9 sit in page 0, and slots 10 and 11 are beyond the tail.">
+      <svg viewBox="0 0 880 290" role="img" aria-label="One ask level at tick 101 drawn with 10 slots held. Counters: generation 2, head_seq 3, open_lots 36; the vector holds 10 slots. Slots 0 to 2 are filled history, slot 3 is the head holding 6 open lots of the 10 it rested, slot 4 is a tombstone, slots 5 to 9 are open, and the vector ends at the tail.">
         <g font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12">
           <text x="30" y="26" font-family="ui-monospace, Menlo, monospace" font-size="13" font-weight="600" fill="currentColor">Level(market, ask, 101)</text>
-          <text x="30" y="44" fill="var(--muted)">drawn with INLINE_SLOTS = 8, PAGE_SLOTS = 4 (real target: 32 and 32)</text>
+          <text x="30" y="44" fill="var(--muted)">drawn with 10 slots held; a level holds up to level_cap slots, 64 by default</text>
 
           <!-- counters -->
           <g font-family="ui-monospace, Menlo, monospace" font-size="12">
             <rect x="30" y="58" width="130" height="30" rx="6" fill="var(--code-bg)"/><text x="95" y="78" text-anchor="middle" fill="currentColor">generation 2</text>
             <rect x="168" y="58" width="120" height="30" rx="6" fill="var(--code-bg)"/><text x="228" y="78" text-anchor="middle" fill="currentColor">head_seq 3</text>
-            <rect x="296" y="58" width="196" height="30" rx="6" fill="var(--code-bg)"/><text x="394" y="78" text-anchor="middle" fill="currentColor">head_consumed_lots 4</text>
-            <rect x="500" y="58" width="120" height="30" rx="6" fill="var(--code-bg)"/><text x="560" y="78" text-anchor="middle" fill="currentColor">tail_seq 10</text>
-            <rect x="628" y="58" width="130" height="30" rx="6" fill="var(--code-bg)"/><text x="693" y="78" text-anchor="middle" fill="currentColor">open_lots 36</text>
+            <rect x="296" y="58" width="130" height="30" rx="6" fill="var(--code-bg)"/><text x="361" y="78" text-anchor="middle" fill="currentColor">open_lots 36</text>
+            <rect x="434" y="58" width="160" height="30" rx="6" fill="var(--code-bg)"/><text x="514" y="78" text-anchor="middle" fill="currentColor">slots.len() 10</text>
           </g>
 
-          <!-- inline slots: x = 30 + i*62, width 56, y 118..172 -->
+          <!-- slots: x = 30 + i*62, width 56, y 118..172 -->
           <g font-family="ui-monospace, Menlo, monospace" font-size="14" text-anchor="middle">
             <!-- filled history 0..2 -->
             <rect x="30" y="118" width="56" height="54" rx="6" fill="var(--code-bg)" stroke="var(--dead)"/><text x="58" y="150" fill="var(--muted)">5</text>
             <rect x="92" y="118" width="56" height="54" rx="6" fill="var(--code-bg)" stroke="var(--dead)"/><text x="120" y="150" fill="var(--muted)">8</text>
             <rect x="154" y="118" width="56" height="54" rx="6" fill="var(--code-bg)" stroke="var(--dead)"/><text x="182" y="150" fill="var(--muted)">6</text>
             <!-- head 3 -->
-            <rect x="216" y="118" width="56" height="54" rx="6" fill="var(--ask-soft)" stroke="var(--ask)" stroke-width="2"/><text x="244" y="144" fill="currentColor">10</text><text x="244" y="162" font-size="10.5" fill="var(--ask)">4 taken</text>
+            <rect x="216" y="118" width="56" height="54" rx="6" fill="var(--ask-soft)" stroke="var(--ask)" stroke-width="2"/><text x="244" y="144" fill="currentColor">6</text><text x="244" y="162" font-size="10.5" fill="var(--ask)">of 10 rested</text>
             <!-- tombstone 4 -->
             <rect x="278" y="118" width="56" height="54" rx="6" fill="none" stroke="var(--dead)" stroke-dasharray="4 3"/><text x="306" y="150" fill="var(--muted)">0</text>
-            <!-- open 5..7 -->
+            <!-- open 5..9 -->
             <rect x="340" y="118" width="56" height="54" rx="6" fill="var(--surface)" stroke="currentColor"/><text x="368" y="150" fill="currentColor">7</text>
             <rect x="402" y="118" width="56" height="54" rx="6" fill="var(--surface)" stroke="currentColor"/><text x="430" y="150" fill="currentColor">9</text>
             <rect x="464" y="118" width="56" height="54" rx="6" fill="var(--surface)" stroke="currentColor"/><text x="492" y="150" fill="currentColor">4</text>
+            <rect x="526" y="118" width="56" height="54" rx="6" fill="var(--surface)" stroke="currentColor"/><text x="554" y="150" fill="currentColor">6</text>
+            <rect x="588" y="118" width="56" height="54" rx="6" fill="var(--surface)" stroke="currentColor"/><text x="616" y="150" fill="currentColor">4</text>
           </g>
           <!-- seq labels -->
           <g font-family="ui-monospace, Menlo, monospace" font-size="11" text-anchor="middle" fill="var(--muted)">
-            <text x="58" y="188">0</text><text x="120" y="188">1</text><text x="182" y="188">2</text><text x="244" y="188">3</text><text x="306" y="188">4</text><text x="368" y="188">5</text><text x="430" y="188">6</text><text x="492" y="188">7</text>
+            <text x="58" y="188">0</text><text x="120" y="188">1</text><text x="182" y="188">2</text><text x="244" y="188">3</text><text x="306" y="188">4</text><text x="368" y="188">5</text><text x="430" y="188">6</text><text x="492" y="188">7</text><text x="554" y="188">8</text><text x="616" y="188">9</text>
           </g>
-          <text x="275" y="208" text-anchor="middle" fill="var(--muted)">inline slots (inside Level)</text>
-
-          <!-- page 0: x = 570 + i*62 -->
-          <rect x="562" y="106" width="292" height="112" rx="10" fill="none" stroke="currentColor" stroke-dasharray="6 4"/>
-          <g font-family="ui-monospace, Menlo, monospace" font-size="14" text-anchor="middle">
-            <rect x="574" y="118" width="56" height="54" rx="6" fill="var(--surface)" stroke="currentColor"/><text x="602" y="150" fill="currentColor">6</text>
-            <rect x="636" y="118" width="56" height="54" rx="6" fill="var(--surface)" stroke="currentColor"/><text x="664" y="150" fill="currentColor">4</text>
-            <rect x="698" y="118" width="56" height="54" rx="6" fill="none" stroke="var(--dead)" stroke-dasharray="4 3"/><text x="726" y="150" fill="var(--dead)">?</text>
-            <rect x="760" y="118" width="56" height="54" rx="6" fill="none" stroke="var(--dead)" stroke-dasharray="4 3"/><text x="788" y="150" fill="var(--dead)">?</text>
-          </g>
-          <g font-family="ui-monospace, Menlo, monospace" font-size="11" text-anchor="middle" fill="var(--muted)">
-            <text x="602" y="188">8</text><text x="664" y="188">9</text><text x="726" y="188">10</text><text x="788" y="188">11</text>
-          </g>
-          <text x="708" y="208" text-anchor="middle" fill="var(--muted)">LevelPage(…, 101, 0)</text>
+          <text x="337" y="208" text-anchor="middle" fill="var(--muted)">slots: one vector inside Level, index = seq</text>
 
           <!-- markers -->
           <line x1="244" y1="98" x2="244" y2="114" stroke="var(--ask)" stroke-width="1.5"/>
           <text x="244" y="95" text-anchor="middle" font-size="10.5" fill="var(--ask)">head</text>
-          <line x1="695" y1="98" x2="695" y2="114" stroke="currentColor" stroke-width="1.5"/>
-          <text x="695" y="95" text-anchor="middle" font-size="10.5" fill="currentColor">tail</text>
+          <line x1="650" y1="98" x2="650" y2="114" stroke="currentColor" stroke-width="1.5"/>
+          <text x="650" y="95" text-anchor="middle" font-size="10.5" fill="currentColor">tail = slots.len()</text>
 
           <!-- legend -->
           <g font-size="11.5" fill="var(--muted)">
@@ -534,15 +521,15 @@
             <rect x="180" y="238" width="14" height="14" rx="3" fill="var(--ask-soft)" stroke="var(--ask)"/><text x="200" y="250">head, partly consumed</text>
             <rect x="350" y="238" width="14" height="14" rx="3" fill="none" stroke="var(--dead)" stroke-dasharray="3 2"/><text x="370" y="250">tombstone (cancelled)</text>
             <rect x="520" y="238" width="14" height="14" rx="3" fill="var(--surface)" stroke="currentColor"/><text x="540" y="250">open</text>
-            <text x="600" y="250">? = at or past tail: never read</text>
+            <text x="600" y="250">the vector ends at the tail</text>
           </g>
         </g>
       </svg>
     </div>
-    <figcaption>Reading the counters: everything before seq 3 is fully filled. Seq 3 is the head with 4 of its 10 lots taken. Seq 4 was cancelled mid-queue and is skipped. Seqs 5 to 9 are open, and 6 + 7 + 9 + 4 + 6 + 4 = 36 = <code>open_lots</code>. Slots 10 and 11 exist in the page but sit past <code>tail_seq</code>, so whatever bytes are there (possibly leftovers from an earlier generation) are never read.</figcaption>
+    <figcaption>Reading the counters: everything before seq 3 is fully filled. Seq 3 is the head; its slot holds 6 and its <code>Order</code> says 10, so 4 have been taken. Seq 4 was cancelled mid-queue and is skipped. Seqs 5 to 9 are open, and 6 + 7 + 9 + 4 + 6 + 4 = 36 = <code>open_lots</code>. The vector ends at the tail: there is no slot past it to read, and a sweep or an empty-level reset empties it.</figcaption>
   </figure>
   <p>
-    Generations and capacity keep the queue sound over time. When matching empties a whole level, or the first rest arrives at a level that cancels emptied, <code>generation</code> increments and seqs restart at 0; every earlier order's settlement is unaffected, because an old generation number reads as "fully filled" (next section). And a page holds <code>PAGE_SLOTS</code> seqs; one generation holds at most <code>INLINE_SLOTS + PAGE_SLOTS × MAX_PAGES</code> orders, after which rests fail with <code>LevelFull</code> until the level empties and resets.
+    Generations and capacity keep the queue sound over time. When matching empties a whole level, or the first rest arrives at a level that cancels emptied, <code>generation</code> increments and seqs restart at 0; every earlier order's settlement is unaffected, because an old generation number reads as "fully filled" (next section). And one generation holds at most <code>level_cap</code> orders (64 by default; the admin can raise it per market, up to 128), after which rests fail with <code>LevelFull</code> until the level empties and resets.
   </p>
 </section>
 
@@ -627,11 +614,11 @@
 <section id="settle">
   <h3>Settlement <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#7-the-settlement-state-machine">04 §7</a></span></h3>
   <p>
-    Because every take at a level happens at exactly the tick price, it does not matter when a fill happened, only whether the queue moved past you. So an order's stored coordinates <code>(g, s, q)</code> compared with the level's counters <code>(G, H, C)</code> decide everything. Matching writes nothing per maker; the maker reads the answer off the counters when they settle.
+    Because every take at a level happens at exactly the tick price, it does not matter when a fill happened, only whether the queue moved past you. So an order's stored coordinates <code>(g, s, q)</code> compared with the level's counters <code>(G, H)</code> and its head slot decide everything. Matching writes nothing per maker; the maker reads the answer off the counters when they settle.
   </p>
   <figure>
     <div class="fig">
-      <svg viewBox="0 0 880 300" role="img" aria-label="On the left, the level's counters: G equals 2, H equals 3, C equals 4. On the right, four orders judged against them. Order with g 1, s 5, q 8: g less than G, fully filled, pay 8. Order with g 2, s 1, q 8: s less than H, fully filled, pay 8. Order with g 2, s 3, q 10: s equals H, partly filled, pay 4, refund 6, advance H. Order with g 2, s 6, q 9: s greater than H, open, refund 9 and tombstone the slot.">
+      <svg viewBox="0 0 880 300" role="img" aria-label="On the left, the level's counters: G equals 2, H equals 3, and the head slot holds 6. On the right, four orders judged against them. Order with g 1, s 5, q 8: g less than G, fully filled, pay 8. Order with g 2, s 1, q 8: s less than H, fully filled, pay 8. Order with g 2, s 3, q 10: s equals H, partly filled, pay 4, refund 6, advance H. Order with g 2, s 6, q 9: s greater than H, open, refund 9 and tombstone the slot.">
         <defs>
           <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
         </defs>
@@ -642,7 +629,7 @@
           <g font-family="ui-monospace, Menlo, monospace" font-size="13" fill="currentColor">
             <text x="50" y="136">G = 2</text><text x="110" y="136" fill="var(--muted)" font-size="11">generation</text>
             <text x="50" y="160">H = 3</text><text x="110" y="160" fill="var(--muted)" font-size="11">head_seq</text>
-            <text x="50" y="184">C = 4</text><text x="110" y="184" fill="var(--muted)" font-size="11">head_consumed</text>
+            <text x="50" y="184">slots[H] = 6</text><text x="150" y="184" fill="var(--muted)" font-size="11">head slot</text>
           </g>
 
           <!-- rows: y = 40 + i*62 -->
@@ -665,7 +652,7 @@
           <rect x="300" y="166" width="190" height="36" rx="7" fill="var(--ask-soft)" stroke="var(--ask)"/><text x="395" y="189" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">g=2  s=3  q=10</text>
           <text x="520" y="189" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">s = H</text>
           <text x="660" y="184" fill="currentColor" font-weight="600">pay 4 × price, refund 6</text>
-          <text x="660" y="199" fill="var(--muted)" font-size="11">open_lots −= 6; H → 5 (skips tombstone 4), C → 0</text>
+          <text x="660" y="199" fill="var(--muted)" font-size="11">open_lots −= 6; H → 5 (skips tombstone 4)</text>
           <!-- row 4 -->
           <rect x="300" y="228" width="190" height="36" rx="7" fill="var(--code-bg)"/><text x="395" y="251" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">g=2  s=6  q=9</text>
           <text x="520" y="251" font-family="ui-monospace, Menlo, monospace" font-size="12.5" fill="currentColor">s &gt; H</text>
@@ -752,14 +739,14 @@
         </g>
       </svg>
     </div>
-    <figcaption><b>Two sweeps and one partial take cost three Level writes.</b> The walk is bounded by two caps and one window: at most <code>MAX_LEVELS_CROSSED</code> levels, at most <code>MAX_SLOTS_SCANNED</code> slots while skipping tombstones at the head, and the partial level's slots must lie inside the pages the client declared. Hitting any of them ends the loop with progress kept and the remainder refunded, never rested crossing. <code>route</code> runs this once per leg with the caps shared across legs.</figcaption>
+    <figcaption><b>Two sweeps and one partial take cost three Level writes.</b> The walk is bounded by two caps: at most <code>MAX_LEVELS_CROSSED</code> levels, and at most <code>MAX_SLOTS_SCANNED</code> slots while skipping tombstones at the head. Hitting either ends the loop with progress kept and the remainder refunded, never rested crossing. <code>route</code> runs this once per leg with the caps shared across legs.</figcaption>
   </figure>
 </section>
 
 <section id="rest">
   <h3>Rest, and replace <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#9-rest-append">04 §9</a>, <a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#10-replace-the-maker-update-path">§10</a></span></h3>
   <p>
-    A rest is an append: <code>seq = tail_seq++</code>, write the quantity into that slot, write the <code>Order</code>, set the tick's bit if the level was empty, move <code>BestTick</code> if this is a new best, escrow with one SAC transfer. The slot must land inside the append window the client declared (the pages around the simulated tail); if a concurrent rest pushed the tail past it, the result is the typed error <code>RetryRest</code>, not a host trap on an undeclared key.
+    A rest is an append: <code>seq = slots.len()</code>, push the quantity onto the vector, write the <code>Order</code>, set the tick's bit if the level was empty, move <code>BestTick</code> if this is a new best, escrow with one SAC transfer. A concurrent rest at the same price moves the tail, but the tail lives inside the one <code>Level</code> entry this rest already declares, so the append lands wherever the tail stands; the only same-level race that fails is <code>LevelFull</code>.
   </p>
   <p>
     A maker updating a quote does not settle and place again. <code>replace</code> settles the old order per the table above, then rewrites the same <code>Order</code> entry with new coordinates and appends at the new tick, atomically. The entry keeps its key and its size, so no rent is charged, and the maker is never unquoted in between. <code>replace_batch</code> does this for up to <code>MAX_REPLACE_BATCH</code> quotes with one netted transfer per token.
@@ -808,11 +795,11 @@
 <section id="client">
   <h3>The client's process <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#14-the-clients-process-simulate--pad--submit">04 §14</a></span></h3>
   <p>
-    Every key the contract touches is a function of <code>(market, side, tick, word, page, owner, nonce)</code>, so the client builds the footprint itself. Its job is to pad that footprint so the transaction still fits the book it lands on, which may differ from the one <code>simulateTransaction</code> saw. Between simulation and inclusion, new levels can appear at any tick inside the walk range, and heads and tails can cross page boundaries.
+    Every key the contract touches is a function of <code>(market, side, tick, word, owner, nonce)</code>, so the client builds the footprint itself. Its job is to pad that footprint so the transaction still fits the book it lands on, which may differ from the one <code>simulateTransaction</code> saw. Between simulation and inclusion, new levels can appear at any tick inside the walk range; a queue that deepens or empties stays inside its one <code>Level</code> key.
   </p>
   <figure>
     <div class="fig">
-      <svg viewBox="0 0 880 268" role="img" aria-label="A tick axis from 99 to 109. Simulated best t1 is 100; pad_end is 106. The band from 100 to 106 is shaded: every Level key in it is declared, set or not. Set levels at 100, 101 and 103 each get a small window of LevelPage keys around their simulated head. Ticks 102, 104, 105 and 106 are declared but empty. Beyond 106 is the trap zone: if the walk must pass pad_end, the transaction fails. The taker's own-side rest keys (its Level at the limit tick, that side's bitmap words, TickSummary and BestTick, Order, append pages around the simulated tail) are declared separately.">
+      <svg viewBox="0 0 880 268" role="img" aria-label="A tick axis from 99 to 109. Simulated best t1 is 100; pad_end is 106. The band from 100 to 106 is shaded: every Level key in it is declared, set or not. Set levels at 100, 101 and 103 need nothing beyond their Level key. Ticks 102, 104, 105 and 106 are declared but empty. Beyond 106 is the trap zone: if the walk must pass pad_end, the transaction fails. The taker's own-side rest keys (its Level at the limit tick, that side's bitmap words, TickSummary and BestTick, Order) are declared separately.">
         <g font-family="-apple-system, 'Segoe UI', sans-serif" font-size="12">
           <!-- band shading: ticks at x = 60 + (t-99)*70, tick 100 -> 130 ... 106 -> 550; band from 100 to 106 inclusive: 105..585 -->
           <rect x="102" y="60" width="490" height="120" rx="8" fill="var(--accent-soft)"/>
@@ -842,21 +829,15 @@
           </g>
           <text x="410" y="160" text-anchor="middle" fill="var(--muted)" font-size="10.5">unset: a footprint slot, ~2,800 stroops read-write</text>
 
-          <!-- windows above set levels -->
-          <g font-size="10" text-anchor="middle" fill="var(--muted)">
-            <rect x="106" y="86" width="48" height="30" rx="4" fill="var(--surface)" stroke="currentColor" stroke-dasharray="4 3"/><text x="130" y="105">pages</text>
-            <rect x="176" y="86" width="48" height="30" rx="4" fill="var(--surface)" stroke="currentColor" stroke-dasharray="4 3"/><text x="200" y="105">pages</text>
-            <rect x="316" y="86" width="48" height="30" rx="4" fill="var(--surface)" stroke="currentColor" stroke-dasharray="4 3"/><text x="340" y="105">pages</text>
-          </g>
-          <text x="238" y="76" text-anchor="middle" fill="var(--muted)" font-size="10.5">per set level: LevelPage keys around the simulated head (small window)</text>
+          <text x="238" y="105" text-anchor="middle" fill="var(--muted)" font-size="10.5">set levels: the whole queue is inside the Level key, whatever its depth</text>
 
           <!-- own rest -->
           <text x="40" y="242" fill="var(--muted)" font-size="11.5">Also declared: the TickWords over the band, that side's TickSummary and BestTick, both vault balances, FeeAccrual;</text>
-          <text x="40" y="260" fill="var(--muted)" font-size="11.5">and on the taker's own side, for its possible rest: Level(limit_tick), its TickWord, TickSummary, BestTick, Order(taker, nonce), append pages {page(tail_sim), +1, 0}.</text>
+          <text x="40" y="260" fill="var(--muted)" font-size="11.5">and on the taker's own side, for its possible rest: Level(limit_tick), its TickWord, TickSummary, BestTick, Order(taker, nonce).</text>
         </g>
       </svg>
     </div>
-    <figcaption><b>One failure mode traps; the rest degrade.</b> If the walk needs a level past <code>pad_end</code>, the host traps on the undeclared key. Everything else that can move between simulation and inclusion ends gracefully: a cap ends the loop with the remainder refunded, an append outside its window returns <code>RetryRest</code>. Padding is cheap (a 100-key band is ~0.003 XLM); the 400-entry per-transaction footprint limit is what binds, and on a sparse book the client trades band depth against trap probability.</figcaption>
+    <figcaption><b>One failure mode traps; the rest degrade.</b> If the walk needs a level past <code>pad_end</code>, the host traps on the undeclared key. Everything else that can move between simulation and inclusion ends gracefully: a cap ends the loop with the remainder refunded, and a same-level rest race can only fail as <code>LevelFull</code>. Padding is cheap (a 100-key band is ~0.003 XLM); the 400-entry per-transaction footprint limit is what binds, and on a sparse book the client trades band depth against trap probability.</figcaption>
   </figure>
 </section>
 
@@ -870,18 +851,18 @@
       <thead><tr><th>Operation</th><th class="num">Footprint entries</th><th class="num">Write entries</th><th class="num">Write bytes</th><th class="num">Est. resource fee</th><th>Dominated by</th></tr></thead>
       <tbody>
         <tr><td>place, rest only, existing level</td><td class="num">13</td><td class="num">5</td><td class="num">1.1 KB</td><td class="num">~0.048 XLM</td><td>Order rent (min TTL)</td></tr>
-        <tr><td>place, rest only, first touch of a tick</td><td class="num">15</td><td class="num">8</td><td class="num">2.0 KB</td><td class="num">~0.099 XLM</td><td>+ Level rent (~0.25 on an empty side)</td></tr>
+        <tr><td>place, rest only, first touch of a tick</td><td class="num">15</td><td class="num">8</td><td class="num">1.9 KB</td><td class="num">~0.089 XLM</td><td>+ Level rent (~0.24 on an empty side)</td></tr>
         <tr><td>settle</td><td class="num">9</td><td class="num">5</td><td class="num">0.8 KB</td><td class="num">~0.0015 XLM</td><td>write entries, no rent</td></tr>
-        <tr><td>replace, one quote (new tick with a level)</td><td class="num">13</td><td class="num">7</td><td class="num">1.8 KB</td><td class="num">~0.0024 XLM</td><td>write entries, zero rent</td></tr>
-        <tr><td>replace_batch, 40 quotes (same ticks)</td><td class="num">90</td><td class="num">83</td><td class="num">23.9 KB</td><td class="num">~0.031 XLM</td><td>write entries, zero rent</td></tr>
-        <tr><td>replace_batch, 40 quotes onto 31-deep levels</td><td class="num">129</td><td class="num">123</td><td class="num">51.1 KB</td><td class="num">~0.043 XLM</td><td>write bytes: every new Level written full</td></tr>
-        <tr><td>place, take 8 levels</td><td class="num">22</td><td class="num">17</td><td class="num">4.4 KB</td><td class="num">~0.006 XLM</td><td>write entries + events</td></tr>
-        <tr><td>place, take 32 levels in 32 words (max)</td><td class="num">77</td><td class="num">72</td><td class="num">23.1 KB</td><td class="num">~0.025 XLM</td><td>write entries</td></tr>
+        <tr><td>replace, one quote (new tick with a level)</td><td class="num">13</td><td class="num">7</td><td class="num">1.7 KB</td><td class="num">~0.0024 XLM</td><td>write entries, zero rent</td></tr>
+        <tr><td>replace_batch, 40 quotes (same ticks)</td><td class="num">90</td><td class="num">83</td><td class="num">21.3 KB</td><td class="num">~0.031 XLM</td><td>write entries, zero rent</td></tr>
+        <tr><td>replace_batch, 40 quotes onto 63-deep levels</td><td class="num">129</td><td class="num">123</td><td class="num">61.3 KB</td><td class="num">~0.045 XLM</td><td>write bytes: every new Level written full</td></tr>
+        <tr><td>place, take 8 levels</td><td class="num">22</td><td class="num">17</td><td class="num">3.9 KB</td><td class="num">~0.006 XLM</td><td>write entries + events</td></tr>
+        <tr><td>place, take 32 levels in 32 words (max)</td><td class="num">77</td><td class="num">72</td><td class="num">21.0 KB</td><td class="num">~0.025 XLM</td><td>write entries</td></tr>
       </tbody>
     </table>
   </div>
   <p>
-    Matching is nearly free and placement pays rent: a 32-level sweep costs about half of resting one order, so the book's carrying cost sits with makers at roughly 0.046 XLM per open order per minimum TTL, which doubles as anti-spam for <em>holding</em> orders (churn is priced by <code>min_order_lots</code>: dust that arms a phantom best or poisons a queue gets filled or swept for its notional). And write bytes, not fees, are the throughput ceiling: the max sweep is 9.3% of the ledger-wide write-bytes limit (286,720), so a ledger fits about 10 of them, or hundreds of rests and settles. Every hot entry is a few hundred bytes for that reason.
+    Matching is nearly free and placement pays rent: a 32-level sweep costs about half of resting one order, so the book's carrying cost sits with makers at roughly 0.046 XLM per open order per minimum TTL, which doubles as anti-spam for <em>holding</em> orders (churn is priced by <code>min_order_lots</code>: dust that arms a phantom best or poisons a queue gets filled or swept for its notional). And write bytes, not fees, are the throughput ceiling: the max sweep is 7.3% of the ledger-wide write-bytes limit (286,720), so a ledger fits about 13 of them, or hundreds of rests and settles. Every hot entry is a few hundred bytes for that reason.
   </p>
   <p>
     The fee column above is an estimate from the resource model. Fees measured from landed testnet transactions run higher; they are tabulated in the <a href="https://github.com/tomerweller/pagebook/blob/main/docs/09-resource-utilization.md">resource-utilization report</a> and in the <a href="https://tomerweller.com/pagebook/#results">explainer's results section</a>.

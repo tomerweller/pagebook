@@ -1,8 +1,8 @@
 //! Property tests (05 "Testing strategy"): random rest/take/settle/replace
 //! sequences over 1–2 makers against a naive reference book (price priority,
 //! FIFO within a level) that predicts fills and payouts. Caps are non-binding
-//! (32 levels / 64 slots, `max_pages` 1) and depth is inline-only (≤ 30
-//! appends per run), so the reference never has to model truncation.
+//! (32 levels / 64 slots scanned, `level_cap` 64; ≤ 30 appends per run), so
+//! the reference never has to model a cap.
 //!
 //! Asserted after every op: identical fills / rests / payouts. After the
 //! sequence: settle every open order, then differential settlement — for
@@ -12,9 +12,9 @@
 
 extern crate std;
 
-use super::harness::{setup, window, Harness};
+use super::harness::{setup, Harness};
 use crate::{DataKey, Error, PlaceFlags};
-use pagebook_types::{Level, INLINE_SLOTS};
+use pagebook_types::Level;
 use proptest::prelude::*;
 use soroban_sdk::{
     testutils::Address as _, token::StellarAssetClient, token::TokenClient, Address,
@@ -205,7 +205,7 @@ impl World {
     fn new() -> Self {
         let h = setup();
         h.client()
-            .set_market_caps(&h.market, &32, &64, &10, &1, &1_000_000, &1);
+            .set_market_caps(&h.market, &32, &64, &10, &1, &1_000_000, &64);
         let makers = std::vec![Address::generate(&h.env), Address::generate(&h.env)];
         let taker = Address::generate(&h.env);
         for who in makers.iter().chain(core::iter::once(&taker)) {
@@ -247,7 +247,6 @@ impl World {
             &qty,
             &q.start_tick,
             &nonce,
-            &window(&self.h),
             &f,
         );
         // The dry run predicts the apply exactly when nothing moves in between.
@@ -315,7 +314,6 @@ impl World {
                     &o.is_bid,
                     &tick,
                     &qty,
-                    &window(&self.h),
                 );
                 match recorded {
                     // Replace is post-only against the recorded best as stored
@@ -341,20 +339,25 @@ impl World {
                 let got = c.level(&self.h.market, &is_bid, &tick).open_lots;
                 let want = self.reference.open_lots(is_bid, tick);
                 assert_eq!(got, want, "open_lots side={is_bid} tick={tick}");
-                // Occupancy invariant (ADR-036): the inline vec is exactly as
-                // long as the queue has reached, never longer.
+                // Invariant 2 on the raw entry (ADR-037): open_lots is the sum
+                // of the slots from the head on, each holding its open lots.
                 let key = DataKey::Level(self.h.market, is_bid, tick);
                 let raw: Option<Level> = self
                     .h
                     .env
                     .as_contract(&self.h.id, || self.h.env.storage().persistent().get(&key));
                 if let Some(lvl) = raw {
+                    let mut sum = 0u64;
+                    let mut s = lvl.head_seq;
+                    while s < lvl.tail() {
+                        sum += lvl.slot(s);
+                        s += 1;
+                    }
                     assert_eq!(
-                        lvl.slots.len(),
-                        core::cmp::min(lvl.tail_seq, INLINE_SLOTS),
-                        "slots.len() side={is_bid} tick={tick} tail_seq={}",
-                        lvl.tail_seq
+                        lvl.open_lots, sum,
+                        "open_lots vs Σ slots[head..] side={is_bid} tick={tick}"
                     );
+                    assert!(lvl.head_seq <= lvl.tail());
                 }
             }
             let recorded = c.best(&self.h.market, &is_bid);

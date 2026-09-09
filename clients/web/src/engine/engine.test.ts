@@ -2,8 +2,8 @@ import { expect, test } from "vitest";
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { ck, instanceKey } from "../keys";
 import padConformance from "../../../../crates/pagebook-client/fixtures/pad-conformance.json";
-import { ERROR_CODE_COUNT, ERROR_MESSAGES, ERROR_NAMES, hostErrorMessage, parseContractError } from "./errors";
-import { keysForReplace, keysForSettle, pad, restoreMarks, windowJson, type Quoted } from "./pad";
+import { ERROR_CODE_COUNT, ERROR_CODE_MAX, ERROR_MESSAGES, ERROR_NAMES, hostErrorMessage, parseContractError } from "./errors";
+import { keysForReplace, keysForSettle, pad, restoreMarks, type Quoted } from "./pad";
 import { outcomeOf } from "../../ops/lib/outcomes";
 import {
   classifyFailedTx,
@@ -30,11 +30,10 @@ function fixtureQuoted(): Quoted {
     limitTick: 20,
     startTick: 10,
     crossed: [
-      { tick: 10, headSeq: 3, openLots: 5n },
-      { tick: 11, headSeq: 0, openLots: 2n },
-      { tick: 12, headSeq: 70, openLots: 1n },
+      { tick: 10, openLots: 5n },
+      { tick: 11, openLots: 2n },
+      { tick: 12, openLots: 1n },
     ],
-    tailSeq: 0,
     taker: T1,
     nonce: 7n,
     base: T2,
@@ -52,15 +51,6 @@ const PLACE_3CROSS = [
   "Level(0,false,11)",
   "Level(0,false,12)",
   "Level(0,true,20)",
-  "LevelPage(0,false,10,0)",
-  "LevelPage(0,false,10,1)",
-  "LevelPage(0,false,11,0)",
-  "LevelPage(0,false,11,1)",
-  "LevelPage(0,false,12,0)",
-  "LevelPage(0,false,12,1)",
-  "LevelPage(0,false,12,2)",
-  "LevelPage(0,true,20,0)",
-  "LevelPage(0,true,20,1)",
   "Market(0)",
   "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
   "TickSummary(0,false)",
@@ -75,7 +65,6 @@ const PLACE_3CROSS = [
 
 const SETTLE = [
   "Level(0,true,20)",
-  "LevelPage(0,true,20,0)",
   "Market(0)",
   "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
   "UserBalance(0202020202020202020202020202020202020202020202020202020202020202)",
@@ -90,9 +79,6 @@ const REPLACE_CROSS_SIDE = [
   "Config",
   "Level(0,false,22)",
   "Level(0,true,20)",
-  "LevelPage(0,false,22,0)",
-  "LevelPage(0,false,22,1)",
-  "LevelPage(0,true,20,0)",
   "Market(0)",
   "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
   "TickSummary(0,false)",
@@ -107,22 +93,15 @@ test("pad fixture matches rust js_fixtures", () => {
   const q = fixtureQuoted();
   const out = pad(q, 12);
   expect(sortedKeyStrs(out.keys)).toEqual(PLACE_3CROSS);
-  expect(out.window.consume).toEqual([
-    { tick: 10, pages: { first: 0, last: 1 } },
-    { tick: 11, pages: { first: 0, last: 1 } },
-    { tick: 12, pages: { first: 1, last: 2 } },
-  ]);
-  expect(out.window.append).toEqual({ first: 0, last: 1 });
 });
 
 test("settle fixture matches rust js_fixtures", () => {
-  expect(sortedKeyStrs(keysForSettle(0, T1, 7n, true, 20, 5, T2, T3))).toEqual(SETTLE);
+  expect(sortedKeyStrs(keysForSettle(0, T1, 7n, true, 20, T2, T3))).toEqual(SETTLE);
 });
 
 test("replace fixture matches rust js_fixtures", () => {
-  const { keys, append } = keysForReplace(0, T1, 7n, true, 20, 5, false, 22, 0, T2, T3);
+  const keys = keysForReplace(0, T1, 7n, true, 20, false, 22, T2, T3);
   expect(sortedKeyStrs(keys)).toEqual(REPLACE_CROSS_SIDE);
-  expect(append).toEqual({ first: 0, last: 1 });
 });
 
 test("restore_marks fixture matches rust js_fixtures", () => {
@@ -149,24 +128,20 @@ type FixtureCase = {
     limit_tick: number;
     start_tick: number;
     qty: number;
-    crossed: { tick: number; head_seq: number; open_lots: number }[];
-    tail_seq: number;
+    crossed: { tick: number; open_lots: number }[];
     filled_lots: number;
   };
-  options: { pad_end: number; pages_for_empty: boolean };
-  settle?: { is_bid: boolean; tick: number; seq: number };
+  options: { pad_end: number };
+  settle?: { is_bid: boolean; tick: number };
   replace?: {
     old_is_bid: boolean;
     old_tick: number;
-    old_seq: number;
     new_is_bid: boolean;
     new_tick: number;
-    new_tail_seq: number;
   };
   archived?: string[];
   expected: {
     keys: string[];
-    window: { consume: { tick: number; pages: { first: number; last: number } }[]; append: { first: number; last: number } };
     keys_for_settle?: string[];
     keys_for_replace?: string[];
     restore_marks?: string[];
@@ -198,8 +173,6 @@ function parseKey(s: string): ClientKey {
       return { t: "Market", market: n(0) };
     case "Level":
       return { t: "Level", market: n(0), isBid: b(1), tick: n(2) };
-    case "LevelPage":
-      return { t: "LevelPage", market: n(0), isBid: b(1), tick: n(2), page: n(3) };
     case "Order":
       return { t: "Order", market: n(0), owner: parts[1], nonce: BigInt(parts[2]) };
     case "FeeAccrual":
@@ -227,10 +200,8 @@ function quotedFrom(fx: FixtureFile, c: FixtureCase): Quoted {
     startTick: c.quoted.start_tick,
     crossed: c.quoted.crossed.map((x) => ({
       tick: x.tick,
-      headSeq: x.head_seq,
       openLots: BigInt(x.open_lots),
     })),
-    tailSeq: c.quoted.tail_seq,
     taker: fx.taker,
     nonce: BigInt(fx.nonce),
     base: fx.base,
@@ -242,10 +213,6 @@ test("pad conformance matches the shared rust fixture", () => {
   const fx = loadPadFixture();
   expect(fx.cases.map((c) => c.name)).toEqual([
     "multi_cross",
-    "page_boundaries",
-    "empty_pages_true",
-    "empty_pages_false",
-    "mixed_empty_skip",
     "word_boundary",
     "wide_band",
     "ask_side",
@@ -253,27 +220,23 @@ test("pad conformance matches the shared rust fixture", () => {
   ]);
   for (const c of fx.cases) {
     const q = quotedFrom(fx, c);
-    const out = pad(q, c.options.pad_end, { pagesForEmpty: c.options.pages_for_empty });
+    const out = pad(q, c.options.pad_end);
     expect(sortedKeyStrs(out.keys), c.name).toEqual(c.expected.keys);
-    expect(out.window, c.name).toEqual(c.expected.window);
-    expect(windowJson(q), c.name).toBe(JSON.stringify(c.expected.window));
     if (c.settle && c.expected.keys_for_settle) {
       expect(
-        sortedKeyStrs(keysForSettle(c.quoted.market, fx.taker, BigInt(fx.nonce), c.settle.is_bid, c.settle.tick, c.settle.seq, fx.base, fx.quote)),
+        sortedKeyStrs(keysForSettle(c.quoted.market, fx.taker, BigInt(fx.nonce), c.settle.is_bid, c.settle.tick, fx.base, fx.quote)),
         `${c.name} settle`,
       ).toEqual(c.expected.keys_for_settle);
     }
     if (c.replace && c.expected.keys_for_replace) {
-      const { keys } = keysForReplace(
+      const keys = keysForReplace(
         c.quoted.market,
         fx.taker,
         BigInt(fx.nonce),
         c.replace.old_is_bid,
         c.replace.old_tick,
-        c.replace.old_seq,
         c.replace.new_is_bid,
         c.replace.new_tick,
-        c.replace.new_tail_seq,
         fx.base,
         fx.quote,
       );
@@ -285,24 +248,18 @@ test("pad conformance matches the shared rust fixture", () => {
   }
 });
 
-test("window_json matches soak window_json", () => {
-  const q = fixtureQuoted();
-  expect(windowJson(q)).toBe(
-    JSON.stringify({
-      consume: [
-        { tick: 10, pages: { first: 0, last: 1 } },
-        { tick: 11, pages: { first: 0, last: 1 } },
-        { tick: 12, pages: { first: 1, last: 2 } },
-      ],
-      append: { first: 0, last: 1 },
-    }),
-  );
-});
-
 test("error-code map matches errors.rs", () => {
   expect(Object.keys(ERROR_NAMES).length).toBe(ERROR_CODE_COUNT);
   expect(Object.keys(ERROR_MESSAGES).length).toBe(ERROR_CODE_COUNT);
-  for (let c = 1; c <= ERROR_CODE_COUNT; c++) {
+  // Retired codes keep their numbers free: 12 RetryRest, 19 BadWindow and
+  // 22 CorruptEntry left with the level pages (ADR-037).
+  const retired = new Set([12, 19, 22]);
+  for (let c = 1; c <= ERROR_CODE_MAX; c++) {
+    if (retired.has(c)) {
+      expect(ERROR_NAMES[c]).toBeUndefined();
+      expect(ERROR_MESSAGES[c]).toBeUndefined();
+      continue;
+    }
     expect(ERROR_NAMES[c]).toBeTruthy();
     expect(ERROR_MESSAGES[c]).toBeTruthy();
     expect(ERROR_MESSAGES[c]).not.toBe(ERROR_NAMES[c]);

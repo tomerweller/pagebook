@@ -2,7 +2,7 @@
 //! tick becomes live again, the empty-side rest at a tick worse than a stale
 //! recorded best, and post-only's conservative check against a stale best.
 
-use super::harness::{mint, rest_ask, setup, window};
+use super::harness::{mint, rest_ask, setup};
 use crate::{DataKey, Error, PlaceFlags};
 use pagebook_types::{bit_in_word, word_of, TickBitmap, BITMAP_BYTES};
 use soroban_sdk::{testutils::Address as _, Address, BytesN};
@@ -50,17 +50,9 @@ fn lazy_clear_then_re_rest_same_tick() {
 
     let taker = Address::generate(&h.env);
     mint(&h, &h.quote, &taker, 1_000_000);
-    let (rested, filled, _) = h.client().place(
-        &taker,
-        &h.market,
-        &true,
-        &25,
-        &1,
-        &20,
-        &1,
-        &window(&h),
-        &no_rest(),
-    );
+    let (rested, filled, _) =
+        h.client()
+            .place(&taker, &h.market, &true, &25, &1, &20, &1, &no_rest());
     assert!(!rested);
     assert_eq!(filled, 0);
     assert!(!bit_set(&h, false, 20), "the walk cleared the stale bit");
@@ -73,17 +65,9 @@ fn lazy_clear_then_re_rest_same_tick() {
     assert_eq!(h.client().level(&h.market, &false, &20).open_lots, 3);
     // And it is takeable: a bid limit 30 from 20 sweeps 20, then finds 30
     // through the bitmap.
-    let (_, filled, quote) = h.client().place(
-        &taker,
-        &h.market,
-        &true,
-        &30,
-        &5,
-        &20,
-        &2,
-        &window(&h),
-        &no_rest(),
-    );
+    let (_, filled, quote) =
+        h.client()
+            .place(&taker, &h.market, &true, &30, &5, &20, &2, &no_rest());
     assert_eq!(filled, 5);
     assert_eq!(quote, 60 + 60);
 }
@@ -99,17 +83,9 @@ fn empty_side_rest_worse_than_stale_best_is_found_by_the_next_walk() {
     rest_ask(&h, &maker, 20, 2, 1);
     let taker = Address::generate(&h.env);
     mint(&h, &h.quote, &taker, 1_000_000);
-    let (_, filled, _) = h.client().place(
-        &taker,
-        &h.market,
-        &true,
-        &20,
-        &2,
-        &20,
-        &1,
-        &window(&h),
-        &no_rest(),
-    );
+    let (_, filled, _) = h
+        .client()
+        .place(&taker, &h.market, &true, &20, &2, &20, &1, &no_rest());
     assert_eq!(filled, 2);
     assert_eq!(
         h.client().best(&h.market, &false),
@@ -127,17 +103,9 @@ fn empty_side_rest_worse_than_stale_best_is_found_by_the_next_walk() {
         "empty side takes the rest"
     );
 
-    let (rested, filled, quote) = h.client().place(
-        &taker,
-        &h.market,
-        &true,
-        &30,
-        &2,
-        &20,
-        &2,
-        &window(&h),
-        &no_rest(),
-    );
+    let (rested, filled, quote) =
+        h.client()
+            .place(&taker, &h.market, &true, &30, &2, &20, &2, &no_rest());
     assert!(!rested);
     assert_eq!(filled, 2);
     assert_eq!(quote, 60);
@@ -161,79 +129,37 @@ fn post_only_false_reject_on_stale_best_then_success_after_heal() {
     // Documented behaviour (§9): post-only compares against the recorded best
     // as stored, so a bid at 20 is rejected even though nothing is live there.
     super::assert_err(
-        h.client().try_place(
-            &bidder,
-            &h.market,
-            &true,
-            &20,
-            &1,
-            &20,
-            &1,
-            &window(&h),
-            &post_only(),
-        ),
+        h.client()
+            .try_place(&bidder, &h.market, &true, &20, &1, &20, &1, &post_only()),
         Error::Crossed,
     );
     // A bid strictly below the stale best is fine.
-    let (rested, _, _) = h.client().place(
-        &bidder,
-        &h.market,
-        &true,
-        &19,
-        &1,
-        &19,
-        &2,
-        &window(&h),
-        &post_only(),
-    );
+    let (rested, _, _) =
+        h.client()
+            .place(&bidder, &h.market, &true, &19, &1, &19, &2, &post_only());
     assert!(rested);
     h.client().settle(&bidder, &h.market, &2);
     // A taker walks through the stale level and heals BestTick(asks) → empty.
     let taker = Address::generate(&h.env);
     mint(&h, &h.quote, &taker, 1_000_000);
-    let (rested, filled, _) = h.client().place(
-        &taker,
-        &h.market,
-        &true,
-        &25,
-        &1,
-        &20,
-        &1,
-        &window(&h),
-        &no_rest(),
-    );
+    let (rested, filled, _) =
+        h.client()
+            .place(&taker, &h.market, &true, &25, &1, &20, &1, &no_rest());
     assert!(!rested);
     assert_eq!(filled, 0);
     assert_eq!(h.client().best(&h.market, &false), None);
     // Post-only at 20 now succeeds.
-    let (rested, filled, _) = h.client().place(
-        &bidder,
-        &h.market,
-        &true,
-        &20,
-        &1,
-        &20,
-        &3,
-        &window(&h),
-        &post_only(),
-    );
+    let (rested, filled, _) =
+        h.client()
+            .place(&bidder, &h.market, &true, &20, &1, &20, &3, &post_only());
     assert!(rested);
     assert_eq!(filled, 0);
     assert_eq!(h.client().best(&h.market, &true), Some(20));
     // A crossing post-only against a LIVE best still fails.
     rest_ask(&h, &maker, 30, 1, 2);
     super::assert_err(
-        h.client().try_place(
-            &bidder,
-            &h.market,
-            &true,
-            &30,
-            &1,
-            &30,
-            &4,
-            &window(&h),
-            &post_only(),
-        ),
+        h.client()
+            .try_place(&bidder, &h.market, &true, &30, &1, &30, &4, &post_only()),
         Error::Crossed,
     );
 }

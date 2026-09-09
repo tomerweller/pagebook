@@ -5,7 +5,11 @@ test("ERR_NAMES matches the soak table", () => {
   expect(ERR_NAMES[9]).toBe("Crossed");
   expect(ERR_NAMES[11]).toBe("LevelFull");
   expect(ERR_NAMES[24]).toBe("SelfTrade");
-  expect(Object.keys(ERR_NAMES).length).toBe(24);
+  // 12, 19 and 22 are retired (ADR-037); the other codes keep their numbers.
+  expect(ERR_NAMES[12]).toBeUndefined();
+  expect(ERR_NAMES[19]).toBeUndefined();
+  expect(ERR_NAMES[22]).toBeUndefined();
+  expect(Object.keys(ERR_NAMES).length).toBe(21);
 });
 
 test("outcomeOf maps engine result kinds", () => {
@@ -74,13 +78,13 @@ test("diagnoseEvents classifies a Trapped diagnostic JSON path", () => {
         body: {
           v0: {
             topics: ["error"],
-            data: { error: { contract: 12 } },
+            data: { error: { contract: 11 } },
           },
         },
       },
     },
   };
-  expect(diagnoseEvents(typed)).toBe("typed:RetryRest");
+  expect(diagnoseEvents(typed)).toBe("typed:LevelFull");
   expect(
     diagnoseEvents({
       failed: true,
@@ -96,5 +100,5 @@ test("diagnoseEvents classifies a Trapped diagnostic JSON path", () => {
   expect(diagnoseEvents({ reason: "trying to access an archived contract data entry" })).toBe("archived:unknown");
   expect(
     outcomeOf({ kind: "rpc", message: "Trapped", hash: "ab" }, { events: typed }),
-  ).toBe("typed:RetryRest");
+  ).toBe("typed:LevelFull");
 });

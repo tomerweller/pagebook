@@ -18,8 +18,7 @@ pub fn level(env: &Env, market: u32, is_bid: bool, tick: u32) -> LevelInfo {
     LevelInfo {
         generation: lvl.generation,
         head_seq: lvl.head_seq,
-        tail_seq: lvl.tail_seq,
-        head_consumed_lots: lvl.head_consumed_lots,
+        depth: lvl.tail(),
         open_lots: lvl.open_lots,
     }
 }

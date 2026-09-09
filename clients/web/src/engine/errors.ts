@@ -10,17 +10,14 @@ export const ERROR_NAMES: Record<number, string> = {
   9: "Crossed",
   10: "Unfilled",
   11: "LevelFull",
-  12: "RetryRest",
   13: "OrderExists",
   14: "NotOwner",
   15: "UnknownOrder",
   16: "Overflow",
   17: "FeeTooHigh",
   18: "TooManyLegs",
-  19: "BadWindow",
   20: "BatchTooLarge",
   21: "TokenNotAuthorized",
-  22: "CorruptEntry",
   23: "NotInitialized",
   24: "SelfTrade",
 };
@@ -37,22 +34,23 @@ export const ERROR_MESSAGES: Record<number, string> = {
   9: "crossed the book: a post-only order would have taken",
   10: "unfilled: fill-or-kill would not fill completely",
   11: "that price level's queue is full. try another tick",
-  12: "the rest window moved. retry the rest",
   13: "an order with that nonce is already live",
   14: "only the owner can settle or replace this order",
   15: "no live order with that nonce",
   16: "an amount overflowed",
   17: "taker fee is above the allowed maximum",
   18: "too many route legs",
-  19: "the declared page window is not valid",
   20: "the replace batch is larger than the cap",
   21: "this token has not authorized the vault",
-  22: "a stored entry failed to decode",
   23: "the contract has not been initialized",
   24: "a later leg would take this call's own rest",
 };
 
-export const ERROR_CODE_COUNT = 24;
+// Codes keep their numbers when one is retired, so the table has gaps: 12
+// (RetryRest), 19 (BadWindow) and 22 (CorruptEntry) went with the level pages
+// and slot windows (ADR-037).
+export const ERROR_CODE_MAX = 24;
+export const ERROR_CODE_COUNT = 21;
 
 // The Stellar Asset Contract's error table (rs-soroban-env native asset
 // contract). SAC codes overlap PageBook's — #9 AllowanceError vs Crossed,

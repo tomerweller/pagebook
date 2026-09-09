@@ -32,8 +32,8 @@ large book entry would make every trade rewrite too much state and would limit
 the number of trades that fit in a ledger.
 
 PageBook addresses these constraints with predictable keys and small entries.
-Clients can calculate the keys a transaction might need, add a safety band and
-page windows, then submit the padded footprint.
+Clients can calculate the keys a transaction might need, add a safety band of
+price levels, then submit the padded footprint.
 
 ## How the book works
 
@@ -48,9 +48,9 @@ Prices and quantities are integers:
 - The taker fee is rounded up. Matching itself does not round.
 
 Each side of a market has price levels. A level stores a FIFO queue of maker
-orders at one tick. The queue uses a `Level` entry for its counters and inline
-slots (a vector as long as the queue has reached), with `LevelPage` entries for
-overflow. `BestTick`, `TickSummary`,
+orders at one tick. The whole queue lives in one `Level` entry: two counters,
+the open total, and a slot vector as long as the queue has reached, one slot
+per order holding its open lots. `BestTick`, `TickSummary`,
 and `TickWord` form a derived bitmap index for finding the next live level.
 
 A maker's `Order` entry is keyed by `(market, owner, nonce)`. The queue position
@@ -79,8 +79,8 @@ The contract exposes the following methods.
 | `route` | Execute up to four place legs with one shared work budget |
 
 `place` supports post-only, fill-or-kill, and no-rest flags. A place call can
-take liquidity, rest a remainder, or do both. A matching cap, page-window edge,
-or empty level ends the walk in a defined way. A remainder that would cross the
+take liquidity, rest a remainder, or do both. A matching cap or an empty level
+ends the walk in a defined way. A remainder that would cross the
 book is refunded rather than rested.
 
 ### Views
@@ -90,7 +90,7 @@ book is refunded rather than rested.
 | `best` | Read the stored best tick for one side |
 | `level` | Read level counters and open quantity |
 | `order` | Read an order and preview its settlement result |
-| `quote_place` | Simulate a place call and return crossed levels, keys, and window information |
+| `quote_place` | Simulate a place call and return the start tick, crossed levels with their depth, the simulated fill, and the keys to declare |
 
 `quote_place` is the starting point for the client flow: simulate, pad the
 footprint, and submit. The `pagebook-client` crate contains pure helpers for
@@ -102,7 +102,7 @@ nonces.
 | Method | Purpose |
 |---|---|
 | `create_market` | Create a market with fixed quantization and bounded work |
-| `set_market_caps` | Retune the mutable work, fee, order-size, and page limits |
+| `set_market_caps` | Retune the mutable work, fee, order-size, and level-capacity limits |
 | `set_admin` | Change the administrator |
 | `set_fee_recipient` | Change the protocol fee recipient |
 | `set_paused` | Pause entry-side operations |
@@ -117,11 +117,11 @@ The contract has no upgrade entry point.
 These are the main limits and behaviors behind the design:
 
 - A transaction has a bounded footprint. The client declares a contiguous tick
-  band and page windows around simulated queue positions.
+  band of `Level` keys; a level's queue depth never adds a key.
 - Default matching caps are 32 crossed levels and 64 scanned slots. A route can
   contain at most four legs, with the matching budget shared across the legs.
-- The default queue has 32 inline slots and one 32-slot overflow page. A market
-  can raise its page count within the contract's hard ceiling.
+- A level holds up to 64 orders per generation by default (`level_cap`). A
+  market can raise that, up to the contract's hard ceiling of 128.
 - Persistent entries have a minimum TTL of about 120 days on mainnet (about 7
   days on testnet). Empty `Level` entries
   are not deleted because their generation counters are part of settlement.

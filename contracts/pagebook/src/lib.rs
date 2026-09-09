@@ -21,8 +21,7 @@ use soroban_sdk::{contract, contractimpl, Address, Env};
 
 pub use errors::Error;
 pub use iface::{
-    empty_window, ConsumeWindow, CrossedLevel, LevelInfo, OrderInfo, PageRange, PlaceFlags,
-    PlaceLeg, QuoteResult, ReplaceItem, SlotWindow,
+    CrossedLevel, LevelInfo, OrderInfo, PlaceFlags, PlaceLeg, QuoteResult, ReplaceItem,
 };
 pub use keys::{DataKey, MAX_ENTRY_TTL, MIN_PERSISTENT_TTL};
 pub use pagebook_types::{Config, MarketId};
@@ -63,7 +62,7 @@ impl PageBook {
         taker_fee_bps: u32,
         min_order_lots: u64,
         max_order_lots: u64,
-        max_pages: u32,
+        level_cap: u32,
     ) {
         market::set_market_caps(
             &env,
@@ -73,7 +72,7 @@ impl PageBook {
             taker_fee_bps,
             min_order_lots,
             max_order_lots,
-            max_pages,
+            level_cap,
         );
     }
 
@@ -112,11 +111,10 @@ impl PageBook {
         qty_lots: u64,
         start_tick: u32,
         nonce: u64,
-        window: SlotWindow,
         flags: PlaceFlags,
     ) -> (bool, u64, i128) {
         matching::place(
-            &env, taker, market, is_bid, limit_tick, qty_lots, start_tick, nonce, window, flags,
+            &env, taker, market, is_bid, limit_tick, qty_lots, start_tick, nonce, flags,
         )
     }
 
@@ -132,9 +130,8 @@ impl PageBook {
         is_bid: bool,
         tick: u32,
         qty_lots: u64,
-        window: SlotWindow,
     ) -> (i128, i128) {
-        replace::replace(&env, owner, market, nonce, is_bid, tick, qty_lots, window)
+        replace::replace(&env, owner, market, nonce, is_bid, tick, qty_lots)
     }
 
     pub fn best(env: Env, market: u32, is_bid: bool) -> Option<u32> {
@@ -214,7 +211,6 @@ impl PageBook {
                 leg.qty_lots,
                 leg.start_tick,
                 leg.nonce,
-                &leg.window,
                 &leg.flags,
                 &mut b,
                 &mut net,
@@ -263,7 +259,6 @@ impl PageBook {
                 item.is_bid,
                 item.tick,
                 item.qty_lots,
-                &item.window,
                 &mut net,
             );
             out.push_back(r);

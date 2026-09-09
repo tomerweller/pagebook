@@ -1,5 +1,8 @@
 use soroban_sdk::contracterror;
 
+/// Codes are stable: 12 (`RetryRest`), 19 (`BadWindow`) and 22
+/// (`CorruptEntry`) were retired with slot windows and pages (ADR-037) and are
+/// not reused.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -15,17 +18,14 @@ pub enum Error {
     Crossed = 9,
     Unfilled = 10,
     LevelFull = 11,
-    RetryRest = 12,
     OrderExists = 13,
     NotOwner = 14,
     UnknownOrder = 15,
     Overflow = 16,
     FeeTooHigh = 17,
     TooManyLegs = 18,
-    BadWindow = 19,
     BatchTooLarge = 20,
     TokenNotAuthorized = 21,
-    CorruptEntry = 22,
     NotInitialized = 23,
     SelfTrade = 24,
 }

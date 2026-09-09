@@ -14,8 +14,6 @@ export function restKeys(market: number, isBid: boolean, tick: number): ClientKe
     { t: "TickSummary", market, isBid },
     { t: "BestTick", market, isBid },
     { t: "BestTick", market, isBid: !isBid },
-    { t: "LevelPage", market, isBid, tick, page: 0 },
-    { t: "LevelPage", market, isBid, tick, page: 1 },
   ];
 }
 
@@ -23,13 +21,6 @@ export function feeKeys(market: number, base: Hex32, quote: Hex32): ClientKey[] 
   return [
     { t: "FeeAccrual", market, token: base },
     { t: "FeeAccrual", market, token: quote },
-  ];
-}
-
-export function settlePageKeys(market: number, isBid: boolean, tick: number): ClientKey[] {
-  return [
-    { t: "LevelPage", market, isBid, tick, page: 0 },
-    { t: "LevelPage", market, isBid, tick, page: 1 },
   ];
 }
 

@@ -2,7 +2,6 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRpc, type Rpc } from "../src/book";
 import { addrToHex } from "../src/engine/clientKeys";
-import { pad } from "../src/engine/pad";
 import {
   submitPlace,
   submitPostOnlyPlace,
@@ -16,10 +15,10 @@ import { parseArgs, type ArgSpec } from "./lib/args";
 import { loadIdentity, type Identity } from "./lib/identity";
 import { latestLedger, waitLedgers } from "./lib/ledger";
 import { clipDetail } from "./lib/logparse";
-import { emptyRestWindow, randInt, repr, startTickForPostOnly } from "./lib/math";
+import { randInt, repr, startTickForPostOnly } from "./lib/math";
 import { openLog, type OpsLog } from "./lib/opslog";
 import { outcomeOf, type OutcomeInput } from "./lib/outcomes";
-import { classicPairTokens, feeKeys, orderClientKey, restKeys, settlePageKeys, tokenHex } from "./lib/padkeys";
+import { classicPairTokens, feeKeys, orderClientKey, restKeys, tokenHex } from "./lib/padkeys";
 import { resultText, sleep } from "./lib/submitlog";
 import { createViews, type Views } from "./lib/views";
 
@@ -196,13 +195,11 @@ export class Soak {
         limitTick: limit,
         startTick: q.start_tick,
         crossed: q.crossed,
-        tailSeq: q.tail_seq,
         taker: this.ownerHex(role),
         nonce: BigInt(nonce),
         base: this.hex.base,
         quote: this.hex.quote,
       };
-      const outPad = pad(quoted, limit);
       const out = await this.submit(role, "place", () =>
         submitPlace(this.rpc, {
           contract: this.a.contract,
@@ -214,7 +211,6 @@ export class Soak {
           qtyLots: BigInt(qty),
           startTick: q.start_tick,
           nonce: BigInt(nonce),
-          window: outPad.window,
           flags,
           quoted,
           tokens: this.tokens,
@@ -239,7 +235,6 @@ export class Soak {
         qtyLots: BigInt(qty),
         startTick: startTickForPostOnly(isBid, this.a.tickMin, this.a.tickMax),
         nonce: BigInt(nonce),
-        window: emptyRestWindow(),
         flags,
         padKeys,
         tokens: this.tokens,
@@ -248,9 +243,9 @@ export class Soak {
     return { out, nonce };
   }
 
-  async settle(role: string, nonce: number, isBid: boolean, tick: number): Promise<string> {
+  async settle(role: string, nonce: number): Promise<string> {
     const id = this.ids[role];
-    const padKeys = [...feeKeys(this.a.market, this.hex.base, this.hex.quote), ...settlePageKeys(this.a.market, isBid, tick)];
+    const padKeys = feeKeys(this.a.market, this.hex.base, this.hex.quote);
     return this.submit(role, "settle", () =>
       submitSettle(this.rpc, {
         contract: this.a.contract,
@@ -300,7 +295,6 @@ export class Soak {
             isBid: o.isBid,
             tick: nt,
             qtyLots: BigInt(randInt(2, 6, this.rnd)),
-            window: emptyRestWindow(),
           };
         });
         const padKeys = [...feeKeys(this.a.market, this.hex.base, this.hex.quote)];
@@ -333,7 +327,7 @@ export class Soak {
         if (now - settleLater[i].t0 > 40) settleLater.splice(i, 1);
       }
       for (const g of due) {
-        for (const o of g.orders) await this.settle(role, o.nonce, o.isBid, o.tick);
+        for (const o of g.orders) await this.settle(role, o.nonce);
       }
       await this.sleepFor(2 + this.rnd() * 4);
     }
@@ -365,7 +359,6 @@ export class Soak {
             isBid: true,
             tick: nt,
             qtyLots: 1n,
-            window: emptyRestWindow(),
             padKeys,
             tokens: this.tokens,
           }),
@@ -394,7 +387,7 @@ export class Soak {
       const now = this.now();
       const due = pending.filter((p) => now - p.t0 > 45);
       pending = pending.filter((p) => now - p.t0 <= 45);
-      for (const p of due) await this.settle(role, p.nonce, false, p.tick);
+      for (const p of due) await this.settle(role, p.nonce);
       await this.sleepFor(8 + this.rnd() * 12);
     }
   }

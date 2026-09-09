@@ -18,9 +18,9 @@ pagebook/
 │           ├── admin.rs       # constructor, admin rotation, pause, keepalive
 │           ├── market.rs      # market create/config, quantization + §0.3 bound checks
 │           ├── keys.rs        # DataKey enum (contracttype, full-word variants) + TTL policy
-│           ├── level.rs       # Level/LevelPage positional queue over occupancy-sized slot vectors, resets, settlement state machine
+│           ├── level.rs       # Level positional queue over one occupancy-sized slot vector, resets, settlement state machine
 │           ├── bitmap.rs      # TickWord/TickSummary ops: set/clear/next_set_tick(from, direction) — asks ascend, bids descend
-│           ├── matching.rs    # matching loop (place), sweep/partial, caps + windows, best maintenance
+│           ├── matching.rs    # matching loop (place), sweep/partial, caps, best maintenance
 │           ├── settle.rs      # vault SAC transfers, fee accrual (ceil), route netting
 │           ├── events.rs      # typed event emitters
 │           └── errors.rs      # contracterror enum
@@ -34,17 +34,6 @@ pagebook/
 ```rust
 pub struct PlaceFlags { pub post_only: bool, pub fill_or_kill: bool, pub no_rest: bool }
 
-/// Slot-access windows the client declared pages for (architecture §8/§14).
-/// Encoding decided in ADR-014: one consume window per set level in the band and
-/// one append window for the taker's own rest. Page ranges are inclusive; a level
-/// absent from `consume` has an empty window (inline slots only).
-pub struct PageRange { pub first: u32, pub last: u32 }
-pub struct ConsumeWindow { pub tick: u32, pub pages: PageRange }
-pub struct SlotWindow {
-    pub consume: Vec<ConsumeWindow>,   // ≤ MAX_LEVELS_CROSSED entries
-    pub append: PageRange,             // {page(tail_sim), +1}; page 0 is always implied
-}
-
 pub trait PageBook {
     // ---- deploy-time; no init entry point, no first-caller race (architecture §12) ----
     // __constructor(e: Env, admin: Address, fee_recipient: Address);
@@ -55,16 +44,17 @@ pub trait PageBook {
     fn set_paused(e: Env, paused: bool);       // pause blocks place/route/replace; never settle or collect_fees
 
     /// Retune a market's mutable caps as network limits move (SLPs; architecture §12,
-    /// ADR-007). Re-runs the §0.3 overflow proof; MAX_PAGES raise-only; quantization
-    /// and INLINE_SLOTS/PAGE_SLOTS are not parameters — they are frozen for the
+    /// ADR-007). Re-runs the §0.3 overflow proof; `level_cap` raise-only, at most
+    /// LEVEL_CAP_MAX (128); quantization is not a parameter: it is frozen for the
     /// market's lifetime.
     fn set_market_caps(e: Env, market: MarketId, max_levels_crossed: u32,
                        max_slots_scanned: u32, taker_fee_bps: u32,
-                       min_order_lots: u64, max_order_lots: u64, max_pages: u32);
+                       min_order_lots: u64, max_order_lots: u64, level_cap: u32);
 
     /// Admin-gated in v1. Enforces base ≠ quote, 1 ≤ tick_min < tick_max ≤ 2^22,
-    /// fee_bps ≤ FEE_BPS_MAX, and the §0.3 creation bounds (LEVEL_CAP × max_order_lots
-    /// × price / base, with route headroom). No duplicate-pair check (§0.1).
+    /// fee_bps ≤ FEE_BPS_MAX, and the §0.3 creation bounds (level_cap × max_order_lots
+    /// × price / base, with route headroom; MAX_REPLACE_BATCH ≤ level_cap). The market
+    /// starts at the contract's default `level_cap` (64). No duplicate-pair check (§0.1).
     fn create_market(e: Env, base: Address, quote: Address, lot_size: u64,
                      tick_size: u64, tick_min: u32, tick_max: u32,
                      taker_fee_bps: u32, min_order_lots: u64, max_order_lots: u64)
@@ -73,13 +63,12 @@ pub trait PageBook {
     /// Cross and/or rest. taker.require_auth().
     /// `start_tick` = client's simulated best opposite tick — matching never visits
     /// better ticks. `nonce` = client-chosen order handle (Order key is
-    /// (taker, nonce), declarable pre-submission). `window` = declared slot access;
-    /// window edges end the take gracefully (refund) or fail the rest as RetryRest —
-    /// only walking past the padded band traps.
+    /// (taker, nonce), declarable pre-submission). Caps end the take gracefully
+    /// (refund); only walking past the padded band traps.
     /// Returns (rested: bool, filled_lots, quote_atoms).
     fn place(e: Env, taker: Address, market: MarketId, is_bid: bool,
             limit_tick: u32, qty_lots: u64, start_tick: u32, nonce: u64,
-            window: SlotWindow, flags: PlaceFlags)
+            flags: PlaceFlags)
         -> (bool, u64, i128);
 
     /// Multi-leg atomic route; legs.len() ≤ MAX_ROUTE_LEGS and ONE shared
@@ -96,26 +85,26 @@ pub trait PageBook {
     /// new tick. Never matches — conservative post-only check vs recorded BestTick.
     /// owner.require_auth(). Blocked when paused (contains a rest).
     fn replace(e: Env, owner: Address, market: MarketId, nonce: u64, is_bid: bool,
-               tick: u32, qty_lots: u64, window: SlotWindow) -> (i128, i128);
+               tick: u32, qty_lots: u64) -> (i128, i128);
 
     /// Batched replace: items.len() ≤ MAX_REPLACE_BATCH (else BatchTooLarge), settlement
     /// deltas netted, one transfer per token. A full book refresh is one transaction.
-    /// ReplaceItem = { nonce: u64, is_bid: bool, tick: u32, qty_lots: u64, window: SlotWindow }
+    /// ReplaceItem = { nonce: u64, is_bid: bool, tick: u32, qty_lots: u64 }
     /// — `replace`'s arguments minus owner/market.
     fn replace_batch(e: Env, owner: Address, market: MarketId, items: Vec<ReplaceItem>)
         -> Vec<(i128, i128)>;
 
     // Views (RO footprints; for routers/UIs):
     fn best(e: Env, market: MarketId, is_bid: bool) -> Option<u32>;
-    fn level(e: Env, market: MarketId, is_bid: bool, tick: u32) -> LevelInfo;
+    fn level(e: Env, market: MarketId, is_bid: bool, tick: u32) -> LevelInfo; // { generation, head_seq, depth, open_lots }
     fn order(e: Env, market: MarketId, owner: Address, nonce: u64) -> OrderInfo; // coords + settlement preview
     /// The simulate step (architecture §11/§14). Runs the SAME walk as `place` in
-    /// dry-run mode (matching.rs `Mode::DryRun`: caps, lazy-clear decisions, and
-    /// window logic identical; nothing written). Returns `start_tick`, the crossed
-    /// ticks with per-level head positions, the tail position at `limit_tick`, the
-    /// keys the client should declare (band `Level`s, words, own-side keys) as
-    /// typed keys — not footprint XDR (ADR-014); archival is not observable
-    /// on-chain, so archived flags come from RPC in the client (ADR-020).
+    /// dry-run mode (matching.rs `Mode::DryRun`: caps and lazy-clear decisions
+    /// identical; nothing written). Returns `{ start_tick, crossed: [{tick, open_lots}],
+    /// filled_lots, quote_atoms, keys }`: the crossed levels with their depth, the
+    /// simulated fill, and the keys the client should declare (band `Level`s, words,
+    /// own-side keys) as typed keys, not footprint XDR (ADR-014); archival is not
+    /// observable on-chain, so archived flags come from RPC in the client (ADR-020).
     fn quote_place(e: Env, market: MarketId, is_bid: bool, limit_tick: u32, qty: u64)
         -> QuoteResult;
 
@@ -127,14 +116,14 @@ pub trait PageBook {
 
 Error taxonomy (`contracterror`): `NotAdmin, Paused, SameToken (base == quote),
 UnknownMarket, BadQuantization, TickOutOfBand (also tick_max > 2^22 at creation),
-BadStartTick, QtyOutOfBounds, Crossed (post_only), Unfilled (FoK), LevelFull, RetryRest
-(append outside declared window), OrderExists (live nonce), NotOwner, UnknownOrder,
-Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs, BadWindow
-(`consume.len() > MAX_LEVELS_CROSSED` or a malformed page range), BatchTooLarge
+BadStartTick, QtyOutOfBounds, Crossed (post_only), Unfilled (FoK), LevelFull,
+OrderExists (live nonce), NotOwner, UnknownOrder,
+Overflow (also a generation counter at u32::MAX), FeeTooHigh, TooManyLegs, BatchTooLarge
 (`replace_batch` items > MAX_REPLACE_BATCH), TokenNotAuthorized (`create_market`: the
-SAC reports the vault unauthorized), CorruptEntry (a stored entry that does not decode),
+SAC reports the vault unauthorized),
 NotInitialized (no Config), SelfTrade (a `route` leg would take an earlier leg's rest)`. Error codes are the declaration order
-above, starting at 1, and are stable (append only). `BadStartTick` is
+above, starting at 1, and are stable (append only); codes 12, 19 and 22 (`RetryRest`,
+`BadWindow`, `CorruptEntry`) are retired and never reused (ADR-037). `BadStartTick` is
 defined in architecture §8 (`start_tick` outside `[tick_min, tick_max)`; every in-band
 value is legal). There is no `MarketExists`: the schema has no pair index and duplicate
 pairs are allowed (architecture §0.1; ADR-012).
@@ -147,18 +136,18 @@ default that a decision note may change once measured.
 - **`MarketId`** is `u32`, assigned from `Config`'s counter starting at 0.
 - **`DataKey`** is a `#[contracttype]` enum with full-word variants and tuple fields in
   the order the architecture writes the key: `Config`, `Market(u32)`,
-  `Level(u32, bool, u32)`, `LevelPage(u32, bool, u32, u32)`, `Order(u32, Address, u64)`,
+  `Level(u32, bool, u32)`, `Order(u32, Address, u64)`,
   `FeeAccrual(u32, Address)`, `BestTick(u32, bool)`, `TickSummary(u32, bool)`,
   `TickWord(u32, bool, u32)`; `bool` is `is_bid`.
-- **Entry encoding** (ADR-036): every entry is a named `#[contracttype]` struct.
-  `Level` = `generation u32, head_seq u32, tail_seq u32, head_consumed_lots u64,
-  open_lots u64, slots Vec<u64>` with `slots.len() == min(tail_seq, INLINE_SLOTS)`;
-  `LevelPage` = `slots Vec<u64>`, the reached prefix of the page; `TickSummary` /
+- **Entry encoding** (ADR-036, ADR-037): every entry is a named `#[contracttype]`
+  struct. `Level` = `generation u32, head_seq u32, open_lots u64, slots Vec<u64>`, one
+  entry holding the whole queue: slot `s` is `slots[s]`, `slots.len()` is the tail, a
+  slot holds the order's open lots (a partial take decrements the head slot in place),
+  and a sweep or empty-level reset empties the vector; `TickSummary` /
   `TickWord` = `BytesN<256>`, bit `i` = byte `i / 8`, mask `1 << (i % 8)`.
   `BestTick`, `Order`, `Market`, `Config`, `FeeAccrual` are named structs (ADR-022).
-  Budgets are the measured named sizes at max occupancy.
-- **`page(seq)`** for an inline seq is 0; the append window for an inline tail is
-  `{0, 1}` — a `PageRange` is never empty.
+  Budgets are the measured named sizes at max occupancy (`Level`: 1,000 B, 892
+  measured at the default `level_cap` of 64).
 - **Events**: topics = `(symbol name, market_id)`; data = the remaining fields from
   architecture §13 as a tuple in the listed order. Byte assertions count topics + data.
 - **`keepalive`** extends the instance and code TTLs to the 180-day maximum
@@ -205,15 +194,17 @@ default that a decision note may change once measured.
 - **M1 — single level end-to-end.** Constructor/admin/pause skeleton + auth tests
   (malicious-caller per entry point); market creation with the full §0.3 bound checks
   (property tests at each maximum: max order, full level, route headroom, fee cap);
-  rest/settle/**replace** against one level (no bitmap walk, inline queue only);
+  rest/settle/**replace** against one level (no bitmap walk);
   positional slot lifecycle unit tests (slot(seq) pure; head advance counter-only;
-  eager-advance; **empty-level reset**: empty a level via settles repeatedly until past
-  `LEVEL_CAP`, assert reuse + old settlements still pay); replace equivalence property
+  eager-advance with the head slot decremented in place; **empty-level reset**: empty a
+  level via settles repeatedly until past `level_cap`, assert reuse + old settlements
+  still pay); replace equivalence property
   (replace ≡ settle+place for book state and settlement, with the `Order` entry
   reused — assert no entry create/delete in the write set); nonce lifecycle
   (`OrderExists`, reuse after settle); vault escrow + settlement (incl. escrow *delta*
   on replace); `set_market_caps` tests (auth; §0.3 re-proof rejects breaking values;
-  `MAX_PAGES` lower rejected; live orders unaffected across a retune); `create_market`
+  `level_cap` lower rejected, above `LEVEL_CAP_MAX` rejected; live orders unaffected
+  across a retune); `create_market`
   refuses an asset whose SAC reports `authorized(vault) == false` (ADR-012 L3; mock
   SAC test); conservation
   invariant test, with the settle-then-sweep case called out (settle a partial head,
@@ -224,7 +215,7 @@ default that a decision note may change once measured.
   state machine — the riskiest logic — before any book traversal exists.
 - **M2 — matching.** `matching.rs` walk with a `Mode::{Apply, DryRun}` switch so
   `quote_place` and `place` share one code path; a minimal in-repo padding helper
-  (`quote_place` output → declared key set + `SlotWindow`) that the race tests use as
+  (`quote_place` output → declared key set) that the race tests use as
   their simulate step — the client SDK in M5 wraps this same logic, it does not
   reinvent it. Multi-level matching loop, `start_tick` clamping, sweep-vs-partial,
   generation semantics, `BestTick` maintenance (incl. stale-bit lazy clearing, the
@@ -232,20 +223,21 @@ default that a decision note may change once measured.
   reads no `TickWord` beyond the swept tick's word), **re-liquification** (sweep →
   re-rest same tick; lazy-clear → re-rest; empty side → rest at a tick worse than the
   stale recorded best: bit set and `BestTick` correct in all three), bitmap
-  TickWord/TickSummary walk, cap + **window** termination (remainder refunded — book never crossed),
+  TickWord/TickSummary walk, cap termination (remainder refunded, book never crossed),
   post_only (conservative vs recorded `BestTick`, incl. stale-best false-reject test),
   FoK/no_rest. Property tests (below), plus the **sim-to-apply race tests** — the
   padding rule gets coverage here, not first on testnet: simulate a place, mutate the
   book (better-priced rest; new level inside the band; level emptied; **head advanced
-  into pages; tail pushed across a page boundary; tail pushed to `LEVEL_CAP` —
-  `LevelFull`, not `RetryRest`; generation bumped by a sweep**),
-  re-apply with the stale `start_tick`/band/window and assert the defined outcome
-  (graceful refund or `RetryRest`; a trap only when the walk passes the band); and a
+  by a concurrent take; tail pushed by concurrent rests; tail pushed to `level_cap`,
+  `LevelFull`; generation bumped by a sweep**),
+  re-apply with the stale `start_tick`/band and assert the defined outcome
+  (graceful refund or `LevelFull`; a trap only when the walk passes the band); and a
   footprint assertion that a resting place's simulated footprint contains its own-side
   `Level`, `TickWord`, `TickSummary`, and `BestTick` keys (ADR-012 H1).
-- **M3 — pages + fees + route.** Overflow pages incl. deletion-behind-head,
-  `LevelFull` at `LEVEL_CAP`, and **stale-slot tests** (invariant 9: generation reset
-  over dirty pages, then reuse — decode rule `seq < tail_seq`); taker fee accrual
+- **M3: depth + fees + route.** Deep levels (the 33rd to 64th rest, `LevelFull` at
+  `level_cap`, tombstones and settles at depth, reset-on-rest at depth) and the
+  **vector-is-the-queue tests** (invariant 9: `slots.len()` is the tail after every op,
+  a sweep or reset empties it, then reuse); taker fee accrual
   (ceil) + `collect_fees` to recipient; `route` with in-memory netting, shared caps
   across legs, and event-byte assertions at the route worst case; `replace_batch`
   with netted settlement and the `MAX_REPLACE_BATCH` bound (fee gate: a 40-quote
@@ -255,7 +247,7 @@ default that a decision note may change once measured.
   note): a leg is `place`'s arguments minus `taker`; a result is `place`'s return
   tuple.
 - **M4 — resource hardening.** Build the **worst-case state-transition matrix** first
-  (per op: entries touched × bytes, incl. bitmap dispersal, windows, page cleanup, TTL
+  (per op: entries touched × bytes, incl. bitmap dispersal, deep levels, TTL
   bumps, SAC entries), then footprint-count and write-byte assertions per op against
   architecture §17's corrected table (max sweep: 72 writes / ~26.6 KB — construct the
   32-level / 32-word shape explicitly); **fee gates**: measured resource fee per op
@@ -278,14 +270,14 @@ default that a decision note may change once measured.
   pass in-repo; the fee gates pass within tolerance (or are marked blocked per M0);
   the three restore-opt-in transactions behave as stated; and the bot has run ≥ 2,000
   ledgers (~3 hours) with the spammer and rest storm active and no trap other than a
-  walk past `pad_end`, with every `RetryRest` re-simulated and landed.
+  walk past `pad_end`.
 - **M5 — client SDK sketch.** Key computation + padding helper (`quote_place` →
-  `start_tick` + band + slot windows + nonce management), since padding is a
+  `start_tick` + band + nonce management), since padding is a
   client-side responsibility; wraps the M2 in-repo helper and adds the
   archived-key marking rule (§14) and nonce policy (open question 7). **Deliverable:**
   a `crates/pagebook-client` crate (Rust, `std`) exposing `keys_for(place | replace |
-  settle)`, `pad(quote_result, pad_end) -> (declared keys, SlotWindow, restore
-  marks)`, and a nonce allocator, with unit tests that round-trip against the M2
+  settle)`, `pad(quote_result, pad_end) -> (declared keys, restore marks)`, and a
+  nonce allocator, with unit tests that round-trip against the M2
   helper on the same fixtures; no TypeScript in v1.
 
 ## Testing strategy
@@ -293,25 +285,25 @@ default that a decision note may change once measured.
 - **Property/fuzz (proptest):** random op sequences (place/replace/settle interleavings) vs
   a naive in-memory reference book. **The reference models observable outcomes only** —
   fills, payouts, refunds, price-time priority scoped by `start_tick`, `replace ≡
-  settle+place` — not bitmaps, generations, tombstones, or pages; those are checked
+  settle+place`, not bitmaps, generations, or tombstones; those are checked
   against the real book by the invariant assertions below. Property runs use
   **non-binding caps** (`MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED` set above any
-  sequence's needs) and inline-only queues by default, so the reference never has to
-  predict truncation; cap/window/page truncation is covered by the targeted adversarial
-  shapes, not by proptest. Assert: identical takes, conservation, settlement
+  sequence's needs) and queues well under `level_cap` by default, so the reference
+  never has to predict truncation; cap and depth truncation is covered by the targeted
+  adversarial shapes, not by proptest. Assert: identical takes, conservation, settlement
   path-independence (invariant 4), bitmap/BestTick coherence (weakened invariant 3),
-  `open_lots` (invariant 2 with stale-slot exclusion), slot validity (invariant 9),
+  `open_lots == Σ slots[head_seq..]` (invariant 2), the vector is the queue (invariant 9),
   **book never crossed (invariant 8)**. The contract crate is `no_std`; proptest runs
   in the test target only (`std` under `cfg(test)`), driving the contract through the
   SDK test env.
 - **Differential settlement:** for every random history, settle every order at the end and
   assert Σ payouts + fees == Σ deposits exactly (fee dust included — the ceil is the
   only rounding; any other discrepancy is a bug).
-- **Adversarial shapes:** max-depth single level (pages), 32-level worst-dispersal
+- **Adversarial shapes:** max-depth single level (`level_cap`), 32-level worst-dispersal
   sweeps, tombstone-poisoned head (K dust rests, cancel 2..K−1, assert scan cap +
   persisted progress), **cancel-to-empty storms → LevelFull → reset → reuse**,
-  stale-bit storms, cap/window-terminated places with crossing remainders, generation
-  reset at sweep **and over dirty pages**, seq monotonicity, nonce collision/reuse,
+  stale-bit storms, cap-terminated places with crossing remainders, generation
+  reset at sweep **and at depth**, seq monotonicity, nonce collision/reuse,
   bound-saturating amounts on every public path.
 - **Resource tests (the novel part):** the SDK test env exposes budget/footprint data —
   assert per-op entry counts and write bytes against architecture §17's table (derived
@@ -329,27 +321,28 @@ default that a decision note may change once measured.
 
 ## Open questions for the implementer to resolve (with decision notes)
 
-1. Inline level capacity `INLINE_SLOTS`, page capacity `PAGE_SLOTS`, `MAX_PAGES`,
-   `MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED` — final values tuned from measured entry
-   sizes/fees in M4. **Starting values (ADR-014):** `INLINE_SLOTS = 32`,
-   `PAGE_SLOTS = 32`, `MAX_PAGES = 1`, `MAX_LEVELS_CROSSED = 32` (§17's worst-case
-   rows assume it), `MAX_SLOTS_SCANNED = 64` (one full inline run plus one page —
-   enough to clear any single-generation tombstone run at `MAX_PAGES = 1` in one
-   take), `MAX_ROUTE_LEGS = 4`, `MAX_REPLACE_BATCH = 40` (§0.3; ADR-024 lowered it from 64: the event budget binds).
+1. Level capacity `level_cap`, `MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED`: final
+   values tuned from measured entry sizes/fees in M4. **Starting values (ADR-014,
+   ADR-037):** `level_cap = 64` by default with `LEVEL_CAP_MAX = 128` (the 40-item
+   batch onto levels at cap is what binds the ceiling, 70% of the per-tx write-byte
+   cap at 128), `MAX_LEVELS_CROSSED = 32` (§17's worst-case rows assume it),
+   `MAX_SLOTS_SCANNED = 64` (one full level at the default cap, enough to clear any
+   single-generation tombstone run in one take; a market raised to 128 clears a long
+   run over two takes), `MAX_ROUTE_LEGS = 4`, `MAX_REPLACE_BATCH = 40` (§0.3; ADR-024 lowered it from 64: the event budget binds).
 2. Whether rest should offer the optional `extend_ttl`-to-180-d flag for `Order`
    in v1 (TTL targets themselves are resolved: protocol minimum ~120 d covers every
    entry class; see architecture §18 / ADR-004).
-3. ~~`quote_place` return shape and the concrete `SlotWindow` encoding~~ — resolved
-   (ADR-014, amended by ADR-020: archived flags come from RPC, the contract returns
-   the touched key set): typed keys, not footprint XDR; `SlotWindow` is
-   per-level inclusive page ranges plus one append range (interface sketch above).
+3. ~~`quote_place` return shape~~: resolved (ADR-014, amended by ADR-020: archived
+   flags come from RPC, the contract returns the touched key set; ADR-037: no slot
+   windows): typed keys, not footprint XDR (interface sketch above).
 4. Self-trade prevention flag in v1 (cheap: compare owner on head consume — but that
    reads `Order` in the hot path; likely defer).
 5. Fee *split* (protocol/integrator) — custody and recipient are defined (architecture
    §1, §4, §12); Deepstate's dual-fee model remains a reasonable template for the split (both
    capped, both on taker output).
-6. ~~Whether settle-at-head should also advance past tombstones in its declared page~~
-   — resolved: it advances through its declared entries only and may leave the head
-   on a tombstone at a page boundary (architecture §7 "stranded head"; ADR-012).
+6. ~~Whether settle-at-head should also advance past tombstones~~:
+   resolved: it advances through consecutive zero slots up to `MAX_SLOTS_SCANNED`
+   and may leave the head on a tombstone (architecture §7 "stranded head"; ADR-012,
+   ADR-037).
 7. Nonce policy in the client SDK (random u64 vs per-owner counter) — the contract only
    requires "not currently live for this owner".

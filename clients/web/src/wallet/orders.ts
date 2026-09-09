@@ -2,7 +2,7 @@ import * as StellarSdk from "@stellar/stellar-sdk";
 import type { BookEvent, BookSnapshot, MarketInfo, Rpc } from "../book";
 import { formatAtoms, formatInt } from "../decode";
 import { addrToHex } from "../engine/clientKeys";
-import { keysForReplace, keysForSettle, MAX_REPLACE_BATCH, type WindowSpec } from "../engine/pad";
+import { keysForReplace, keysForSettle, MAX_REPLACE_BATCH } from "../engine/pad";
 import { simulate } from "../engine/quote";
 import { submitReplace, submitReplaceBatch, submitSettle, type ClassicToken, type EngineResult } from "../engine/submit";
 import { estimatePaddedFee } from "../engine/txdata";
@@ -340,8 +340,6 @@ function wouldCross(book: BookSnapshot | null, isBid: boolean, tick: number): bo
   return false;
 }
 
-const EMPTY_WINDOW: WindowSpec = { consume: [], append: { first: 0, last: 1 } };
-
 export type OrdersHandle = {
   draw(root: HTMLElement): void;
 };
@@ -515,7 +513,7 @@ export function createOrders(opts: {
     const net = m ? replaceNet(order, st.replaceBid, st.replaceTick, st.replaceLots, m.lot_size, m.tick_size) : { base: 0n, quote: 0n };
     const crossed = st.replacePostOnly && wouldCross(book, st.replaceBid, st.replaceTick);
     const keys = book?.base && book.quote
-      ? keysForReplace(opts.getMarket(), "00".repeat(32), order.nonce, order.isBid, order.tick, order.seq, st.replaceBid, st.replaceTick, 0, "00".repeat(32), "00".repeat(32)).keys.length
+      ? keysForReplace(opts.getMarket(), "00".repeat(32), order.nonce, order.isBid, order.tick, st.replaceBid, st.replaceTick, "00".repeat(32), "00".repeat(32)).length
       : 8;
     const fee = estimatePaddedFee(keys);
     const rent = order.archived ? `restore rent ~ ${formatAtoms(ARCHIVE_RENT_STROOPS, 7)} XLM` : "";
@@ -707,7 +705,6 @@ export function createOrders(opts: {
       nonce,
       o.isBid,
       o.tick,
-      o.seq,
       addrToHex(book.base),
       addrToHex(book.quote),
     );
@@ -740,16 +737,14 @@ export function createOrders(opts: {
       s.orders.phase = "replacing";
       s.orders.lastHash = "";
     });
-    const { keys } = keysForReplace(
+    const keys = keysForReplace(
       opts.getMarket(),
       addrToHex(pub),
       nonce,
       o.isBid,
       o.tick,
-      o.seq,
       st.replaceBid,
       st.replaceTick,
-      0,
       addrToHex(book.base),
       addrToHex(book.quote),
     );
@@ -762,7 +757,6 @@ export function createOrders(opts: {
       isBid: st.replaceBid,
       tick: st.replaceTick,
       qtyLots: st.replaceLots,
-      window: EMPTY_WINDOW,
       padKeys: keys,
       tokens: padTokens(book),
     });
@@ -788,7 +782,6 @@ export function createOrders(opts: {
       isBid: p.order.isBid,
       tick: p.newTick,
       qtyLots: p.order.qtyLots,
-      window: EMPTY_WINDOW,
     }));
     const padKeys = planned.flatMap((p) =>
       keysForReplace(
@@ -797,13 +790,11 @@ export function createOrders(opts: {
         p.order.nonce,
         p.order.isBid,
         p.order.tick,
-        p.order.seq,
         p.order.isBid,
         p.newTick,
-        0,
         addrToHex(book!.base!),
         addrToHex(book!.quote!),
-      ).keys,
+      ),
     );
     const res = await submitReplaceBatch(opts.rpc, {
       contract: opts.contract,
