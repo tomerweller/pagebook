@@ -2,8 +2,8 @@
 //! TypeScript loads the same JSON.
 
 use pagebook_client::{
-    keys_for_replace, keys_for_settle, pad, pad_opts, restore_marks, sorted_key_strs, ClientKey,
-    CrossedLevel, PadOpts, Quoted,
+    keys_for_replace, keys_for_settle, pad, restore_marks, sorted_key_strs, ClientKey,
+    CrossedLevel, Quoted,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -13,12 +13,16 @@ const BASE: [u8; 32] = [2; 32];
 const QUOTE: [u8; 32] = [3; 32];
 const NONCE: u64 = 7;
 
+const NOTE: &str = "Liveness-aware pads drop archived keys in the TS engine applyPad. \
+This fixture still enumerates the full pad. The Rust crate does not classify archival.";
+
 #[derive(Clone, Serialize, Deserialize)]
 struct Fixture {
     taker: String,
     nonce: u64,
     base: String,
     quote: String,
+    note: String,
     cases: Vec<Case>,
 }
 
@@ -44,68 +48,43 @@ struct QuotedIn {
     start_tick: u32,
     qty: u64,
     crossed: Vec<CrossedIn>,
-    tail_seq: u32,
     filled_lots: u64,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 struct CrossedIn {
     tick: u32,
-    head_seq: u32,
     open_lots: u64,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Options {
     pad_end: u32,
-    pages_for_empty: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 struct SettleIn {
     is_bid: bool,
     tick: u32,
-    seq: u32,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 struct ReplaceIn {
     old_is_bid: bool,
     old_tick: u32,
-    old_seq: u32,
     new_is_bid: bool,
     new_tick: u32,
-    new_tail_seq: u32,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 struct Expected {
     keys: Vec<String>,
-    window: WindowJson,
     #[serde(skip_serializing_if = "Option::is_none")]
     keys_for_settle: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     keys_for_replace: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     restore_marks: Option<Vec<String>>,
-}
-
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
-struct WindowJson {
-    consume: Vec<ConsumeJson>,
-    append: PageRangeJson,
-}
-
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
-struct ConsumeJson {
-    tick: u32,
-    pages: PageRangeJson,
-}
-
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
-struct PageRangeJson {
-    first: u32,
-    last: u32,
 }
 
 fn fixture_path() -> PathBuf {
@@ -137,12 +116,6 @@ fn parse_key(s: &str) -> ClientKey {
             parts[0].parse().unwrap(),
             parts[1].parse().unwrap(),
             parts[2].parse().unwrap(),
-        ),
-        "LevelPage" => ClientKey::LevelPage(
-            parts[0].parse().unwrap(),
-            parts[1].parse().unwrap(),
-            parts[2].parse().unwrap(),
-            parts[3].parse().unwrap(),
         ),
         "Order" => ClientKey::Order(
             parts[0].parse().unwrap(),
@@ -176,11 +149,9 @@ fn to_quoted(q: &QuotedIn, taker: [u8; 32], nonce: u64, base: [u8; 32], quote: [
             .iter()
             .map(|c| CrossedLevel {
                 tick: c.tick,
-                head_seq: c.head_seq,
                 open_lots: c.open_lots,
             })
             .collect(),
-        tail_seq: q.tail_seq,
         taker,
         nonce,
         base,
@@ -188,34 +159,9 @@ fn to_quoted(q: &QuotedIn, taker: [u8; 32], nonce: u64, base: [u8; 32], quote: [
     }
 }
 
-fn window_of(out: &pagebook_client::PadOut) -> WindowJson {
-    WindowJson {
-        consume: out
-            .window
-            .consume
-            .iter()
-            .map(|(tick, r)| ConsumeJson {
-                tick: *tick,
-                pages: PageRangeJson {
-                    first: r.first,
-                    last: r.last,
-                },
-            })
-            .collect(),
-        append: PageRangeJson {
-            first: out.window.append.first,
-            last: out.window.append.last,
-        },
-    }
-}
-
 fn compute(case: &Case, taker: [u8; 32], nonce: u64, base: [u8; 32], quote: [u8; 32]) -> Expected {
     let q = to_quoted(&case.quoted, taker, nonce, base, quote);
-    let out = pad_opts(
-        &q,
-        case.options.pad_end,
-        PadOpts::new().pages_for_empty(case.options.pages_for_empty),
-    );
+    let out = pad(&q, case.options.pad_end);
     let keys_for_settle = case.settle.as_ref().map(|s| {
         sorted_key_strs(&keys_for_settle(
             case.quoted.market,
@@ -223,26 +169,22 @@ fn compute(case: &Case, taker: [u8; 32], nonce: u64, base: [u8; 32], quote: [u8;
             nonce,
             s.is_bid,
             s.tick,
-            s.seq,
             base,
             quote,
         ))
     });
     let keys_for_replace = case.replace.as_ref().map(|r| {
-        let (keys, _) = keys_for_replace(
+        sorted_key_strs(&keys_for_replace(
             case.quoted.market,
             taker,
             nonce,
             r.old_is_bid,
             r.old_tick,
-            r.old_seq,
             r.new_is_bid,
             r.new_tick,
-            r.new_tail_seq,
             base,
             quote,
-        );
-        sorted_key_strs(&keys)
+        ))
     });
     let restore = case.archived.as_ref().map(|rows| {
         let archived: Vec<ClientKey> = rows.iter().map(|s| parse_key(s)).collect();
@@ -250,7 +192,6 @@ fn compute(case: &Case, taker: [u8; 32], nonce: u64, base: [u8; 32], quote: [u8;
     });
     Expected {
         keys: sorted_key_strs(&out.keys),
-        window: window_of(&out),
         keys_for_settle,
         keys_for_replace,
         restore_marks: restore,
@@ -258,54 +199,38 @@ fn compute(case: &Case, taker: [u8; 32], nonce: u64, base: [u8; 32], quote: [u8;
 }
 
 fn inputs() -> Fixture {
-    let crossed = |rows: &[(u32, u32, u64)]| {
+    let crossed = |rows: &[(u32, u64)]| {
         rows.iter()
-            .map(|(t, h, o)| CrossedIn {
+            .map(|(t, o)| CrossedIn {
                 tick: *t,
-                head_seq: *h,
                 open_lots: *o,
             })
             .collect()
     };
-    let quoted = |is_bid, limit, start, tail, qty, filled, rows: &[(u32, u32, u64)]| QuotedIn {
+    let quoted = |is_bid, limit, start, qty, filled, rows: &[(u32, u64)]| QuotedIn {
         market: 0,
         is_bid,
         limit_tick: limit,
         start_tick: start,
         qty,
         crossed: crossed(rows),
-        tail_seq: tail,
         filled_lots: filled,
     };
-    let opts = |pad_end, pages_for_empty| Options {
-        pad_end,
-        pages_for_empty,
-    };
+    let opts = |pad_end| Options { pad_end };
     let cases = vec![
         Case {
             name: "multi_cross".into(),
-            quoted: quoted(
-                true,
-                20,
-                10,
-                0,
-                8,
-                8,
-                &[(10, 3, 5), (11, 0, 2), (12, 70, 1)],
-            ),
-            options: opts(12, true),
+            quoted: quoted(true, 20, 10, 8, 8, &[(10, 5), (11, 2), (12, 1)]),
+            options: opts(12),
             settle: Some(SettleIn {
                 is_bid: true,
                 tick: 20,
-                seq: 5,
             }),
             replace: Some(ReplaceIn {
                 old_is_bid: true,
                 old_tick: 20,
-                old_seq: 5,
                 new_is_bid: false,
                 new_tick: 22,
-                new_tail_seq: 0,
             }),
             archived: Some(vec![
                 "Level(0,false,10)".into(),
@@ -313,65 +238,12 @@ fn inputs() -> Fixture {
                 "Level(0,false,99)".into(),
                 "Level(0,true,20)".into(),
             ]),
-            expected: Expected {
-                keys: vec![],
-                window: WindowJson {
-                    consume: vec![],
-                    append: PageRangeJson { first: 0, last: 1 },
-                },
-                keys_for_settle: None,
-                keys_for_replace: None,
-                restore_marks: None,
-            },
-        },
-        Case {
-            name: "page_boundaries".into(),
-            quoted: quoted(
-                true,
-                20,
-                10,
-                0,
-                4,
-                4,
-                &[(10, 31, 1), (11, 32, 1), (12, 63, 1), (13, 64, 1)],
-            ),
-            options: opts(13, true),
-            settle: None,
-            replace: None,
-            archived: None,
-            expected: empty_expected(),
-        },
-        Case {
-            name: "empty_pages_true".into(),
-            quoted: quoted(true, 20, 10, 0, 1, 0, &[(10, 0, 0), (11, 70, 0)]),
-            options: opts(11, true),
-            settle: None,
-            replace: None,
-            archived: None,
-            expected: empty_expected(),
-        },
-        Case {
-            name: "empty_pages_false".into(),
-            quoted: quoted(true, 20, 10, 0, 1, 0, &[(10, 0, 0), (11, 70, 0)]),
-            options: opts(11, false),
-            settle: None,
-            replace: None,
-            archived: None,
-            expected: empty_expected(),
-        },
-        Case {
-            name: "mixed_empty_skip".into(),
-            quoted: quoted(true, 20, 10, 0, 5, 5, &[(10, 3, 5), (11, 0, 0)]),
-            options: opts(11, false),
-            settle: None,
-            replace: None,
-            archived: None,
             expected: empty_expected(),
         },
         Case {
             name: "word_boundary".into(),
-            quoted: quoted(true, 2100, 2040, 0, 2, 0, &[(2048, 0, 3)]),
-            options: opts(2060, true),
+            quoted: quoted(true, 2100, 2040, 2, 0, &[(2048, 3)]),
+            options: opts(2060),
             settle: None,
             replace: None,
             archived: None,
@@ -379,8 +251,8 @@ fn inputs() -> Fixture {
         },
         Case {
             name: "wide_band".into(),
-            quoted: quoted(true, 250, 100, 0, 1, 0, &[(100, 0, 1)]),
-            options: opts(249, true),
+            quoted: quoted(true, 250, 100, 1, 0, &[(100, 1)]),
+            options: opts(249),
             settle: None,
             replace: None,
             archived: None,
@@ -388,20 +260,17 @@ fn inputs() -> Fixture {
         },
         Case {
             name: "ask_side".into(),
-            quoted: quoted(false, 40, 50, 4, 3, 1, &[(50, 5, 2), (48, 0, 1)]),
-            options: opts(35, true),
+            quoted: quoted(false, 40, 50, 3, 1, &[(50, 2), (48, 1)]),
+            options: opts(35),
             settle: Some(SettleIn {
                 is_bid: false,
                 tick: 40,
-                seq: 4,
             }),
             replace: Some(ReplaceIn {
                 old_is_bid: false,
                 old_tick: 40,
-                old_seq: 4,
                 new_is_bid: false,
                 new_tick: 38,
-                new_tail_seq: 2,
             }),
             archived: Some(vec![
                 "Level(0,true,50)".into(),
@@ -412,8 +281,8 @@ fn inputs() -> Fixture {
         },
         Case {
             name: "start_eq_pad_end".into(),
-            quoted: quoted(true, 20, 15, 0, 1, 0, &[]),
-            options: opts(15, true),
+            quoted: quoted(true, 20, 15, 1, 0, &[]),
+            options: opts(15),
             settle: None,
             replace: None,
             archived: None,
@@ -425,6 +294,7 @@ fn inputs() -> Fixture {
         nonce: NONCE,
         base: hex32(&BASE),
         quote: hex32(&QUOTE),
+        note: NOTE.into(),
         cases,
     }
 }
@@ -432,10 +302,6 @@ fn inputs() -> Fixture {
 fn empty_expected() -> Expected {
     Expected {
         keys: vec![],
-        window: WindowJson {
-            consume: vec![],
-            append: PageRangeJson { first: 0, last: 0 },
-        },
         keys_for_settle: None,
         keys_for_replace: None,
         restore_marks: None,
@@ -462,17 +328,19 @@ fn pad_conformance_matches_frozen_fixture() {
     let taker = parse_hex32(&fx.taker);
     let base = parse_hex32(&fx.base);
     let quote = parse_hex32(&fx.quote);
-    assert_eq!(fx.cases.len(), inputs().cases.len());
+    let expected_names: Vec<String> = inputs().cases.iter().map(|c| c.name.clone()).collect();
+    let names: Vec<String> = fx.cases.iter().map(|c| c.name.clone()).collect();
+    assert_eq!(
+        names, expected_names,
+        "fixture case list drifted from inputs()"
+    );
     for case in &fx.cases {
         let got = compute(case, taker, fx.nonce, base, quote);
         assert_eq!(got, case.expected, "case {}", case.name);
-        let q = to_quoted(&case.quoted, taker, fx.nonce, base, quote);
-        let defaulted = pad(&q, case.options.pad_end);
-        if case.options.pages_for_empty {
-            assert_eq!(
-                sorted_key_strs(&defaulted.keys),
-                case.expected.keys,
-                "pad() default must match pages_for_empty=true ({})",
+        for k in &case.expected.keys {
+            assert!(
+                !k.starts_with("LevelPage"),
+                "case {} declares a page key {k}",
                 case.name
             );
         }

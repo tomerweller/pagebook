@@ -2,8 +2,8 @@ use crate::errors::Error;
 use crate::math::overflow_bound_ok;
 use crate::store;
 use pagebook_types::{
-    level_cap, Market, FEE_BPS_MAX, INLINE_SLOTS, MAX_LEVELS_CROSSED, MAX_PAGES, MAX_SLOTS_SCANNED,
-    PAGE_SLOTS, TICK_INDEX_SPAN,
+    Market, FEE_BPS_MAX, LEVEL_CAP, LEVEL_CAP_MAX, MAX_LEVELS_CROSSED, MAX_REPLACE_BATCH,
+    MAX_SLOTS_SCANNED, TICK_INDEX_SPAN,
 };
 use soroban_sdk::{token::StellarAssetClient, Address, Env};
 
@@ -37,7 +37,7 @@ pub fn create_market(
     }
     prove_bounds(
         env,
-        MAX_PAGES,
+        LEVEL_CAP,
         max_order_lots,
         tick_max,
         tick_size,
@@ -67,9 +67,7 @@ pub fn create_market(
         max_order_lots,
         max_levels_crossed: MAX_LEVELS_CROSSED,
         max_slots_scanned: MAX_SLOTS_SCANNED,
-        inline_slots: INLINE_SLOTS,
-        page_slots: PAGE_SLOTS,
-        max_pages: MAX_PAGES,
+        level_cap: LEVEL_CAP,
     };
     store::save_market(env, id, &market);
     id
@@ -83,7 +81,7 @@ pub fn set_market_caps(
     taker_fee_bps: u32,
     min_order_lots: u64,
     max_order_lots: u64,
-    max_pages: u32,
+    level_cap: u32,
 ) {
     let _config = crate::admin::require_admin(env);
     let mut m = store::load_market(env, market);
@@ -93,13 +91,14 @@ pub fn set_market_caps(
     if min_order_lots < 1 || min_order_lots > max_order_lots {
         env.panic_with_error(Error::QtyOutOfBounds);
     }
-    if max_pages < m.max_pages {
+    // Raise-only: seqs up to the current cap may be live (§2).
+    if level_cap < m.level_cap {
         env.panic_with_error(Error::QtyOutOfBounds);
     }
-    require_caps(env, max_levels_crossed, max_slots_scanned, max_pages);
+    require_caps(env, max_levels_crossed, max_slots_scanned, level_cap);
     prove_bounds(
         env,
-        max_pages,
+        level_cap,
         max_order_lots,
         m.tick_max,
         m.tick_size,
@@ -110,39 +109,37 @@ pub fn set_market_caps(
     m.taker_fee_bps = taker_fee_bps;
     m.min_order_lots = min_order_lots;
     m.max_order_lots = max_order_lots;
-    m.max_pages = max_pages;
+    m.level_cap = level_cap;
     store::save_market(env, market, &m);
 }
 
-/// Loop caps must be usable (a zero cap disables matching or every consume
-/// window) and `max_pages` must keep `level_cap` well inside u32 and the
-/// per-level footprint sane (§17): a hard ceiling of 1,024 pages.
-pub const MAX_PAGES_CEILING: u32 = 1_024;
-
-fn require_caps(env: &Env, max_levels_crossed: u32, max_slots_scanned: u32, max_pages: u32) {
+/// Loop caps must be usable (a zero cap disables matching or head scans), and
+/// `level_cap` must hold a whole `replace_batch` (the ADR-021 escrow bound
+/// assumes `level_cap ≥ MAX_REPLACE_BATCH`) and keep a full `Level` rewrite
+/// inside the per-transaction write-byte cap (`LEVEL_CAP_MAX`, ADR-037).
+fn require_caps(env: &Env, max_levels_crossed: u32, max_slots_scanned: u32, level_cap: u32) {
     if max_levels_crossed == 0 || max_slots_scanned == 0 {
         env.panic_with_error(Error::BadQuantization);
     }
-    if max_pages > MAX_PAGES_CEILING {
+    if !(MAX_REPLACE_BATCH..=LEVEL_CAP_MAX).contains(&level_cap) {
         env.panic_with_error(Error::QtyOutOfBounds);
     }
 }
 
 fn prove_bounds(
     env: &Env,
-    max_pages: u32,
+    cap: u32,
     max_order_lots: u64,
     tick_max: u32,
     tick_size: u64,
     lot_size: u64,
 ) {
-    let cap = level_cap(max_pages);
     if !overflow_bound_ok(cap, max_order_lots, tick_size, tick_max)
         || !overflow_bound_ok(cap, max_order_lots, lot_size, 1)
     {
         env.panic_with_error(Error::Overflow);
     }
-    // `open_lots` and `head_consumed_lots` are u64: a full level of max-size
+    // `open_lots` and every slot are u64: a full level of max-size
     // orders must fit (the i128 bounds above do not imply this).
     if (cap as u128) * (max_order_lots as u128) > u64::MAX as u128 {
         env.panic_with_error(Error::Overflow);

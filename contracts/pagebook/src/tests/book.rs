@@ -1,4 +1,4 @@
-use super::harness::{flags, mint, rest_ask, rest_bid, setup, window};
+use super::harness::{flags, mint, rest_ask, rest_bid, setup};
 use crate::{Error, PlaceFlags};
 use soroban_sdk::{
     testutils::{storage::Persistent as _, Address as _},
@@ -26,17 +26,8 @@ fn nonce_exists_then_reuse_after_settle() {
     let maker = Address::generate(&h.env);
     rest_ask(&h, &maker, 10, 5, 7);
     super::assert_err(
-        h.client().try_place(
-            &maker,
-            &h.market,
-            &false,
-            &11,
-            &5,
-            &11,
-            &7,
-            &window(&h),
-            &flags(),
-        ),
+        h.client()
+            .try_place(&maker, &h.market, &false, &11, &5, &11, &7, &flags()),
         Error::OrderExists,
     );
     h.client().settle(&maker, &h.market, &7);
@@ -53,21 +44,13 @@ fn empty_level_reset_reuses_seqs() {
         rest_ask(&h, &maker, 20, 1, n);
         h.client().settle(&maker, &h.market, &n);
     }
-    let err = h.client().try_place(
-        &maker,
-        &h.market,
-        &false,
-        &20,
-        &1,
-        &20,
-        &200,
-        &window(&h),
-        &flags(),
-    );
+    let err = h
+        .client()
+        .try_place(&maker, &h.market, &false, &20, &1, &20, &200, &flags());
     assert!(err.is_ok());
     let lvl = h.client().level(&h.market, &false, &20);
     assert!(lvl.generation >= 1);
-    assert_eq!(lvl.tail_seq, 1);
+    assert_eq!(lvl.depth, 1);
 }
 
 #[test]
@@ -78,8 +61,7 @@ fn replace_reuses_order_entry() {
     let before = h
         .env
         .as_contract(&h.id, || h.env.storage().persistent().all().len());
-    h.client()
-        .replace(&maker, &h.market, &1, &false, &10, &8, &window(&h));
+    h.client().replace(&maker, &h.market, &1, &false, &10, &8);
     let after = h
         .env
         .as_contract(&h.id, || h.env.storage().persistent().all().len());
@@ -104,7 +86,6 @@ fn take_then_settle_pays_maker() {
         &4,
         &10,
         &1,
-        &window(&h),
         &PlaceFlags {
             post_only: false,
             fill_or_kill: false,
@@ -134,7 +115,6 @@ fn settle_then_sweep_drops_open_lots() {
         &3,
         &10,
         &1,
-        &window(&h),
         &PlaceFlags {
             post_only: false,
             fill_or_kill: false,
@@ -153,17 +133,8 @@ fn paused_blocks_place_not_settle() {
     rest_ask(&h, &maker, 10, 5, 1);
     h.client().set_paused(&true);
     super::assert_err(
-        h.client().try_place(
-            &maker,
-            &h.market,
-            &false,
-            &11,
-            &5,
-            &11,
-            &2,
-            &window(&h),
-            &flags(),
-        ),
+        h.client()
+            .try_place(&maker, &h.market, &false, &11, &5, &11, &2, &flags()),
         Error::Paused,
     );
     let (paid, refunded) = h.client().settle(&maker, &h.market, &1);
@@ -187,7 +158,6 @@ fn post_only_rejects_cross() {
             &1,
             &10,
             &1,
-            &window(&h),
             &PlaceFlags {
                 post_only: true,
                 fill_or_kill: false,

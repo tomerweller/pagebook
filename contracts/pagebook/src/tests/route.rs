@@ -3,7 +3,7 @@
 
 extern crate std;
 
-use super::harness::{flags, mint, rest_ask, rest_bid, setup, window, Harness};
+use super::harness::{flags, mint, no_rest, rest_ask, rest_bid, setup, Harness};
 use crate::{Error, PlaceFlags, PlaceLeg, ReplaceItem};
 use soroban_sdk::{
     testutils::{Address as _, Events as _},
@@ -11,14 +11,6 @@ use soroban_sdk::{
     xdr::{ContractEventBody, ScSymbol, ScVal, StringM},
     Address,
 };
-
-fn no_rest() -> PlaceFlags {
-    PlaceFlags {
-        post_only: false,
-        fill_or_kill: false,
-        no_rest: true,
-    }
-}
 
 fn fok() -> PlaceFlags {
     PlaceFlags {
@@ -56,20 +48,11 @@ fn second_market(h: &Harness) -> u32 {
 
 fn rest_ask_in(h: &Harness, market: u32, maker: &Address, tick: u32, qty: u64, nonce: u64) {
     mint(h, &h.base, maker, 1_000_000);
-    h.client().place(
-        maker,
-        &market,
-        &false,
-        &tick,
-        &qty,
-        &tick,
-        &nonce,
-        &window(h),
-        &flags(),
-    );
+    h.client()
+        .place(maker, &market, &false, &tick, &qty, &tick, &nonce, &flags());
 }
 
-fn leg(h: &Harness, market: u32, limit: u32, qty: u64, nonce: u64, f: PlaceFlags) -> PlaceLeg {
+fn leg(_h: &Harness, market: u32, limit: u32, qty: u64, nonce: u64, f: PlaceFlags) -> PlaceLeg {
     PlaceLeg {
         market,
         is_bid: true,
@@ -77,7 +60,6 @@ fn leg(h: &Harness, market: u32, limit: u32, qty: u64, nonce: u64, f: PlaceFlags
         qty_lots: qty,
         start_tick: limit,
         nonce,
-        window: window(h),
         flags: f,
     }
 }
@@ -170,7 +152,6 @@ fn replace_batch_third_item_crossed_reverts_all() {
             is_bid: false,
             tick,
             qty_lots: 3,
-            window: window(&h),
         });
     }
     super::assert_err(
@@ -210,7 +191,6 @@ fn replace_batch_third_item_crossed_reverts_all() {
             is_bid: false,
             tick,
             qty_lots: 3,
-            window: window(&h),
         });
     }
     h.client().replace_batch(&owner, &h.market, &ok);
@@ -230,7 +210,7 @@ fn chained_route_needs_no_intermediate_balance() {
     rest_ask(&h, &maker, 10, 4, 1); // market A: sells 4 base @ 10
     mint(&h, &h.quote, &maker, 1_000_000);
     h.client()
-        .place(&maker, &m2, &true, &12, &3, &12, &2, &window(&h), &flags()); // market B: bid 3 base @ 12
+        .place(&maker, &m2, &true, &12, &3, &12, &2, &flags()); // market B: bid 3 base @ 12
     let taker = Address::generate(&h.env);
     mint(&h, &h.quote, &taker, 1_000_000);
     assert_eq!(bal(&h, &h.base, &taker), 0);
@@ -273,7 +253,6 @@ fn replace_batch_duplicate_nonce_is_rejected() {
             is_bid: false,
             tick,
             qty_lots: 2,
-            window: window(&h),
         });
     }
     super::assert_err(

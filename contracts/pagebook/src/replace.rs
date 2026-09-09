@@ -1,5 +1,4 @@
 use crate::errors::Error;
-use crate::iface::SlotWindow;
 use crate::rest;
 use crate::settle::{self, Netting};
 use crate::store;
@@ -15,14 +14,13 @@ pub fn replace(
     is_bid: bool,
     tick: u32,
     qty_lots: u64,
-    window: SlotWindow,
 ) -> (i128, i128) {
     owner.require_auth();
     store::require_not_paused(env);
     let m = store::load_market(env, market);
     let mut net = Netting::new(env);
     let out = replace_body(
-        env, &owner, market, &m, nonce, is_bid, tick, qty_lots, &window, &mut net,
+        env, &owner, market, &m, nonce, is_bid, tick, qty_lots, &mut net,
     );
     net.flush(env, &owner);
     out
@@ -41,18 +39,14 @@ pub fn replace_body(
     is_bid: bool,
     tick: u32,
     qty_lots: u64,
-    window: &SlotWindow,
     net: &mut Netting,
 ) -> (i128, i128) {
-    crate::iface::validate_window(env, m, window);
     let opp = store::load_best(env, market, !is_bid);
     if !opp.empty && rest::crosses(is_bid, opp.tick, tick) {
         env.panic_with_error(Error::Crossed);
     }
     let r = settle::settle_order(env, owner, market, m, nonce, false);
-    rest::rest(
-        env, owner, market, m, is_bid, tick, qty_lots, nonce, window, true,
-    );
+    rest::rest(env, owner, market, m, is_bid, tick, qty_lots, nonce, true);
     // ADR-021: the pay-in is the full new escrow (a function of the arguments);
     // the old order's proceeds and refund flow out separately, whatever filled
     // in flight.

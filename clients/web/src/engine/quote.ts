@@ -54,8 +54,6 @@ function parseCrossed(raw: unknown): CrossedLevel[] {
     const r = row as Record<string, unknown>;
     return {
       tick: Number(r.tick),
-      headSeq: Number(r.head_seq ?? r.headSeq),
-      openLots: BigInt(String(r.open_lots ?? r.openLots ?? 0)),
     };
   });
 }
@@ -65,7 +63,6 @@ export function parseQuoteResult(native: unknown): {
   crossed: CrossedLevel[];
   filledLots: bigint;
   quoteAtoms: bigint;
-  tailSeq: number;
 } {
   if (!native || typeof native !== "object") throw new Error("empty QuoteResult");
   const r = native as Record<string, unknown>;
@@ -74,7 +71,6 @@ export function parseQuoteResult(native: unknown): {
     crossed: parseCrossed(r.crossed),
     filledLots: BigInt(String(r.filled_lots ?? r.filledLots ?? 0)),
     quoteAtoms: BigInt(String(r.quote_atoms ?? r.quoteAtoms ?? 0)),
-    tailSeq: Number(r.tail_seq ?? r.tailSeq),
   };
 }
 
@@ -115,7 +111,6 @@ export async function simulatePlace(rpc: Rpc, opts: QuoteOpts): Promise<{ quoted
       limitTick: opts.limitTick,
       startTick: parsed.startTick,
       crossed: parsed.crossed,
-      tailSeq: parsed.tailSeq,
       taker: addrToHex(opts.taker),
       nonce: opts.nonce,
       base: addrToHex(opts.base),

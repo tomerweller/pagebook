@@ -6,11 +6,12 @@ import type { CrossedLevel } from "../../src/engine/pad";
 import { scvAddr, scvBool, scvU32, scvU64 } from "../../src/engine/submit";
 import { NETWORK_PASSPHRASE } from "../../src/wallet/network";
 
+// The `level` view: `depth` is the length of the level's slot vector, which is
+// also the queue's tail (ADR-037).
 export type LevelView = {
   generation: number;
   head_seq: number;
-  tail_seq: number;
-  head_consumed_lots: number;
+  depth: number;
   open_lots: number;
 };
 
@@ -29,7 +30,6 @@ export type QuoteView = {
   crossed: CrossedLevel[];
   filled_lots: number;
   quote_atoms: bigint;
-  tail_seq: number;
 };
 
 export type Views = {
@@ -50,8 +50,7 @@ export function parseLevel(native: unknown): LevelView {
   return {
     generation: asNum(r.generation),
     head_seq: asNum(r.head_seq ?? r.headSeq),
-    tail_seq: asNum(r.tail_seq ?? r.tailSeq),
-    head_consumed_lots: asNum(r.head_consumed_lots ?? r.headConsumedLots),
+    depth: asNum(r.depth),
     open_lots: asNum(r.open_lots ?? r.openLots),
   };
 }
@@ -148,7 +147,6 @@ export function createViews(
         crossed: parsed.crossed,
         filled_lots: Number(parsed.filledLots),
         quote_atoms: parsed.quoteAtoms,
-        tail_seq: parsed.tailSeq,
       };
     },
   };

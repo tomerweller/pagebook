@@ -24,9 +24,7 @@ const market: MarketInfo = {
   max_order_lots: 1_000_000n,
   max_levels_crossed: 32,
   max_slots_scanned: 64,
-  inline_slots: 32,
-  page_slots: 32,
-  max_pages: 1,
+  level_cap: 64,
 };
 
 test("escrow quote is lots × tick × tick_size", () => {

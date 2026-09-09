@@ -16,39 +16,31 @@
         "crossed": [
           {
             "tick": 10,
-            "head_seq": 3,
             "open_lots": 5
           },
           {
             "tick": 11,
-            "head_seq": 0,
             "open_lots": 2
           },
           {
             "tick": 12,
-            "head_seq": 70,
             "open_lots": 1
           }
         ],
-        "tail_seq": 0,
         "filled_lots": 8
       },
       "options": {
-        "pad_end": 12,
-        "pages_for_empty": true
+        "pad_end": 12
       },
       "settle": {
         "is_bid": true,
-        "tick": 20,
-        "seq": 5
+        "tick": 20
       },
       "replace": {
         "old_is_bid": true,
         "old_tick": 20,
-        "old_seq": 5,
         "new_is_bid": false,
-        "new_tick": 22,
-        "new_tail_seq": 0
+        "new_tick": 22
       },
       "archived": [
         "Level(0,false,10)",
@@ -67,15 +59,6 @@
           "Level(0,false,11)",
           "Level(0,false,12)",
           "Level(0,true,20)",
-          "LevelPage(0,false,10,0)",
-          "LevelPage(0,false,10,1)",
-          "LevelPage(0,false,11,0)",
-          "LevelPage(0,false,11,1)",
-          "LevelPage(0,false,12,0)",
-          "LevelPage(0,false,12,1)",
-          "LevelPage(0,false,12,2)",
-          "LevelPage(0,true,20,0)",
-          "LevelPage(0,true,20,1)",
           "Market(0)",
           "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
           "TickSummary(0,false)",
@@ -87,38 +70,8 @@
           "VaultBalance(0202020202020202020202020202020202020202020202020202020202020202)",
           "VaultBalance(0303030303030303030303030303030303030303030303030303030303030303)"
         ],
-        "window": {
-          "consume": [
-            {
-              "tick": 10,
-              "pages": {
-                "first": 0,
-                "last": 1
-              }
-            },
-            {
-              "tick": 11,
-              "pages": {
-                "first": 0,
-                "last": 1
-              }
-            },
-            {
-              "tick": 12,
-              "pages": {
-                "first": 1,
-                "last": 2
-              }
-            }
-          ],
-          "append": {
-            "first": 0,
-            "last": 1
-          }
-        },
         "keys_for_settle": [
           "Level(0,true,20)",
-          "LevelPage(0,true,20,0)",
           "Market(0)",
           "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
           "UserBalance(0202020202020202020202020202020202020202020202020202020202020202)",
@@ -132,9 +85,6 @@
           "Config",
           "Level(0,false,22)",
           "Level(0,true,20)",
-          "LevelPage(0,false,22,0)",
-          "LevelPage(0,false,22,1)",
-          "LevelPage(0,true,20,0)",
           "Market(0)",
           "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
           "TickSummary(0,false)",
@@ -152,344 +102,6 @@
       }
     },
     {
-      "name": "page_boundaries",
-      "quoted": {
-        "market": 0,
-        "is_bid": true,
-        "limit_tick": 20,
-        "start_tick": 10,
-        "qty": 4,
-        "crossed": [
-          {
-            "tick": 10,
-            "head_seq": 31,
-            "open_lots": 1
-          },
-          {
-            "tick": 11,
-            "head_seq": 32,
-            "open_lots": 1
-          },
-          {
-            "tick": 12,
-            "head_seq": 63,
-            "open_lots": 1
-          },
-          {
-            "tick": 13,
-            "head_seq": 64,
-            "open_lots": 1
-          }
-        ],
-        "tail_seq": 0,
-        "filled_lots": 4
-      },
-      "options": {
-        "pad_end": 13,
-        "pages_for_empty": true
-      },
-      "expected": {
-        "keys": [
-          "BestTick(0,false)",
-          "BestTick(0,true)",
-          "Config",
-          "FeeAccrual(0,0202020202020202020202020202020202020202020202020202020202020202)",
-          "FeeAccrual(0,0303030303030303030303030303030303030303030303030303030303030303)",
-          "Level(0,false,10)",
-          "Level(0,false,11)",
-          "Level(0,false,12)",
-          "Level(0,false,13)",
-          "Level(0,true,20)",
-          "LevelPage(0,false,10,0)",
-          "LevelPage(0,false,10,1)",
-          "LevelPage(0,false,11,0)",
-          "LevelPage(0,false,11,1)",
-          "LevelPage(0,false,12,0)",
-          "LevelPage(0,false,12,1)",
-          "LevelPage(0,false,13,0)",
-          "LevelPage(0,false,13,1)",
-          "LevelPage(0,false,13,2)",
-          "LevelPage(0,true,20,0)",
-          "LevelPage(0,true,20,1)",
-          "Market(0)",
-          "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
-          "TickSummary(0,false)",
-          "TickSummary(0,true)",
-          "TickWord(0,false,0)",
-          "TickWord(0,true,0)",
-          "UserBalance(0202020202020202020202020202020202020202020202020202020202020202)",
-          "UserBalance(0303030303030303030303030303030303030303030303030303030303030303)",
-          "VaultBalance(0202020202020202020202020202020202020202020202020202020202020202)",
-          "VaultBalance(0303030303030303030303030303030303030303030303030303030303030303)"
-        ],
-        "window": {
-          "consume": [
-            {
-              "tick": 10,
-              "pages": {
-                "first": 0,
-                "last": 1
-              }
-            },
-            {
-              "tick": 11,
-              "pages": {
-                "first": 0,
-                "last": 1
-              }
-            },
-            {
-              "tick": 12,
-              "pages": {
-                "first": 0,
-                "last": 1
-              }
-            },
-            {
-              "tick": 13,
-              "pages": {
-                "first": 1,
-                "last": 2
-              }
-            }
-          ],
-          "append": {
-            "first": 0,
-            "last": 1
-          }
-        }
-      }
-    },
-    {
-      "name": "empty_pages_true",
-      "quoted": {
-        "market": 0,
-        "is_bid": true,
-        "limit_tick": 20,
-        "start_tick": 10,
-        "qty": 1,
-        "crossed": [
-          {
-            "tick": 10,
-            "head_seq": 0,
-            "open_lots": 0
-          },
-          {
-            "tick": 11,
-            "head_seq": 70,
-            "open_lots": 0
-          }
-        ],
-        "tail_seq": 0,
-        "filled_lots": 0
-      },
-      "options": {
-        "pad_end": 11,
-        "pages_for_empty": true
-      },
-      "expected": {
-        "keys": [
-          "BestTick(0,false)",
-          "BestTick(0,true)",
-          "Config",
-          "FeeAccrual(0,0202020202020202020202020202020202020202020202020202020202020202)",
-          "FeeAccrual(0,0303030303030303030303030303030303030303030303030303030303030303)",
-          "Level(0,false,10)",
-          "Level(0,false,11)",
-          "Level(0,true,20)",
-          "LevelPage(0,false,10,0)",
-          "LevelPage(0,false,10,1)",
-          "LevelPage(0,false,11,0)",
-          "LevelPage(0,false,11,1)",
-          "LevelPage(0,false,11,2)",
-          "LevelPage(0,true,20,0)",
-          "LevelPage(0,true,20,1)",
-          "Market(0)",
-          "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
-          "TickSummary(0,false)",
-          "TickSummary(0,true)",
-          "TickWord(0,false,0)",
-          "TickWord(0,true,0)",
-          "UserBalance(0202020202020202020202020202020202020202020202020202020202020202)",
-          "UserBalance(0303030303030303030303030303030303030303030303030303030303030303)",
-          "VaultBalance(0202020202020202020202020202020202020202020202020202020202020202)",
-          "VaultBalance(0303030303030303030303030303030303030303030303030303030303030303)"
-        ],
-        "window": {
-          "consume": [
-            {
-              "tick": 10,
-              "pages": {
-                "first": 0,
-                "last": 1
-              }
-            },
-            {
-              "tick": 11,
-              "pages": {
-                "first": 1,
-                "last": 2
-              }
-            }
-          ],
-          "append": {
-            "first": 0,
-            "last": 1
-          }
-        }
-      }
-    },
-    {
-      "name": "empty_pages_false",
-      "quoted": {
-        "market": 0,
-        "is_bid": true,
-        "limit_tick": 20,
-        "start_tick": 10,
-        "qty": 1,
-        "crossed": [
-          {
-            "tick": 10,
-            "head_seq": 0,
-            "open_lots": 0
-          },
-          {
-            "tick": 11,
-            "head_seq": 70,
-            "open_lots": 0
-          }
-        ],
-        "tail_seq": 0,
-        "filled_lots": 0
-      },
-      "options": {
-        "pad_end": 11,
-        "pages_for_empty": false
-      },
-      "expected": {
-        "keys": [
-          "BestTick(0,false)",
-          "BestTick(0,true)",
-          "Config",
-          "FeeAccrual(0,0202020202020202020202020202020202020202020202020202020202020202)",
-          "FeeAccrual(0,0303030303030303030303030303030303030303030303030303030303030303)",
-          "Level(0,false,10)",
-          "Level(0,false,11)",
-          "Level(0,true,20)",
-          "LevelPage(0,true,20,0)",
-          "LevelPage(0,true,20,1)",
-          "Market(0)",
-          "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
-          "TickSummary(0,false)",
-          "TickSummary(0,true)",
-          "TickWord(0,false,0)",
-          "TickWord(0,true,0)",
-          "UserBalance(0202020202020202020202020202020202020202020202020202020202020202)",
-          "UserBalance(0303030303030303030303030303030303030303030303030303030303030303)",
-          "VaultBalance(0202020202020202020202020202020202020202020202020202020202020202)",
-          "VaultBalance(0303030303030303030303030303030303030303030303030303030303030303)"
-        ],
-        "window": {
-          "consume": [
-            {
-              "tick": 10,
-              "pages": {
-                "first": 0,
-                "last": 1
-              }
-            },
-            {
-              "tick": 11,
-              "pages": {
-                "first": 1,
-                "last": 2
-              }
-            }
-          ],
-          "append": {
-            "first": 0,
-            "last": 1
-          }
-        }
-      }
-    },
-    {
-      "name": "mixed_empty_skip",
-      "quoted": {
-        "market": 0,
-        "is_bid": true,
-        "limit_tick": 20,
-        "start_tick": 10,
-        "qty": 5,
-        "crossed": [
-          {
-            "tick": 10,
-            "head_seq": 3,
-            "open_lots": 5
-          },
-          {
-            "tick": 11,
-            "head_seq": 0,
-            "open_lots": 0
-          }
-        ],
-        "tail_seq": 0,
-        "filled_lots": 5
-      },
-      "options": {
-        "pad_end": 11,
-        "pages_for_empty": false
-      },
-      "expected": {
-        "keys": [
-          "BestTick(0,false)",
-          "BestTick(0,true)",
-          "Config",
-          "FeeAccrual(0,0202020202020202020202020202020202020202020202020202020202020202)",
-          "FeeAccrual(0,0303030303030303030303030303030303030303030303030303030303030303)",
-          "Level(0,false,10)",
-          "Level(0,false,11)",
-          "Level(0,true,20)",
-          "LevelPage(0,false,10,0)",
-          "LevelPage(0,false,10,1)",
-          "LevelPage(0,true,20,0)",
-          "LevelPage(0,true,20,1)",
-          "Market(0)",
-          "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
-          "TickSummary(0,false)",
-          "TickSummary(0,true)",
-          "TickWord(0,false,0)",
-          "TickWord(0,true,0)",
-          "UserBalance(0202020202020202020202020202020202020202020202020202020202020202)",
-          "UserBalance(0303030303030303030303030303030303030303030303030303030303030303)",
-          "VaultBalance(0202020202020202020202020202020202020202020202020202020202020202)",
-          "VaultBalance(0303030303030303030303030303030303030303030303030303030303030303)"
-        ],
-        "window": {
-          "consume": [
-            {
-              "tick": 10,
-              "pages": {
-                "first": 0,
-                "last": 1
-              }
-            },
-            {
-              "tick": 11,
-              "pages": {
-                "first": 0,
-                "last": 1
-              }
-            }
-          ],
-          "append": {
-            "first": 0,
-            "last": 1
-          }
-        }
-      }
-    },
-    {
       "name": "word_boundary",
       "quoted": {
         "market": 0,
@@ -500,16 +112,13 @@
         "crossed": [
           {
             "tick": 2048,
-            "head_seq": 0,
             "open_lots": 3
           }
         ],
-        "tail_seq": 0,
         "filled_lots": 0
       },
       "options": {
-        "pad_end": 2060,
-        "pages_for_empty": true
+        "pad_end": 2060
       },
       "expected": {
         "keys": [
@@ -540,10 +149,6 @@
           "Level(0,false,2059)",
           "Level(0,false,2060)",
           "Level(0,true,2100)",
-          "LevelPage(0,false,2048,0)",
-          "LevelPage(0,false,2048,1)",
-          "LevelPage(0,true,2100,0)",
-          "LevelPage(0,true,2100,1)",
           "Market(0)",
           "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
           "TickSummary(0,false)",
@@ -555,22 +160,7 @@
           "UserBalance(0303030303030303030303030303030303030303030303030303030303030303)",
           "VaultBalance(0202020202020202020202020202020202020202020202020202020202020202)",
           "VaultBalance(0303030303030303030303030303030303030303030303030303030303030303)"
-        ],
-        "window": {
-          "consume": [
-            {
-              "tick": 2048,
-              "pages": {
-                "first": 0,
-                "last": 1
-              }
-            }
-          ],
-          "append": {
-            "first": 0,
-            "last": 1
-          }
-        }
+        ]
       }
     },
     {
@@ -584,16 +174,13 @@
         "crossed": [
           {
             "tick": 100,
-            "head_seq": 0,
             "open_lots": 1
           }
         ],
-        "tail_seq": 0,
         "filled_lots": 0
       },
       "options": {
-        "pad_end": 249,
-        "pages_for_empty": true
+        "pad_end": 249
       },
       "expected": {
         "keys": [
@@ -753,10 +340,6 @@
           "Level(0,false,248)",
           "Level(0,false,249)",
           "Level(0,true,250)",
-          "LevelPage(0,false,100,0)",
-          "LevelPage(0,false,100,1)",
-          "LevelPage(0,true,250,0)",
-          "LevelPage(0,true,250,1)",
           "Market(0)",
           "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
           "TickSummary(0,false)",
@@ -767,22 +350,7 @@
           "UserBalance(0303030303030303030303030303030303030303030303030303030303030303)",
           "VaultBalance(0202020202020202020202020202020202020202020202020202020202020202)",
           "VaultBalance(0303030303030303030303030303030303030303030303030303030303030303)"
-        ],
-        "window": {
-          "consume": [
-            {
-              "tick": 100,
-              "pages": {
-                "first": 0,
-                "last": 1
-              }
-            }
-          ],
-          "append": {
-            "first": 0,
-            "last": 1
-          }
-        }
+        ]
       }
     },
     {
@@ -796,34 +364,27 @@
         "crossed": [
           {
             "tick": 50,
-            "head_seq": 5,
             "open_lots": 2
           },
           {
             "tick": 48,
-            "head_seq": 0,
             "open_lots": 1
           }
         ],
-        "tail_seq": 4,
         "filled_lots": 1
       },
       "options": {
-        "pad_end": 35,
-        "pages_for_empty": true
+        "pad_end": 35
       },
       "settle": {
         "is_bid": false,
-        "tick": 40,
-        "seq": 4
+        "tick": 40
       },
       "replace": {
         "old_is_bid": false,
         "old_tick": 40,
-        "old_seq": 4,
         "new_is_bid": false,
-        "new_tick": 38,
-        "new_tail_seq": 2
+        "new_tick": 38
       },
       "archived": [
         "Level(0,true,50)",
@@ -854,12 +415,6 @@
           "Level(0,true,48)",
           "Level(0,true,49)",
           "Level(0,true,50)",
-          "LevelPage(0,false,40,0)",
-          "LevelPage(0,false,40,1)",
-          "LevelPage(0,true,48,0)",
-          "LevelPage(0,true,48,1)",
-          "LevelPage(0,true,50,0)",
-          "LevelPage(0,true,50,1)",
           "Market(0)",
           "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
           "TickSummary(0,false)",
@@ -871,31 +426,8 @@
           "VaultBalance(0202020202020202020202020202020202020202020202020202020202020202)",
           "VaultBalance(0303030303030303030303030303030303030303030303030303030303030303)"
         ],
-        "window": {
-          "consume": [
-            {
-              "tick": 50,
-              "pages": {
-                "first": 0,
-                "last": 1
-              }
-            },
-            {
-              "tick": 48,
-              "pages": {
-                "first": 0,
-                "last": 1
-              }
-            }
-          ],
-          "append": {
-            "first": 0,
-            "last": 1
-          }
-        },
         "keys_for_settle": [
           "Level(0,false,40)",
-          "LevelPage(0,false,40,0)",
           "Market(0)",
           "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
           "UserBalance(0202020202020202020202020202020202020202020202020202020202020202)",
@@ -909,9 +441,6 @@
           "Config",
           "Level(0,false,38)",
           "Level(0,false,40)",
-          "LevelPage(0,false,38,0)",
-          "LevelPage(0,false,38,1)",
-          "LevelPage(0,false,40,0)",
           "Market(0)",
           "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
           "TickSummary(0,false)",
@@ -936,12 +465,10 @@
         "start_tick": 15,
         "qty": 1,
         "crossed": [],
-        "tail_seq": 0,
         "filled_lots": 0
       },
       "options": {
-        "pad_end": 15,
-        "pages_for_empty": true
+        "pad_end": 15
       },
       "expected": {
         "keys": [
@@ -952,8 +479,6 @@
           "FeeAccrual(0,0303030303030303030303030303030303030303030303030303030303030303)",
           "Level(0,false,15)",
           "Level(0,true,20)",
-          "LevelPage(0,true,20,0)",
-          "LevelPage(0,true,20,1)",
           "Market(0)",
           "Order(0,0101010101010101010101010101010101010101010101010101010101010101,7)",
           "TickSummary(0,false)",
@@ -964,14 +489,7 @@
           "UserBalance(0303030303030303030303030303030303030303030303030303030303030303)",
           "VaultBalance(0202020202020202020202020202020202020202020202020202020202020202)",
           "VaultBalance(0303030303030303030303030303030303030303030303030303030303030303)"
-        ],
-        "window": {
-          "consume": [],
-          "append": {
-            "first": 0,
-            "last": 1
-          }
-        }
+        ]
       }
     }
   ]

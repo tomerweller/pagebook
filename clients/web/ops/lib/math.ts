@@ -190,10 +190,6 @@ export function startTickForPostOnly(isBid: boolean, tickMin = TICK_MIN, tickMax
   return isBid ? tickMax - 1 : tickMin;
 }
 
-export function emptyRestWindow(): { consume: []; append: { first: number; last: number } } {
-  return { consume: [], append: { first: 0, last: 1 } };
-}
-
 export function repr(e: unknown): string {
   if (e instanceof Error) return `${e.name}('${e.message}')`;
   return String(e);

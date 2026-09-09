@@ -81,13 +81,35 @@ fn create_rejects_unauthorized_token() {
     );
 }
 
+/// `level_cap` is raise-only and bounded by `LEVEL_CAP_MAX` (ADR-037).
 #[test]
-fn set_market_caps_rejects_lower_max_pages() {
+fn set_market_caps_bounds_level_cap() {
     let h = setup();
     super::assert_err(
         h.client()
-            .try_set_market_caps(&h.market, &32, &64, &10, &1, &1_000_000, &0),
+            .try_set_market_caps(&h.market, &32, &64, &10, &1, &1_000_000, &63),
         Error::QtyOutOfBounds,
+    );
+    super::assert_err(
+        h.client().try_set_market_caps(
+            &h.market,
+            &32,
+            &64,
+            &10,
+            &1,
+            &1_000_000,
+            &(pagebook_types::LEVEL_CAP_MAX + 1),
+        ),
+        Error::QtyOutOfBounds,
+    );
+    h.client().set_market_caps(
+        &h.market,
+        &32,
+        &64,
+        &10,
+        &1,
+        &1_000_000,
+        &pagebook_types::LEVEL_CAP_MAX,
     );
 }
 
@@ -97,7 +119,7 @@ fn set_market_caps_retune_keeps_live_orders() {
     let maker = Address::generate(&h.env);
     super::harness::rest_ask(&h, &maker, 10, 5, 1);
     h.client()
-        .set_market_caps(&h.market, &16, &32, &10, &1, &1_000_000, &1);
+        .set_market_caps(&h.market, &16, &32, &10, &1, &1_000_000, &64);
     let info = h.client().order(&h.market, &maker, &1);
     assert_eq!(info.qty_lots, 5);
 }

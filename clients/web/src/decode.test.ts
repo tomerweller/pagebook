@@ -12,12 +12,10 @@ import {
 const xdr = StellarSdk.xdr;
 
 /// A `Level` ScVal as the contract stores it: a symbol-keyed map with u32 /
-/// u64 fields and a vec of u64 slots (ADR-036).
+/// u64 fields and a vec of u64 slots holding the whole queue (ADR-037).
 function levelScVal(fields: {
   generation: number;
   head_seq: number;
-  tail_seq: number;
-  head_consumed_lots: bigint;
   open_lots: bigint;
   slots: bigint[];
 }): StellarSdk.xdr.ScVal {
@@ -26,11 +24,9 @@ function levelScVal(fields: {
     new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(k), val: v });
   return xdr.ScVal.scvMap([
     entry("generation", xdr.ScVal.scvU32(fields.generation)),
-    entry("head_consumed_lots", u64(fields.head_consumed_lots)),
     entry("head_seq", xdr.ScVal.scvU32(fields.head_seq)),
     entry("open_lots", u64(fields.open_lots)),
     entry("slots", xdr.ScVal.scvVec(fields.slots.map(u64))),
-    entry("tail_seq", xdr.ScVal.scvU32(fields.tail_seq)),
   ]);
 }
 
@@ -38,26 +34,21 @@ test("empty level", () => {
   const scv = levelScVal({
     generation: 0,
     head_seq: 0,
-    tail_seq: 0,
-    head_consumed_lots: 0n,
     open_lots: 0n,
     slots: [],
   });
   const lvl = parseLevel(StellarSdk.scValToNative(scv));
   expect(lvl).toBeTruthy();
   expect(lvl!.generation).toBe(0);
-  expect(lvl!.tail_seq).toBe(0);
-  expect(lvl!.head_consumed_lots).toBe(0n);
+  expect(lvl!.head_seq).toBe(0);
   expect(lvl!.open_lots).toBe(0n);
   expect(lvl!.slots.length).toBe(0);
 });
 
-test("occupied level has as many slots as its tail", () => {
+test("occupied level: the vector is the queue, its length the tail", () => {
   const scv = levelScVal({
     generation: 3,
     head_seq: 5,
-    tail_seq: 9,
-    head_consumed_lots: 7n,
     open_lots: 123456789012n,
     slots: [10n, 20n, 30n, 40n, 0n, 1n, 2n, 3n, 1n << 40n],
   });
@@ -65,10 +56,11 @@ test("occupied level has as many slots as its tail", () => {
   expect(lvl).toBeTruthy();
   expect(lvl!.generation).toBe(3);
   expect(lvl!.head_seq).toBe(5);
-  expect(lvl!.tail_seq).toBe(9);
-  expect(lvl!.head_consumed_lots).toBe(7n);
   expect(lvl!.open_lots).toBe(123456789012n);
   expect(lvl!.slots.length).toBe(9);
+  // Slots from head_seq to the tail are the live orders' open lots; a zero is
+  // a tombstone or a consumed head and is skipped.
+  expect(lvl!.slots.slice(lvl!.head_seq)).toEqual([1n, 2n, 3n, 1n << 40n]);
   expect(lvl!.slots[0]).toBe(10n);
   expect(lvl!.slots[3]).toBe(40n);
   expect(lvl!.slots[4]).toBe(0n);

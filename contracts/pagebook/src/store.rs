@@ -1,6 +1,6 @@
 use crate::errors::Error;
 use crate::keys::DataKey;
-use pagebook_types::{BestTick, Config, FeeAccrual, Level, LevelPage, Market, Order};
+use pagebook_types::{BestTick, Config, FeeAccrual, Level, Market, Order};
 use soroban_sdk::{Address, Env};
 
 pub fn load_config(env: &Env) -> Config {
@@ -18,18 +18,10 @@ pub fn save_config(env: &Env, config: &Config) {
 
 pub fn load_market(env: &Env, market: u32) -> Market {
     note(&DataKey::Market(market));
-    let m: Market = env
-        .storage()
+    env.storage()
         .persistent()
         .get(&DataKey::Market(market))
-        .unwrap_or_else(|| env.panic_with_error(Error::UnknownMarket));
-    // Geometry is a contract-wide constant copied into the entry (§1, ADR-015);
-    // a mismatch means this wasm cannot decode the market's levels.
-    if m.inline_slots != pagebook_types::INLINE_SLOTS || m.page_slots != pagebook_types::PAGE_SLOTS
-    {
-        env.panic_with_error(Error::CorruptEntry);
-    }
-    m
+        .unwrap_or_else(|| env.panic_with_error(Error::UnknownMarket))
 }
 
 pub fn save_market(env: &Env, market: u32, m: &Market) {
@@ -52,21 +44,6 @@ pub fn save_level(env: &Env, market: u32, is_bid: bool, tick: u32, level: &Level
     let key = DataKey::Level(market, is_bid, tick);
     note(&key);
     env.storage().persistent().set(&key, level);
-}
-
-pub fn load_page(env: &Env, market: u32, is_bid: bool, tick: u32, page: u32) -> LevelPage {
-    let key = DataKey::LevelPage(market, is_bid, tick, page);
-    note(&key);
-    env.storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or_else(|| LevelPage::empty(env))
-}
-
-pub fn save_page(env: &Env, market: u32, is_bid: bool, tick: u32, page: u32, p: &LevelPage) {
-    let key = DataKey::LevelPage(market, is_bid, tick, page);
-    note(&key);
-    env.storage().persistent().set(&key, p);
 }
 
 pub fn load_best(env: &Env, market: u32, is_bid: bool) -> BestTick {

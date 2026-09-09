@@ -3,15 +3,10 @@ import type { Rpc } from "../book";
 import { wordOf } from "../decode";
 import { keyStr, sameKey, type ClientKey, type Hex32 } from "./clientKeys";
 
-export const INLINE_SLOTS = 32;
-export const PAGE_SLOTS = 32;
-export const CONSUME_WIDTH = 1;
 export const MAX_REPLACE_BATCH = 40;
 
 export type CrossedLevel = {
   tick: number;
-  headSeq: number;
-  openLots: bigint;
 };
 
 export type Quoted = {
@@ -20,45 +15,21 @@ export type Quoted = {
   limitTick: number;
   startTick: number;
   crossed: CrossedLevel[];
-  tailSeq: number;
   taker: Hex32;
   nonce: bigint;
   base: Hex32;
   quote: Hex32;
 };
 
-export type PageRange = { first: number; last: number };
-
-export type WindowSpec = {
-  consume: { tick: number; pages: PageRange }[];
-  append: PageRange;
-};
-
-export type PadOut = {
-  keys: ClientKey[];
-  window: WindowSpec;
-};
-
-export type PadOpts = {
-  pagesForEmpty?: boolean;
-};
-
-export function pageOf(seq: number): number {
-  return seq < INLINE_SLOTS ? 0 : Math.floor((seq - INLINE_SLOTS) / PAGE_SLOTS);
-}
-
-export function appendRange(tailSeq: number): PageRange {
-  const p = pageOf(tailSeq);
-  return { first: p, last: p + 1 };
-}
-
+// Settle touches the order, its level, and the four balance entries. A level
+// is one entry (ADR-037), so the queue position of the order does not change
+// which keys the call reads.
 export function keysForSettle(
   market: number,
   owner: Hex32,
   nonce: bigint,
   isBid: boolean,
   tick: number,
-  seq: number,
   base: Hex32,
   quote: Hex32,
 ): ClientKey[] {
@@ -66,7 +37,6 @@ export function keysForSettle(
     { t: "Market", market },
     { t: "Order", market, owner, nonce },
     { t: "Level", market, isBid, tick },
-    { t: "LevelPage", market, isBid, tick, page: pageOf(seq) },
     { t: "VaultBalance", token: base },
     { t: "VaultBalance", token: quote },
     { t: "UserBalance", token: base },
@@ -80,28 +50,28 @@ export function keysForReplace(
   nonce: bigint,
   oldIsBid: boolean,
   oldTick: number,
-  oldSeq: number,
   newIsBid: boolean,
   newTick: number,
-  newTailSeq: number,
   base: Hex32,
   quote: Hex32,
-): { keys: ClientKey[]; append: PageRange } {
-  const keys = keysForSettle(market, owner, nonce, oldIsBid, oldTick, oldSeq, base, quote);
+): ClientKey[] {
+  const keys = keysForSettle(market, owner, nonce, oldIsBid, oldTick, base, quote);
   keys.push({ t: "Config" });
-  const append = appendRange(newTailSeq);
   keys.push({ t: "Level", market, isBid: newIsBid, tick: newTick });
   keys.push({ t: "TickWord", market, isBid: newIsBid, word: wordOf(newTick) });
   keys.push({ t: "TickSummary", market, isBid: newIsBid });
   keys.push({ t: "BestTick", market, isBid: newIsBid });
   keys.push({ t: "BestTick", market, isBid: !newIsBid });
-  pushPages(keys, market, newIsBid, newTick, append);
   dedup(keys);
-  return { keys, append };
+  return keys;
 }
 
-export function pad(q: Quoted, padEnd: number, opts?: PadOpts): PadOut {
-  const pagesForEmpty = opts?.pagesForEmpty !== false;
+// The architecture §14 pad rule for a place. Everything is declared
+// read-write: the opposite-side band of levels from the start tick to the pad
+// end, the words those ticks and the limit fall in, the summaries and best
+// ticks on both sides, the taker's own rest level and word, the order, the fee
+// accruals, and the four balance entries.
+export function pad(q: Quoted, padEnd: number): ClientKey[] {
   const opp = !q.ownSide;
   const m = q.market;
   const keys: ClientKey[] = [];
@@ -117,23 +87,11 @@ export function pad(q: Quoted, padEnd: number, opts?: PadOpts): PadOut {
   keys.push({ t: "TickSummary", market: m, isBid: opp });
   keys.push({ t: "BestTick", market: m, isBid: opp });
 
-  const consume: WindowSpec["consume"] = [];
-  for (const c of q.crossed) {
-    const p = pageOf(c.headSeq);
-    const range = { first: p, last: p + CONSUME_WIDTH };
-    if (pagesForEmpty || c.openLots !== 0n) {
-      pushPages(keys, m, opp, c.tick, range);
-    }
-    consume.push({ tick: c.tick, pages: range });
-  }
-
   keys.push({ t: "Level", market: m, isBid: q.ownSide, tick: q.limitTick });
   keys.push({ t: "TickWord", market: m, isBid: q.ownSide, word: wordOf(q.limitTick) });
   keys.push({ t: "TickSummary", market: m, isBid: q.ownSide });
   keys.push({ t: "BestTick", market: m, isBid: q.ownSide });
   keys.push({ t: "Order", market: m, owner: q.taker, nonce: q.nonce });
-  const append = appendRange(q.tailSeq);
-  pushPages(keys, m, q.ownSide, q.limitTick, append);
 
   keys.push({ t: "FeeAccrual", market: m, token: q.base });
   keys.push({ t: "FeeAccrual", market: m, token: q.quote });
@@ -143,10 +101,13 @@ export function pad(q: Quoted, padEnd: number, opts?: PadOpts): PadOut {
   keys.push({ t: "UserBalance", token: q.quote });
 
   dedup(keys);
-  return { keys, window: { consume, append } };
+  return keys;
 }
 
-export function restoreMarks(q: Quoted, out: PadOut, archived: ClientKey[]): ClientKey[] {
+// Of the archived keys in a pad, the ones the call itself will touch and so
+// must be restored first: the crossed levels, the own rest, the bitmaps, and
+// the bookkeeping entries. A padded but untouched band level can stay archived.
+export function restoreMarks(q: Quoted, padKeys: ClientKey[], archived: ClientKey[]): ClientKey[] {
   const m = q.market;
   const opp = !q.ownSide;
   const touched: ClientKey[] = [
@@ -159,17 +120,11 @@ export function restoreMarks(q: Quoted, out: PadOut, archived: ClientKey[]): Cli
     { t: "TickSummary", market: m, isBid: q.ownSide },
     { t: "BestTick", market: m, isBid: q.ownSide },
     { t: "Order", market: m, owner: q.taker, nonce: q.nonce },
-    { t: "LevelPage", market: m, isBid: q.ownSide, tick: q.limitTick, page: 0 },
-    { t: "LevelPage", market: m, isBid: q.ownSide, tick: q.limitTick, page: pageOf(q.tailSeq) },
-    { t: "LevelPage", market: m, isBid: q.ownSide, tick: q.limitTick, page: pageOf(q.tailSeq) + 1 },
     { t: "FeeAccrual", market: m, token: q.base },
     { t: "FeeAccrual", market: m, token: q.quote },
   ];
   for (const c of q.crossed) {
     touched.push({ t: "Level", market: m, isBid: opp, tick: c.tick });
-    const p = pageOf(c.headSeq);
-    touched.push({ t: "LevelPage", market: m, isBid: opp, tick: c.tick, page: p });
-    touched.push({ t: "LevelPage", market: m, isBid: opp, tick: c.tick, page: p + CONSUME_WIDTH });
   }
   if (!q.crossed.length) {
     touched.push({ t: "Level", market: m, isBid: opp, tick: q.startTick });
@@ -177,16 +132,7 @@ export function restoreMarks(q: Quoted, out: PadOut, archived: ClientKey[]): Cli
   const [wlo, whi] = wordSpan([q.startTick, q.limitTick]);
   for (let w = wlo; w <= whi; w++) touched.push({ t: "TickWord", market: m, isBid: opp, word: w });
 
-  return archived.filter((k) => out.keys.some((x) => sameKey(x, k)) && touched.some((x) => sameKey(x, k)));
-}
-
-export function windowJson(q: Quoted): string {
-  const consume = q.crossed.map((c) => {
-    const p = pageOf(c.headSeq);
-    return { tick: c.tick, pages: { first: p, last: p + CONSUME_WIDTH } };
-  });
-  const p = pageOf(q.tailSeq);
-  return JSON.stringify({ consume, append: { first: p, last: p + 1 } });
+  return archived.filter((k) => padKeys.some((x) => sameKey(x, k)) && touched.some((x) => sameKey(x, k)));
 }
 
 export class NonceAlloc {
@@ -226,11 +172,6 @@ function wordSpan(ticks: number[]): [number, number] {
     if (w > hi) hi = w;
   }
   return [lo, hi];
-}
-
-function pushPages(keys: ClientKey[], market: number, isBid: boolean, tick: number, r: PageRange): void {
-  for (let p = r.first; p <= r.last; p++) keys.push({ t: "LevelPage", market, isBid, tick, page: p });
-  keys.push({ t: "LevelPage", market, isBid, tick, page: 0 });
 }
 
 function dedup(keys: ClientKey[]): void {

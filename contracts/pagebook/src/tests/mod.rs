@@ -1,6 +1,7 @@
 mod auth;
 mod book;
 mod constructor;
+mod depth;
 mod fee_gates;
 mod fees;
 mod footprint;
@@ -8,7 +9,6 @@ mod harness;
 mod market;
 mod matching;
 mod padding;
-mod pages;
 mod property;
 mod reliquify;
 mod route;

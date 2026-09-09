@@ -18,6 +18,8 @@ Per **transaction**:
 | Disk read entries / bytes | 200 / 200,000 | SLP-0004 (disk = archived/classic only) |
 | Contract events size | **16,384 bytes** | SLP-0001 (Final, Dec 2024; 8,198→16,384) |
 | Tx size | 132,096 bytes | — |
+| Contract data entry size (`contract_data_entry_size_bytes`) | **65,536** | `stellar network settings --network mainnet`, 2026-09-08 |
+| Contract data key size (`contract_data_key_size_bytes`) | 250 | same |
 
 Per **ledger** (~5s):
 
@@ -39,6 +41,10 @@ Rules of thumb the design bakes in:
   a few hundred bytes.
 - Live-state reads are in-memory and cheap post-P23; **footprint entry count** (not read
   bytes) is the read-side constraint.
+- A single entry is bounded by the 65,536-byte entry-size cap, not by the per-tx write
+  cap: one entry can hold thousands of 12-byte slots before the entry cap binds, and
+  what binds a growing entry in practice is the per-tx write bytes of the heaviest
+  operation that rewrites many of them at once (architecture §17).
 
 ## Storage model and state archival
 

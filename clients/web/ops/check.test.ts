@@ -40,12 +40,11 @@ function openViews(bid: number, ask: number, bidLots: number, askLots: number): 
     level: async (isBid) => ({
       generation: 1,
       head_seq: 0,
-      tail_seq: 0,
-      head_consumed_lots: 0,
+      depth: 0,
       open_lots: isBid ? bidLots : askLots,
     }),
     order: async () => null,
-    quotePlace: async () => ({ start_tick: 1, crossed: [], filled_lots: 0, quote_atoms: 0n, tail_seq: 0 }),
+    quotePlace: async () => ({ start_tick: 1, crossed: [], filled_lots: 0, quote_atoms: 0n }),
   };
 }
 
@@ -323,7 +322,7 @@ test("a hanging view is a note and skips the book section", async () => {
       throw new Error("should not run");
     },
     order: async () => null,
-    quotePlace: async () => ({ start_tick: 1, crossed: [], filled_lots: 0, quote_atoms: 0n, tail_seq: 0 }),
+    quotePlace: async () => ({ start_tick: 1, crossed: [], filled_lots: 0, quote_atoms: 0n }),
   };
   const r = await runCheck(args(), {
     now,

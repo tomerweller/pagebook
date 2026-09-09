@@ -114,9 +114,9 @@ test("runKeepalive dry-run plans from synthetic getLedgerEntries", async () => {
       id: { name: "pb-mm", secret: kp.secret(), address: kp.publicKey() },
       views: {
         best: async (isBid) => (isBid ? 100 : 110),
-        level: async () => ({ generation: 0, head_seq: 0, tail_seq: 0, head_consumed_lots: 0, open_lots: 0 }),
+        level: async () => ({ generation: 0, head_seq: 0, depth: 0, open_lots: 0 }),
         order: async () => null,
-        quotePlace: async () => ({ start_tick: 1, crossed: [], filled_lots: 0, quote_atoms: 0n, tail_seq: 0 }),
+        quotePlace: async () => ({ start_tick: 1, crossed: [], filled_lots: 0, quote_atoms: 0n }),
       },
       rpc: {
         getLedgerEntries: async (...keys: Array<string | { toXDR: (fmt: string) => string }>) => ({

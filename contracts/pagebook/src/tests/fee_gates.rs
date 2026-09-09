@@ -31,21 +31,13 @@
 
 extern crate std;
 
-use super::harness::{flags, mint, rest_ask, setup, window};
-use crate::{PlaceFlags, ReplaceItem};
+use super::harness::{flags, mint, no_rest, rest_ask, setup};
+use crate::ReplaceItem;
 use pagebook_types::WORD_TICKS;
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 const RENT_RESCALE_NUM: i64 = 1_000;
 const RENT_RESCALE_DEN: i64 = 12_000;
-
-fn no_rest() -> PlaceFlags {
-    PlaceFlags {
-        post_only: false,
-        fill_or_kill: false,
-        no_rest: true,
-    }
-}
 
 /// Set the ledger to mainnet TTLs so created entries pay 120-day rent.
 fn mainnet_ttls(env: &Env) {
@@ -99,15 +91,15 @@ fn gate(name: &str, env: &Env, exec_row: i64, rent_row: i64) {
 /// (stroops), from the full ledger-entry size (payload + key + framing).
 /// §17 "Rent per entry" carries the same numbers. A `Level` is created by a
 /// first rest, so it is rented at one slot (308 B); it grows 12 B per further
-/// order up to 680 B at `INLINE_SLOTS`, paid incrementally by the rests that
+/// order up to 1,000 B at `level_cap`, paid incrementally by the rests that
 /// grow it (ADR-036).
 const RENT_ORDER: i64 = 460_000; // 276 B
-const RENT_LEVEL: i64 = 513_000; // 308 B, one slot
+const RENT_LEVEL: i64 = 407_000; // 244 B, one slot
 const RENT_TICK_WORD: i64 = 620_000; // 372 B
 const RENT_TICK_SUMMARY: i64 = 613_000; // 368 B
 const RENT_BEST_TICK: i64 = 260_000; // 156 B
 const RENT_FEE_ACCRUAL: i64 = 307_000; // 184 B
-const RENT_MARKET: i64 = 967_000; // 580 B
+const RENT_MARKET: i64 = 874_000; // 524 B
 const RENT_SAC_BALANCE: i64 = 373_000; // 224 B, a caller's first balance in a token
 
 #[test]
@@ -118,17 +110,8 @@ fn fee_place_rest_existing_level() {
     let b = Address::generate(&h.env);
     rest_ask(&h, &a, 10, 2, 1);
     mint(&h, &h.base, &b, 1_000);
-    h.client().place(
-        &b,
-        &h.market,
-        &false,
-        &10,
-        &2,
-        &10,
-        &1,
-        &window(&h),
-        &flags(),
-    );
+    h.client()
+        .place(&b, &h.market, &false, &10, &2, &10, &1, &flags());
     // §17: exec ~16k stroops; rent = one Order.
     gate("place rest existing level", &h.env, 16_000, RENT_ORDER);
 }
@@ -139,17 +122,8 @@ fn fee_place_rest_new_level() {
     mainnet_ttls(&h.env);
     let a = Address::generate(&h.env);
     mint(&h, &h.base, &a, 1_000);
-    h.client().place(
-        &a,
-        &h.market,
-        &false,
-        &10,
-        &2,
-        &10,
-        &1,
-        &window(&h),
-        &flags(),
-    );
+    h.client()
+        .place(&a, &h.market, &false, &10, &2, &10, &1, &flags());
     // Empty book: Order + Level + TickWord + TickSummary + BestTick are created.
     gate(
         "place rest new level (empty book)",
@@ -175,8 +149,7 @@ fn fee_replace() {
     mainnet_ttls(&h.env);
     let maker = Address::generate(&h.env);
     rest_ask(&h, &maker, 10, 2, 1);
-    h.client()
-        .replace(&maker, &h.market, &1, &false, &12, &3, &window(&h));
+    h.client().replace(&maker, &h.market, &1, &false, &12, &3);
     // replace to a new tick: the Order is reused (no rent) but the new Level is created.
     gate("replace (new tick)", &h.env, 24_000, RENT_LEVEL);
 }
@@ -196,7 +169,6 @@ fn fee_replace_batch_forty() {
             is_bid: false,
             tick: 100 + n as u32,
             qty_lots: 3,
-            window: window(&h),
         });
     }
     h.client().replace_batch(&maker, &h.market, &items);
@@ -226,7 +198,6 @@ fn fee_replace_batch_forty_same_tick_refresh_is_rent_free() {
             is_bid: false,
             tick: 10 + n as u32,
             qty_lots: 3,
-            window: window(&h),
         });
     }
     h.client().replace_batch(&maker, &h.market, &items);
@@ -248,17 +219,8 @@ fn fee_place_take_eight_levels() {
     }
     let taker = Address::generate(&h.env);
     mint(&h, &h.quote, &taker, 1_000_000);
-    h.client().place(
-        &taker,
-        &h.market,
-        &true,
-        &17,
-        &8,
-        &10,
-        &1,
-        &window(&h),
-        &no_rest(),
-    );
+    h.client()
+        .place(&taker, &h.market, &true, &17, &8, &10, &1, &no_rest());
     // take only: the FeeAccrual entry and the taker's first base balance are created
     gate(
         "place take 8 levels",
@@ -278,17 +240,8 @@ fn fee_place_take_eight_then_rest() {
     }
     let taker = Address::generate(&h.env);
     mint(&h, &h.quote, &taker, 1_000_000);
-    h.client().place(
-        &taker,
-        &h.market,
-        &true,
-        &20,
-        &10,
-        &10,
-        &1,
-        &window(&h),
-        &flags(),
-    );
+    h.client()
+        .place(&taker, &h.market, &true, &20, &10, &10, &1, &flags());
     // + rest at a new tick on the empty bid side, and the taker's first base balance
     gate(
         "place take 8 levels + rest",
@@ -320,7 +273,7 @@ fn fee_place_max_take_32() {
         &1_000_000,
     );
     h.client()
-        .set_market_caps(&market, &32, &64, &10, &1, &1_000_000, &1);
+        .set_market_caps(&market, &32, &64, &10, &1, &1_000_000, &64);
     let maker = Address::generate(&h.env);
     for w in 0..32u32 {
         mint(&h, &h.base, &maker, 1_000_000_000);
@@ -332,7 +285,6 @@ fn fee_place_max_take_32() {
             &1,
             &(WORD_TICKS * w + 5),
             &(u64::from(w) + 1),
-            &window(&h),
             &flags(),
         );
     }
@@ -346,7 +298,6 @@ fn fee_place_max_take_32() {
         &32,
         &5,
         &1,
-        &window(&h),
         &no_rest(),
     );
     gate(
@@ -374,17 +325,8 @@ fn fee_collect_fees() {
     rest_ask(&h, &maker, 10, 100, 1);
     let taker = Address::generate(&h.env);
     mint(&h, &h.quote, &taker, 1_000_000);
-    h.client().place(
-        &taker,
-        &h.market,
-        &true,
-        &10,
-        &100,
-        &10,
-        &1,
-        &window(&h),
-        &no_rest(),
-    );
+    h.client()
+        .place(&taker, &h.market, &true, &10, &100, &10, &1, &no_rest());
     h.client().collect_fees(&h.market, &h.base);
     gate("collect_fees", &h.env, 9_500, RENT_SAC_BALANCE);
 }

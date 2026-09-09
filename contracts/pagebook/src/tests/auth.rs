@@ -42,7 +42,6 @@ fn place_requires_taker_auth() {
             &1,
             &10,
             &1,
-            &super::harness::window(&h),
             &super::harness::flags(),
         )
         .is_err());
@@ -75,8 +74,8 @@ fn unknown_order() {
 /// pay-in, different fills — under a real (non-mocked-all) auth tree.
 #[test]
 fn signed_pay_in_survives_a_race_that_changes_the_fill() {
-    use super::harness::{mint, rest_ask, window};
-    use crate::{PlaceFlags, SlotWindow};
+    use super::harness::{mint, rest_ask};
+    use crate::PlaceFlags;
     use soroban_sdk::token::TokenClient;
     fn bal(h: &super::harness::Harness, token: &Address, who: &Address) -> i128 {
         TokenClient::new(&h.env, token).balance(who)
@@ -93,7 +92,6 @@ fn signed_pay_in_survives_a_race_that_changes_the_fill() {
     rest_ask(&h, &maker, 25, 1, 1);
     let (is_bid, limit, qty, start, nonce) = (true, 30u32, 5u64, 25u32, 7u64);
     let escrow: i128 = 5 * 30; // qty × limit × tick_size(1)
-    let w: SlotWindow = window(&h);
     let f = PlaceFlags::none();
 
     // In flight: another ask lands at 27, inside the band and worse than
@@ -111,7 +109,6 @@ fn signed_pay_in_survives_a_race_that_changes_the_fill() {
         qty,
         start,
         nonce,
-        w.clone(),
         f.clone(),
     )
         .into_val(&h.env);
@@ -130,9 +127,9 @@ fn signed_pay_in_survives_a_race_that_changes_the_fill() {
             }],
         },
     }]);
-    let (rested, filled, spent) = h.client().place(
-        &taker, &h.market, &is_bid, &limit, &qty, &start, &nonce, &w, &f,
-    );
+    let (rested, filled, spent) = h
+        .client()
+        .place(&taker, &h.market, &is_bid, &limit, &qty, &start, &nonce, &f);
     // Filled 2 (25 + 27 = 52 spent), rested 3 @ 30 (escrow 90), 8 quote came
     // back: the signed pay-in of 150 was still exact.
     assert_eq!(filled, 2);

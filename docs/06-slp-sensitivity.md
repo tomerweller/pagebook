@@ -10,10 +10,10 @@ changes PageBook should advocate for.*
 
 | Class | Variables | Rule |
 |---|---|---|
-| Frozen forever | `base`, `quote`, `lot_size`, `tick_size`, `[tick_min, tick_max)`, `INLINE_SLOTS`, `PAGE_SLOTS`, bitmap geometry, packed layouts (versioned) | Slot location is `f(seq, INLINE_SLOTS, PAGE_SLOTS)` and price is `f(tick, tick_size)` — changing them corrupts live state. A different geometry is a different market. |
-| Frozen unless re-proved | `max_order_lots`, `MAX_PAGES` (via `LEVEL_CAP`) | The §0.3 overflow proof depends on them. `set_market_caps` re-runs the proof; `MAX_PAGES` is raise-only (existing seqs may live beyond a lowered value). |
+| Frozen forever | `base`, `quote`, `lot_size`, `tick_size`, `[tick_min, tick_max)`, bitmap geometry, entry layouts (no upgrade path, ADR-023) | Price is `f(tick, tick_size)` and a slot's position is its seq; changing quantization corrupts live state. A different quantization is a different market. |
+| Frozen unless re-proved | `max_order_lots`, `level_cap` (raise-only) | The §0.3 overflow proof depends on them. `set_market_caps` re-runs the proof on every change; `level_cap` is raise-only (existing seqs may live beyond a lowered value) and capped at `LEVEL_CAP_MAX` (128). |
 | Retunable | `MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED`, `taker_fee_bps` (≤ `FEE_BPS_MAX`), `min_order_lots`, `MAX_REPLACE_BATCH`, `MAX_ROUTE_LEGS` | Pure runtime bounds sized to fit per-tx limits. No storage migration; `set_market_caps` (architecture §12) for the per-market ones. |
-| Automatically adaptive | `pad_end` band width, slot-window sizes, batch composition | Chosen per transaction by clients against live config over RPC. No contract change needed when limits move. |
+| Automatically adaptive | `pad_end` band width, batch composition | Chosen per transaction by clients against live config over RPC. No contract change needed when limits move. |
 
 ## Why retuning needs a transaction: contracts cannot read config
 

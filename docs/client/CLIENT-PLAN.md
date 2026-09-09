@@ -30,8 +30,8 @@ Not started; this document is the proposal.
 ## The client protocol (why this is more than UI)
 
 Every write goes through **simulate → pad → submit** (architecture §14): pad
-the opposite-side `Level` band and its `TickWord`s/summary/bests, page
-windows, own-side rest keys, `Order(taker, nonce)`, both tokens' SAC
+the opposite-side `Level` band and its `TickWord`s/summary/bests, own-side
+rest keys, `Order(taker, nonce)`, both tokens' SAC
 instance + vault balance + caller balance/trustline, both `FeeAccrual`s;
 promote read-only keys to read-write; add resource headroom; mark exactly the
 archived entries execution touches for restore. This pipeline exists twice in
@@ -114,7 +114,7 @@ the TS engine with no footprint failure other than walk-past-`pad_end`
 (ADR-025 criterion) — proven before any UI uses it.
 
 **M4 — taker flow.** Ticket → preview → place; submission state machine;
-`Crossed`/`LevelFull`/`RetryRest` presented as normal outcomes with a retry
+`Crossed`/`LevelFull` presented as normal outcomes with a retry
 path; own fills highlighted. Exit: manual browser trades on XLM/USDC verified
 against the book and an independent reader.
 

@@ -13,20 +13,19 @@ payload sizes below. The formulas use payload bytes; the in-repo gates use
 ## Entry sizes
 
 Budgets are `crates/pagebook-types/src/constants.rs`. Measured XDR sizes are
-ADR-022 / ADR-036 at max occupancy. `Level` and `LevelPage` carry occupancy-sized
-slot vectors (ADR-036): a `Level` is `L(n) = 188 + 12n` bytes with `n` slots
-held (`n = min(tail_seq, 32)`), a `LevelPage` `P(n) = 40 + 12n`; the formulas
-below use `L(n)` and `P(n)` with the occupancy *after* the write.
+ADR-022 / ADR-036 / ADR-037 at max occupancy. `Level` carries one occupancy-sized
+slot vector holding the whole queue (ADR-037): a `Level` is `L(n) = 124 + 12n`
+bytes with `n` slots held (`n` is the queue's tail, at most `level_cap`, 64 by
+default); the formulas below use `L(n)` with the occupancy *after* the write.
 
 | Entry | Durability | Budget | Measured XDR |
 |---|---|---|---|
-| Level | persistent | 600 | 572 (188 empty, 200 with one order) |
-| LevelPage | persistent | 450 | 424 (40 empty) |
+| Level | persistent | 1,000 | 892 at 64 slots (124 empty, 136 with one order, 508 at 32) |
 | TickWord, TickSummary | persistent | 264 | 264 |
 | BestTick | persistent | 60 | 56 |
 | Order | persistent | 160 | 132 |
 | FeeAccrual | persistent | 50 | 48 |
-| Market | persistent | 500 | 488 |
+| Market | persistent | 500 | 432 |
 | Config | instance | 200 | 188 |
 
 SAC balance entries (vault and caller, per token that actually moves) and SAC
@@ -36,8 +35,7 @@ admin op extend the PageBook instance and code TTLs; a native test contract
 does not model wasm, so those two show up as zero writes in-repo.
 
 `L` is `MAX_LEVELS_CROSSED` (32). `S` is `MAX_SLOTS_SCANNED` (64). `D` is the
-number of distinct opposite-side `TickWord`s whose bits change. A page window
-is the inclusive `PageRange` the client declared for consume or append.
+number of distinct opposite-side `TickWord`s whose bits change.
 
 ## Shared place mechanics
 
@@ -49,10 +47,9 @@ Every `place` (and every `route` leg) does the same three things.
    the walk loads each opposite `Level` it visits, up to `L`. A sweep writes
    that `Level` (generation bump, counters zeroed, slots emptied: `L(0)`) and
    `clear_tick`s its bit.
-   A partial consumes inside the declared page window and the shared slot
-   budget `S` and writes the `Level` only: taking never writes a `LevelPage`
-   (slots behind the head are history; only `rest` and a settle tombstone
-   write pages). `clear_tick` / `set_tick` are idempotent: a
+   A partial consumes from the head slot inside the shared slot budget `S`
+   and writes the `Level` only, at its current depth `L(n)`. `clear_tick` /
+   `set_tick` are idempotent: a
    `TickWord` is written only when a bit changes, and `TickSummary` only when
    a word flips between empty and non-empty. After the last sweep the walk
    may load `TickSummary` and stand on the next summary-set word; it never
@@ -91,8 +88,9 @@ Writes: `Level(own)`, `Order` (create), caller SAC balance, vault SAC balance.
 Write bytes (payload): `L(n)` + 132 + 2 × SAC balance.
 
 In-repo (harness, one existing ask, second rest at the same tick): 13 memory
-reads, 5 writes, 1,116 write bytes. The 32nd rest at a price writes the full
-`Level` (`L(32)` = 572): 13 reads, 5 writes, 1,476 write bytes.
+reads, 5 writes, 1,052 write bytes. The 32nd rest at a price (`L(32)` = 508):
+13 reads, 5 writes, 1,412 write bytes. The 64th, the full `Level` at the
+default `level_cap` (`L(64)` = 892): 13 reads, 5 writes, 1,796 write bytes.
 
 ### place, rest only, new level
 
@@ -107,7 +105,7 @@ Writes: `Level(own)`, `TickWord(own)`, `TickSummary(own)`, `BestTick(own)`,
 
 Write bytes (payload): `L(1)` + 264 + 264 + 56 + 132 + 2 × SAC balance.
 
-In-repo (first rest on an empty book): 15 memory reads, 8 writes, 2,000 write
+In-repo (first rest on an empty book): 15 memory reads, 8 writes, 1,936 write
 bytes.
 
 ### place, take only, N levels swept
@@ -115,7 +113,7 @@ bytes.
 Each swept level is one `Level` write and one `clear_tick`. `D` distinct
 words whose last set bit is cleared also rewrite `TickSummary` (one entry,
 rewritten up to `D` times). `BestTick(opp)` moves. `FeeAccrual` is written.
-No `LevelPage`: a sweep never reads slots.
+A sweep never reads slots.
 
 Reads: `Config`, `Market`, `BestTick(opp)`, `N` × `Level`, `D` × `TickWord`
 (plus the current word on each `next_set_tick`), `TickSummary`,
@@ -128,10 +126,10 @@ Writes: `N` × `Level` + `D` × `TickWord` + `[TickSummary if a word emptied]` +
 Write bytes (payload): `N` × `L(0)` + `D` × 264 + 264 + 56 + 48 + SAC (a swept level is written empty).
 
 Same-word shape (`D = 1`, the existing 8-level gate, ticks 10 to 17): 22
-memory reads, 17 writes, 4,416 write bytes.
+memory reads, 17 writes, 3,904 write bytes.
 
 Worst dispersal (`N = D = L = 32`, ticks `2048·w + 5` for `w` in 0 to 31,
-`tick_max = 65,536`, walk budget 32): 77 memory reads, 72 writes, 23,052
+`tick_max = 65,536`, walk budget 32): 77 memory reads, 72 writes, 21,004
 write bytes. `quote_place` returns 32 opposite `TickWord` keys, one per word
 from `word(start)` to `word(limit)`.
 
@@ -143,22 +141,22 @@ The take set plus a new-level rest on the taker's side: one more `Level`,
 pay-in token still writes both balances; the unspent refund may be zero.
 
 In-repo (8 same-word asks of 1 lot, bid of 10 lots at a worse tick): 27
-memory reads, 22 writes, 5,896 write bytes.
+memory reads, 22 writes, 5,320 write bytes.
 
 ### settle
 
 Reads `Market`, `Order`, `Level`. Writes `Level` when the settled seq is the
-head (advance, maybe one `LevelPage` inside the declared page) or a later
-seq (tombstone that slot, which writes a `LevelPage` if the seq is not
-inline). Deletes `Order`. Pays proceeds and refund, one SAC transfer per
+head (read the head slot for the refund, advance) or a later seq (tombstone
+that slot). Deletes `Order`. Pays proceeds and refund, one SAC transfer per
 token that is nonzero.
 
 Two disjoint worst cases: the head row (`Level`, `Order` delete, up to 4 SAC
-balances when both proceeds and refund move; no page write, the head advance only
-reads) and the tombstone row (`Level`, one `LevelPage` if the seq is paged,
-`Order` delete, 2 SAC balances). Plus the auth nonce entry (below).
+balances when both proceeds and refund move) and the tombstone row (`Level`,
+`Order` delete, 2 SAC balances). Plus the auth nonce entry (below). Either
+row rewrites the `Level` at its current depth, `L(n)`.
 
-In-repo (unfilled ask): 9 memory reads, 5 writes, 828 write bytes.
+In-repo (unfilled ask): 9 memory reads, 5 writes, 764 write bytes. Settle of
+an order on a 64-deep level: 9 memory reads, 5 writes, 1,520 write bytes.
 
 ### replace
 
@@ -166,13 +164,12 @@ In-repo (unfilled ask): 9 memory reads, 5 writes, 828 write bytes.
 post-only check reads `BestTick(opposite)` and does not walk. Escrow pay-in
 is the full new size; old proceeds and refund flow out.
 
-Writes: old `Level` (and its `LevelPage` if the old seq is paged and the row is
-a tombstone; settle never clears a bit, so no old `TickWord`) + new `Level` (and
+Writes: old `Level` (settle never clears a bit, so no old `TickWord`) + new `Level` (and
 maybe `TickWord` / `TickSummary` / `BestTick` if the new tick was empty) +
 `Order` rewrite + SAC balances. Same-tick
 replace collapses the two `Level` writes into one entry.
 
-In-repo (ask at 10, replace to 12): 13 memory reads, 7 writes, 1,784 write
+In-repo (ask at 10, replace to 12): 13 memory reads, 7 writes, 1,656 write
 bytes.
 
 ### replace_batch
@@ -185,23 +182,25 @@ Per item at a distinct new tick: old `Level` + new `Level` + `Order`, plus
 any index entries that actually change. Shared across the batch: `TickSummary`
 and `BestTick` (one each per side that moves), and at most two SAC tokens.
 
-Formula, distinct old and new ticks, no page writes:
+Formula, distinct old and new ticks:
 `3 × items + D_new + [summaries] + [bests] + SAC + 1 (auth nonce)`, where
 `D_new` is the number of distinct new words touched (a settle clears no bits,
 so there is no old-word term).
 
 In-repo, 5 items (ticks 11 to 15 rest, replace to 21 to 25): 25 memory reads,
-19 writes, 5,352 write bytes.
+19 writes, 4,712 write bytes.
 
 In-repo, 40 items re-sized in place (the §17 "full refresh" shape): 90 memory
-reads, 83 writes, 23,880 write bytes.
+reads, 83 writes, 21,320 write bytes.
 
 In-repo, 40 items each moved to a new tick: 130 memory reads, 124 writes,
-36,572 write bytes.
+31,452 write bytes.
 
-In-repo, 40 items each moved onto a level that already holds 31 orders (every
-new `Level` written at `L(32)`; the write-byte ceiling of the whole matrix):
-129 memory reads, 123 writes, 51,080 write bytes.
+In-repo, 40 items each moved onto a level that already holds 63 orders (every
+new `Level` written at `L(64)`; the write-byte ceiling of the whole matrix):
+129 memory reads, 123 writes, 61,320 write bytes. The gate asserts this from
+an 8-item run (27 writes, 12,680 write bytes, 1,520 B per item), since 40 items trip the test
+host's storage-scaled instruction meter (ADR-036).
 
 ### route
 
@@ -211,12 +210,12 @@ Transfers flush once. A later leg that would take an earlier leg's rest fails
 `SelfTrade`. The take side of the ceiling is one maximal place (the budget is
 shared); each leg still runs its own preamble and may rest, so up to
 `MAX_ROUTE_LEGS` rest sets (`Order`, own `Level`, `TickWord`, `TickSummary`,
-`BestTick`: about 5 writes and 1.6 KB each) come on top, plus a `Market` read
+`BestTick`: about 5 writes and 1.5 KB each) come on top, plus a `Market` read
 per extra leg and extra `FeeAccrual` / SAC tokens if the legs do not share
 assets.
 
 In-repo, two no-rest legs sweeping 4 + 4 same-word levels: 22 memory reads,
-17 writes, 4,416 write bytes (same as the 8-level take).
+17 writes, 3,904 write bytes (same as the 8-level take).
 
 ### create_market
 
@@ -225,13 +224,13 @@ SAC instances for `authorized(vault)`, writes `Config` (counter) and the new
 `Market`.
 
 Writes: `Config`, `Market`, and (on wasm) instance + code TTL. Native test
-host: 9 memory reads, 3 writes, 976 write bytes.
+host: 9 memory reads, 3 writes, 920 write bytes.
 
 ### set_market_caps
 
 `require_admin`, read and write `Market`.
 
-Native test host: 5 memory reads, 2 writes, 652 write bytes.
+Native test host: 5 memory reads, 2 writes, 596 write bytes.
 
 ### collect_fees
 
@@ -262,45 +261,48 @@ opposite `TickSummary` when the scan crosses a word, the own-side `Level` at
 
 §17 now carries the measured rows below. The table keeps the design-time
 targets (written before anything was measured, for the packed encoding) next
-to what the host meters for the current named encoding (ADR-036):
+to what the host meters for the current named encoding (ADR-036, ADR-037):
 
 | Op | §17 target footprint | §17 target writes | §17 target write bytes | Measured reads / writes / bytes | Verdict |
 |---|---|---|---|---|---|
-| place, rest only (existing level) | ~12 | ~5 | ~0.9 KB | 13 / 5 / 1,116 | writes hold; footprint slightly low; bytes low |
-| place, rest only (new level) | ~14 | ~7 | ~1.2 KB | 15 / 8 / 2,000 | writes low (8, not 7); bytes low |
-| settle | ~9 | ~3 to 4 | ~0.6 KB | 9 / 5 / 828 | writes low (5, not 3 to 4); bytes low |
-| replace (one quote) | ~14 | ~8 | ~1.5 KB | 13 / 7 / 1,784 | writes hold (loose); bytes low |
-| replace_batch (40-quote refresh) | ~130 | ~90 | ~24 KB | 90 / 83 / 23,880 (same tick); 130 / 124 / 36,572 (new ticks); 129 / 123 / 51,080 (onto deep levels) | holds for the refresh it described; the fresh-tick and deep shapes are §17's own rows now |
-| place, take only, 8 levels | ~55 | ~21 | ~6 KB | 22 / 17 / 4,416 (same word) | loose on footprint (assumes a padded band, not recorded reads); writes hold; bytes hold |
-| place, maximal take (32 levels, 32 words) | ~85 + pad | ~70 | ~22 KB | 77 / 72 / 23,052 | writes low (72, not 70); bytes hold |
+| place, rest only (existing level) | ~12 | ~5 | ~0.9 KB | 13 / 5 / 1,052 | writes hold; footprint slightly low; bytes low |
+| place, rest only (new level) | ~14 | ~7 | ~1.2 KB | 15 / 8 / 1,936 | writes low (8, not 7); bytes low |
+| settle | ~9 | ~3 to 4 | ~0.6 KB | 9 / 5 / 764 | writes low (5, not 3 to 4); bytes low |
+| replace (one quote) | ~14 | ~8 | ~1.5 KB | 13 / 7 / 1,656 | writes hold (loose); bytes low |
+| replace_batch (40-quote refresh) | ~130 | ~90 | ~24 KB | 90 / 83 / 21,320 (same tick); 130 / 124 / 31,452 (new ticks); 129 / 123 / 61,320 (onto 63-deep levels) | holds for the refresh it described; the fresh-tick and deep shapes are §17's own rows now |
+| place, take only, 8 levels | ~55 | ~21 | ~6 KB | 22 / 17 / 3,904 (same word) | loose on footprint (assumes a padded band, not recorded reads); writes hold; bytes hold |
+| place, maximal take (32 levels, 32 words) | ~85 + pad | ~70 | ~22 KB | 77 / 72 / 21,004 | writes low (72, not 70); bytes hold |
 
 §17's original max-sweep arithmetic used the packed `Level` *budget* (384 B)
 times 32, plus 32 TickWords, plus separate lumps for the summary and for best,
 fees, vaults and a possible own-side rest: 22 KB of *payload*. The host meters
 each write as the full ledger entry (payload + key + about 56 B of framing).
-With occupancy-sized slot vectors a swept `Level` is written empty, 296 B on
+With an occupancy-sized slot vector a swept `Level` is written empty, 232 B on
 ledger; TickWord 372, TickSummary 368, BestTick 156, FeeAccrual 184, SAC balance
 224, and the authorization nonce (a temporary entry every call whose authorizer
 is not the transaction source writes) 72. A take-only sweep writes no own-rest
-entries. So: 32 × 296 + 32 × 372 + 368 + 156 + 184 + 4 × 224 + 72 = 23,052
+entries. So: 32 × 232 + 32 × 372 + 368 + 156 + 184 + 4 × 224 + 72 = 21,004
 bytes over 72 write entries (32 Levels, 32 TickWords, summary, best, fee
 accrual, four SAC balances, nonce). Under the packed encoding the same shape was
 26,640 (Level 404 B).
 
-The byte ceiling moved with the encoding. A `Level` holding 32 orders is 680 B
-on ledger, and a batch that moves 40 quotes onto such levels writes 40 × 680
-(new) + 40 × 308 (old, one order each) + 40 × 276 (`Order`) + 2 × 224 + 72 =
-51,080 bytes over 123 writes: 39% of the 132 KB per-transaction cap, and the
-number the deep-level gates in `tests/worst_case.rs` hold.
+The byte ceiling sits on deep levels. A `Level` holding 64 orders (the default
+`level_cap`) is 1,000 B on ledger, and a batch that moves 40 quotes onto such
+levels writes 40 × 1,000 (new) + 40 × 244 (old, one order each) + 40 × 276
+(`Order`) + 2 × 224 + 72 = 61,320 bytes over 123 writes: 46% of the 132 KB
+per-transaction cap, and the number the deep-level gates in
+`tests/worst_case.rs` hold. At `LEVEL_CAP_MAX` (128) the same batch is 92,040
+bytes, 70% of the cap; the general bound 40 × (232 + 12 × cap) + 21,320 ≤
+132,096 gives cap ≤ 211, which is why the ceiling is 128 and not higher.
 
 The 40-quote §17 row assumed about two writes per item (a same-tick refresh:
 one `Level` + one `Order`), and that is what the same-tick shape measures (83
 writes, 23,880 bytes). Moving each quote to a new tick writes the old `Level`,
 the new `Level`, and the `Order` (three per item) and lands at 124 writes /
-36.6 KB.
+31.5 KB.
 
-Rows §17 does not list, measured in-repo: take 8 + rest 27 / 22 / 5,896;
-`create_market` 9 / 3 / 976; `set_market_caps` 5 / 2 / 652; `collect_fees`
+Rows §17 does not list, measured in-repo: take 8 + rest 27 / 22 / 5,320;
+`create_market` 9 / 3 / 920; `set_market_caps` 5 / 2 / 596; `collect_fees`
 6 / 3 / 632; `keepalive` 2 / 0 / 0; `quote_place` and the views write
 nothing.
 
@@ -376,17 +378,17 @@ of full ledger entry (payload + key + framing).
 
 | Op | instr | write entries | write bytes | events | exec | rent* | rent* is |
 |---|---|---|---|---|---|---|---|
-| place, rest existing | 290 | 12,500 | 954 | 1,993 | 15,737 | 480,423 | Order (276 B) + the Level's 12 B growth |
-| place, rest new (empty side) | 333 | 20,000 | 1,709 | 2,559 | 24,601 | 2,467,724 | Order + Level (308 B) + TickWord + TickSummary + BestTick |
-| settle | 223 | 12,500 | 708 | 1,954 | 15,385 | 0 | nothing created |
-| replace (new tick) | 458 | 17,500 | 1,525 | 3,946 | 23,429 | 513,545 | Level (308 B) |
-| replace_batch 40, same ticks | 13,683 | 207,500 | 20,406 | 67,930 | 309,519 | 0 | nothing created |
-| replace_batch 40, new ticks | 18,929 | 310,000 | 31,251 | 67,930 | 428,110 | 20,541,793 | 40 Levels at 308 B |
-| place, take 8 | 1,378 | 42,500 | 3,774 | 13,711 | 61,363 | 680,423 | FeeAccrual + taker's first balance |
-| place, take 8 + rest (empty side) | 1,575 | 55,000 | 5,039 | 15,118 | 76,732 | 3,148,147 | the five rest entries + FeeAccrual + first balance |
-| place, max take 32 | 10,685 | 180,000 | 19,698 | 42,774 | 253,157 | 680,423 | FeeAccrual + first balance |
-| create_market | 161 | 7,500 | 834 | 0 | 8,495 | 966,878 | Market (580 B) |
-| collect_fees | 188 | 7,500 | 541 | 1,153 | 9,382 | 373,545 | recipient's first balance |
+| place, rest existing | 284 | 12,500 | 899 | 1,993 | 15,676 | 480,423 | Order (276 B) + the Level's 12 B growth |
+| place, rest new (empty side) | 330 | 20,000 | 1,655 | 2,559 | 24,544 | 2,361,057 | Order + Level (244 B) + TickWord + TickSummary + BestTick |
+| settle | 219 | 12,500 | 653 | 1,954 | 15,326 | 0 | nothing created |
+| replace (new tick) | 451 | 17,500 | 1,416 | 3,946 | 23,313 | 406,878 | Level (244 B) |
+| replace_batch 40, same ticks | 12,701 | 207,500 | 18,218 | 67,930 | 306,349 | 0 | nothing created |
+| replace_batch 40, new ticks | 18,016 | 310,000 | 26,876 | 67,930 | 422,822 | 16,275,128 | 40 Levels at 244 B |
+| place, take 8 | 1,351 | 42,500 | 3,336 | 13,711 | 60,898 | 680,423 | FeeAccrual + taker's first balance |
+| place, take 8 + rest (empty side) | 1,547 | 55,000 | 4,546 | 15,118 | 76,211 | 3,041,480 | the five rest entries + FeeAccrual + first balance |
+| place, max take 32 | 10,583 | 180,000 | 17,948 | 42,774 | 251,305 | 680,423 | FeeAccrual + first balance |
+| create_market | 159 | 7,500 | 787 | 0 | 8,446 | 873,544 | Market (524 B) |
+| collect_fees | 186 | 7,500 | 541 | 1,153 | 9,380 | 373,545 | recipient's first balance |
 
 Authenticated calls also meter `temporary_entry_rent` (auth nonce) and a
 disk-read fee of `1,563 × (disk_read_entries + write_entries)`. Those are

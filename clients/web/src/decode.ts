@@ -1,16 +1,15 @@
 export const BITMAP_BYTES = 256;
-export const INLINE_SLOTS = 32;
 export const WORD_TICKS = 2048;
 export const SUMMARY_WORDS = 2048;
 
 /// A `Level` entry as `scValToNative` hands it over: u32 fields arrive as
 /// numbers, u64 fields as bigints, and the occupancy-sized `slots` vec as an
-/// array (ADR-036). `slots.length` is `min(tail_seq, INLINE_SLOTS)`.
+/// array. The vector is the whole queue of the current generation (ADR-037):
+/// its length is the tail, slot `s` in `[head_seq, slots.length)` holds that
+/// order's open lots, and a zero slot is a tombstone or a consumed head.
 export type LevelDecoded = {
   generation: number;
   head_seq: number;
-  tail_seq: number;
-  head_consumed_lots: bigint;
   open_lots: bigint;
   slots: bigint[];
 };
@@ -48,8 +47,6 @@ export function parseLevel(native: unknown): LevelDecoded | null {
     return {
       generation: Number(toBigInt(r.generation)),
       head_seq: Number(toBigInt(r.head_seq)),
-      tail_seq: Number(toBigInt(r.tail_seq)),
-      head_consumed_lots: toBigInt(r.head_consumed_lots),
       open_lots: toBigInt(r.open_lots),
       slots: r.slots.map(toBigInt),
     };

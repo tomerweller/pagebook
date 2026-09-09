@@ -26,9 +26,7 @@ export type MarketInfo = {
   max_order_lots: bigint;
   max_levels_crossed: number;
   max_slots_scanned: number;
-  inline_slots: number;
-  page_slots: number;
-  max_pages: number;
+  level_cap: number;
 };
 
 export type TokenMeta = {
@@ -43,8 +41,7 @@ export type LevelRow = {
   queue: number;
   generation: number;
   head_seq: number;
-  tail_seq: number;
-  head_consumed_lots: bigint;
+  depth: number;
 };
 
 export type BookSnapshot = {
@@ -426,9 +423,7 @@ function parseMarket(native: unknown): MarketInfo | null {
     max_order_lots: asBig(rec.max_order_lots),
     max_levels_crossed: Number(rec.max_levels_crossed),
     max_slots_scanned: Number(rec.max_slots_scanned),
-    inline_slots: Number(rec.inline_slots),
-    page_slots: Number(rec.page_slots),
-    max_pages: Number(rec.max_pages),
+    level_cap: Number(rec.level_cap),
   };
 }
 
@@ -724,11 +719,10 @@ async function walkDepthOnce(rpc: Rpc, opts: WalkOpts): Promise<BookSnapshot> {
       rows.push({
         tick: cands[i],
         open_lots: lvl.open_lots,
-        queue: lvl.tail_seq - lvl.head_seq,
+        queue: lvl.slots.length - lvl.head_seq,
         generation: lvl.generation,
         head_seq: lvl.head_seq,
-        tail_seq: lvl.tail_seq,
-        head_consumed_lots: lvl.head_consumed_lots,
+        depth: lvl.slots.length,
       });
     }
     return { rows, staleBest };
@@ -1032,8 +1026,7 @@ export function mockSnapshot(): MockSnapshot {
         queue: 3,
         generation: 4,
         head_seq: 0,
-        tail_seq: 3,
-        head_consumed_lots: 0n,
+        depth: 3,
       },
       {
         tick: 98,
@@ -1041,8 +1034,7 @@ export function mockSnapshot(): MockSnapshot {
         queue: 1,
         generation: 2,
         head_seq: 0,
-        tail_seq: 1,
-        head_consumed_lots: 0n,
+        depth: 1,
       },
       {
         tick: 97,
@@ -1050,8 +1042,7 @@ export function mockSnapshot(): MockSnapshot {
         queue: 2,
         generation: 1,
         head_seq: 1,
-        tail_seq: 3,
-        head_consumed_lots: 0n,
+        depth: 3,
       },
     ],
     asks: [
@@ -1061,8 +1052,7 @@ export function mockSnapshot(): MockSnapshot {
         queue: 1,
         generation: 3,
         head_seq: 0,
-        tail_seq: 1,
-        head_consumed_lots: 0n,
+        depth: 1,
       },
       {
         tick: 102,
@@ -1070,8 +1060,7 @@ export function mockSnapshot(): MockSnapshot {
         queue: 2,
         generation: 1,
         head_seq: 0,
-        tail_seq: 2,
-        head_consumed_lots: 0n,
+        depth: 2,
       },
       {
         tick: 104,
@@ -1079,8 +1068,7 @@ export function mockSnapshot(): MockSnapshot {
         queue: 1,
         generation: 1,
         head_seq: 0,
-        tail_seq: 1,
-        head_consumed_lots: 0n,
+        depth: 1,
       },
     ],
     market: {
@@ -1095,9 +1083,7 @@ export function mockSnapshot(): MockSnapshot {
       max_order_lots: 1000000n,
       max_levels_crossed: 32,
       max_slots_scanned: 64,
-      inline_slots: 32,
-      page_slots: 32,
-      max_pages: 1,
+      level_cap: 64,
     },
     paused: false,
     vault: { base: 12340000000n, quote: 567890000000n },

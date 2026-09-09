@@ -31,7 +31,7 @@ M3 branch.
 | Fill delivery | credited to both sides at apply | taker settled at apply; the maker must call `settle` to receive proceeds or a refund (§7) |
 | Custody while resting | funds stay in the account, reserved as liabilities | funds transferred into the contract's vault (§6) |
 | Depth a taker can cross per op | up to the protocol's per-operation work limit (1,000 offers; `opEXCEEDED_WORK_LIMIT`) | at most `MAX_LEVELS_CROSSED` levels (32) and `MAX_SLOTS_SCANNED` slots (64) per transaction, shared across `route` legs (§8) |
-| Footprint | none for the user; the protocol reads what it needs | client simulates, pads a contiguous tick band and page windows, declares every key (§14) |
+| Footprint | none for the user; the protocol reads what it needs | client simulates, pads a contiguous tick band, declares every key (§14) |
 | Prices | any rational; no market setup | markets created by the admin with fixed `lot_size`, `tick_size`, band `[tick_min, tick_max)` of at most 2^22 ticks (§0.2, §12) |
 | Multi-hop | path payments through offers and liquidity pools, up to 5 intermediate assets, one operation | `route`: at most `MAX_ROUTE_LEGS` (4) PageBook markets, one shared budget; no AMM, no classic offers |
 | Time in force | resting remainder always; passive offers; path payment as a strict-receive or strict-send atomic swap | `post_only`, `fill_or_kill`, `no_rest` (IOC); no passive semantics (§8) |
@@ -73,10 +73,10 @@ On SDEX you submit the operation and the protocol reads whatever it needs.
 In PageBook the client simulates first (`quote_place`), then declares a footprint that
 covers what the book might look like at inclusion: every `Level` key in a contiguous
 band from the simulated best to a chosen `pad_end`, the bitmap words from
-`start_tick`'s through `limit_tick`'s, page windows around each set level's head, the
+`start_tick`'s through `limit_tick`'s, the
 own-side rest keys, `Order`, both fee accruals, both vault balances and the caller's
-own balances (§14, ADR-020/021). It must also choose a nonce, mark archived entries for
-restore, and handle typed retries (`RetryRest`). If the walk needs a level past
+own balances (§14, ADR-020/021). It must also choose a nonce and mark archived entries
+for restore. If the walk needs a level past
 `pad_end` the transaction fails on the footprint (§15); this is the one residual trap.
 Any in-flight change the pad did not cover ends the take gracefully rather than
 failing, but the taker gets less than they asked for.
@@ -119,7 +119,7 @@ indefinitely.
 Every resting PageBook order pays ~0.046 XLM of rent for the 120-day minimum TTL when
 it rests, non-refundable. An order idle past its TTL archives; the eventual `settle` or
 `replace` restores it and pays another ~0.046 (§3, §18). Levels the maker touches for
-the first time cost ~0.067 XLM (§17); pages and words add more.
+the first time cost ~0.041 XLM (§17); words add more.
 
 Soroban charges rent for persistent state; there is no refundable-reserve model.
 `replace` (ADR-005) makes updates rent-free by reusing the entry, which closes most of
@@ -251,9 +251,8 @@ crate exists; wallets, indexers, and analytics do not.
 - A taker fee. SDEX charges nothing to a fee recipient; PageBook charges bps of taker
   output, rounded up (§0.2), and on a 1-lot fill the ceiling can be the whole output
   (documented dust behaviour).
-- Failed transactions cost real fees. A `RetryRest`, a footprint trap, or a
-  cap-truncated fill costs the Soroban resource fee (~0.01 to 0.04 XLM), not 100
-  stroops.
+- Failed transactions cost real fees. A footprint trap or a cap-truncated fill costs
+  the Soroban resource fee (~0.01 to 0.04 XLM), not 100 stroops.
 - Orders have a shelf life: 120-day minimum TTL, 180-day maximum (§18). A maker who
   wants a standing quote must extend or accept a restore at settle.
 - Asset scope: SAC tokens (which include wrapped classic assets) only. The vault cannot

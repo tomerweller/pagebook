@@ -7,7 +7,7 @@ import { readAccount } from "../wallet/account";
 import { NETWORK_PASSPHRASE } from "../wallet/network";
 import { scValKeyName, toLedgerKey, type ClientKey } from "./clientKeys";
 import { errorName, hostErrorMessage, parseContractError, sacErrorName } from "./errors";
-import { pad, restoreMarks, type PadOut, type Quoted, type WindowSpec } from "./pad";
+import { pad, restoreMarks, type Quoted } from "./pad";
 import { simulate } from "./quote";
 import { applyPad, classicFee, declaredFromSoroban, footprintIndexes, type ApplyPadSizes, type DeclaredResources } from "./txdata";
 
@@ -144,39 +144,17 @@ export function scPlaceFlags(f: PlaceFlags): StellarSdk.xdr.ScVal {
   ]);
 }
 
-export function scPageRange(r: { first: number; last: number }): StellarSdk.xdr.ScVal {
-  return scvMap([
-    ["first", scvU32(r.first)],
-    ["last", scvU32(r.last)],
-  ]);
-}
-
-export function scSlotWindow(w: WindowSpec): StellarSdk.xdr.ScVal {
-  const consume = w.consume.map((c) =>
-    scvMap([
-      ["tick", scvU32(c.tick)],
-      ["pages", scPageRange(c.pages)],
-    ]),
-  );
-  return scvMap([
-    ["consume", StellarSdk.xdr.ScVal.scvVec(consume)],
-    ["append", scPageRange(w.append)],
-  ]);
-}
-
 export function scReplaceItem(item: {
   nonce: bigint;
   isBid: boolean;
   tick: number;
   qtyLots: bigint;
-  window: WindowSpec;
 }): StellarSdk.xdr.ScVal {
   return scvMap([
     ["nonce", scvU64(item.nonce)],
     ["is_bid", scvBool(item.isBid)],
     ["tick", scvU32(item.tick)],
     ["qty_lots", scvU64(item.qtyLots)],
-    ["window", scSlotWindow(item.window)],
   ]);
 }
 
@@ -472,9 +450,12 @@ export type SubmitArgs = {
   args: StellarSdk.xdr.ScVal[];
   padKeys?: ClientKey[];
   quoted?: Quoted;
-  padOut?: PadOut;
+  padOut?: ClientKey[];
   tokens?: ClassicToken[];
   sizes?: ApplyPadSizes;
+  /** The market's `level_cap`, for the flat write-byte cover on a raised
+   *  market (ADR-037). Omitted, the default-cap rate applies. */
+  levelCap?: number;
 };
 
 export async function submitInvocation(a: SubmitArgs): Promise<EngineResult> {
@@ -556,7 +537,7 @@ async function submitOnce(a: SubmitArgs, kp: StellarSdk.Keypair): Promise<Engine
       archivedIdx = footprintIndexes(existing, markXdr);
     }
   }
-  const padded = applyPad(existing, extraXdr, archivedIdx, a.sizes);
+  const padded = applyPad(existing, extraXdr, archivedIdx, a.sizes, a.levelCap);
   const declared = declaredFromSoroban(padded.data);
   const fee = classicFee(padded.resourceFee);
   const finalTx = StellarSdk.TransactionBuilder.cloneFrom(assembled, { fee }).setSorobanData(padded.data).build();
@@ -737,15 +718,15 @@ async function archivedTouched(
   contract: string,
   caller: string,
   quoted: Quoted,
-  out: PadOut,
+  out: ClientKey[],
 ): Promise<ClientKey[]> {
   const ctx = { contract, caller };
-  const wraps = out.keys.map((k) => toLedgerKey(ctx, k));
+  const wraps = out.map((k) => toLedgerKey(ctx, k));
   const res = await rpc.getLedgerEntries(...wraps.map((w) => w.xdr));
   const present = new Set((res.entries ?? []).map((e) => (typeof e.key === "string" ? e.key : null)).filter((k): k is string => !!k));
   const missing: ClientKey[] = [];
   wraps.forEach((w, i) => {
-    if (!present.has(w.base64)) missing.push(out.keys[i]);
+    if (!present.has(w.base64)) missing.push(out[i]);
   });
   return restoreMarks(quoted, out, missing);
 }
@@ -758,7 +739,6 @@ export type PlaceArgParams = {
   qtyLots: bigint;
   startTick: number;
   nonce: bigint;
-  window: WindowSpec;
   flags: PlaceFlags;
 };
 
@@ -771,7 +751,6 @@ export function buildPlaceArgs(opts: PlaceArgParams): StellarSdk.xdr.ScVal[] {
     scvU64(opts.qtyLots),
     scvU32(opts.startTick),
     scvU64(opts.nonce),
-    scSlotWindow(opts.window),
     scPlaceFlags(opts.flags),
   ];
 }
@@ -784,13 +763,13 @@ export async function submitPlace(
     quoted: Quoted;
     tokens: ClassicToken[];
     padEnd: number;
-    pagesForEmpty?: boolean;
     extraPadKeys?: ClientKey[];
     sizes?: ApplyPadSizes;
+    levelCap?: number;
   },
 ): Promise<EngineResult> {
-  const out = pad(opts.quoted, opts.padEnd, { pagesForEmpty: opts.pagesForEmpty });
-  const padKeys = opts.extraPadKeys ? [...out.keys, ...opts.extraPadKeys] : out.keys;
+  const out = pad(opts.quoted, opts.padEnd);
+  const padKeys = opts.extraPadKeys ? [...out, ...opts.extraPadKeys] : out;
   return submitInvocation({
     rpc,
     contract: opts.contract,
@@ -802,6 +781,7 @@ export async function submitPlace(
     padOut: out,
     tokens: opts.tokens,
     sizes: opts.sizes,
+    levelCap: opts.levelCap,
   });
 }
 
@@ -813,6 +793,7 @@ export async function submitPostOnlyPlace(
     padKeys: ClientKey[];
     tokens: ClassicToken[];
     sizes?: ApplyPadSizes;
+    levelCap?: number;
   },
 ): Promise<EngineResult> {
   return submitInvocation({
@@ -824,6 +805,7 @@ export async function submitPostOnlyPlace(
     padKeys: opts.padKeys,
     tokens: opts.tokens,
     sizes: opts.sizes,
+    levelCap: opts.levelCap,
   });
 }
 
@@ -838,6 +820,7 @@ export async function submitSettle(
     padKeys: ClientKey[];
     tokens: ClassicToken[];
     sizes?: ApplyPadSizes;
+    levelCap?: number;
   },
 ): Promise<EngineResult> {
   return submitInvocation({
@@ -849,6 +832,7 @@ export async function submitSettle(
     padKeys: opts.padKeys,
     tokens: opts.tokens,
     sizes: opts.sizes,
+    levelCap: opts.levelCap,
   });
 }
 
@@ -859,10 +843,11 @@ export async function submitReplaceBatch(
     secret: string;
     owner: string;
     market: number;
-    items: { nonce: bigint; isBid: boolean; tick: number; qtyLots: bigint; window: WindowSpec }[];
+    items: { nonce: bigint; isBid: boolean; tick: number; qtyLots: bigint }[];
     padKeys: ClientKey[];
     tokens: ClassicToken[];
     sizes?: ApplyPadSizes;
+    levelCap?: number;
   },
 ): Promise<EngineResult> {
   return submitInvocation({
@@ -874,6 +859,7 @@ export async function submitReplaceBatch(
     padKeys: opts.padKeys,
     tokens: opts.tokens,
     sizes: opts.sizes,
+    levelCap: opts.levelCap,
   });
 }
 
@@ -888,10 +874,10 @@ export async function submitReplace(
     isBid: boolean;
     tick: number;
     qtyLots: bigint;
-    window: WindowSpec;
     padKeys: ClientKey[];
     tokens: ClassicToken[];
     sizes?: ApplyPadSizes;
+    levelCap?: number;
   },
 ): Promise<EngineResult> {
   return submitInvocation({
@@ -906,10 +892,10 @@ export async function submitReplace(
       scvBool(opts.isBid),
       scvU32(opts.tick),
       scvU64(opts.qtyLots),
-      scSlotWindow(opts.window),
     ],
     padKeys: opts.padKeys,
     tokens: opts.tokens,
     sizes: opts.sizes,
+    levelCap: opts.levelCap,
   });
 }

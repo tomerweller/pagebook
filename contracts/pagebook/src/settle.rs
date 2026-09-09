@@ -31,33 +31,17 @@ pub fn settle_order(
         level::preview_settle(order.generation, order.seq, order.qty_lots, &lvl);
 
     if order.generation == lvl.generation && order.seq == lvl.head_seq && refunded_lots > 0 {
+        // The head order leaves: its open lots are refunded, the head moves
+        // on and past any run of zero slots, bounded by the market's scan cap
+        // (§7, stranded head). The whole queue is in the loaded entry.
         level::consume_open(env, &mut lvl, refunded_lots);
         lvl.head_seq += 1;
-        lvl.head_consumed_lots = 0;
-        // Settle declares at most one LevelPage: the page holding the settled
-        // seq (page 0 for an inline seq, so an inline head may advance into
-        // page 0). The scan is bounded by the market's slot cap.
-        level::advance_head(
-            env,
-            market,
-            order.is_bid,
-            order.tick,
-            &mut lvl,
-            m.max_slots_scanned,
-            Some((0, pagebook_types::page(order.seq))),
-        );
+        level::advance_head(&mut lvl, m.max_slots_scanned);
         store::save_level(env, market, order.is_bid, order.tick, &lvl);
     } else if order.generation == lvl.generation && order.seq > lvl.head_seq && refunded_lots > 0 {
+        // A mid-queue cancel tombstones its slot in place.
         level::consume_open(env, &mut lvl, refunded_lots);
-        level::write_slot(
-            env,
-            market,
-            order.is_bid,
-            order.tick,
-            &mut lvl,
-            order.seq,
-            0,
-        );
+        lvl.set_slot(order.seq, 0);
         store::save_level(env, market, order.is_bid, order.tick, &lvl);
     }
 

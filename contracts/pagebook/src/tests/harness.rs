@@ -1,5 +1,8 @@
-use crate::{empty_window, PageBook, PageBookClient, PlaceFlags, SlotWindow};
+use crate::{PageBook, PageBookClient, PlaceFlags};
 use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env};
+
+/// Network per-transaction write-byte cap (docs/03).
+pub const TX_WRITE_BYTES_CAP: u32 = 132_096;
 
 pub struct Harness {
     pub env: Env,
@@ -46,12 +49,26 @@ pub fn mint(h: &Harness, token: &Address, to: &Address, amount: i128) {
     StellarAssetClient::new(&h.env, token).mint(to, &amount);
 }
 
-pub fn window(h: &Harness) -> SlotWindow {
-    empty_window(&h.env)
-}
-
 pub fn flags() -> PlaceFlags {
     PlaceFlags::none()
+}
+
+pub fn no_rest() -> PlaceFlags {
+    PlaceFlags {
+        post_only: false,
+        fill_or_kill: false,
+        no_rest: true,
+    }
+}
+
+/// The raw persistent `Level` entry, bypassing the `level` view.
+pub fn raw_level(h: &Harness, is_bid: bool, tick: u32) -> Option<pagebook_types::Level> {
+    h.env.as_contract(&h.id, || {
+        h.env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::Level(h.market, is_bid, tick))
+    })
 }
 
 pub fn rest_ask(h: &Harness, maker: &Address, tick: u32, qty: u64, nonce: u64) {
@@ -64,7 +81,6 @@ pub fn rest_ask(h: &Harness, maker: &Address, tick: u32, qty: u64, nonce: u64) {
         &qty,
         &tick,
         &nonce,
-        &window(h),
         &flags(),
     );
 }
@@ -79,7 +95,6 @@ pub fn rest_bid(h: &Harness, maker: &Address, tick: u32, qty: u64, nonce: u64) {
         &qty,
         &tick,
         &nonce,
-        &window(h),
         &flags(),
     );
 }

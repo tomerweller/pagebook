@@ -462,7 +462,7 @@ function factsHtml(book: BookSnapshot, baseSym: string, quoteSym: string, state:
     fact("order_lots", `${formatInt(m.min_order_lots)} / ${formatInt(m.max_order_lots)}`),
     fact("max_levels_crossed", formatInt(m.max_levels_crossed)),
     fact("max_slots_scanned", formatInt(m.max_slots_scanned)),
-    fact("inline_slots / page_slots / max_pages", `${m.inline_slots} / ${m.page_slots} / ${m.max_pages}`),
+    fact("level_cap", formatInt(m.level_cap)),
     fact("paused", book.paused ? "yes" : "no"),
     fact("vault_base", `<span title="${esc(book.vault.base == null ? "" : `${formatInt(book.vault.base)} atoms`)}">${esc(vaultB)}</span>`),
     fact("vault_quote", `<span title="${esc(book.vault.quote == null ? "" : `${formatInt(book.vault.quote)} atoms`)}">${esc(vaultQ)}</span>`),

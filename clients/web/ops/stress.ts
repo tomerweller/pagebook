@@ -4,7 +4,6 @@ import { createRpc, type Rpc } from "../src/book";
 import { addrToHex, type ClientKey } from "../src/engine/clientKeys";
 import { wordOf } from "../src/decode";
 import { submitPostOnlyPlace, submitReplaceBatch, type ClassicToken } from "../src/engine/submit";
-import type { WindowSpec } from "../src/engine/pad";
 import { parseArgs, type ArgSpec } from "./lib/args";
 import { loadIdentity, type Identity } from "./lib/identity";
 import { latestLedger, waitLedgers } from "./lib/ledger";
@@ -17,7 +16,7 @@ import {
   MARKET0_NONCE_BASE,
   MARKET0_QUOTE_SAC,
 } from "./lib/market0";
-import { emptyRestWindow, randInt, repr } from "./lib/math";
+import { randInt, repr } from "./lib/math";
 import { openLog, type OpsLog } from "./lib/opslog";
 import { parseLogLines } from "./lib/logparse";
 import { outcomeOf, type OutcomeInput } from "./lib/outcomes";
@@ -245,7 +244,6 @@ export class Stress {
             qtyLots: 2n,
             startTick: 65535,
             nonce: BigInt(nonce),
-            window: emptyRestWindow(),
             flags: { post_only: true, fill_or_kill: false, no_rest: false },
             padKeys,
             tokens: this.tokens,
@@ -259,7 +257,7 @@ export class Stress {
   async batchOnce(i: number): Promise<string | null> {
     const src = this.src(i);
     const id = this.idOf(src);
-    const items: { nonce: bigint; isBid: boolean; tick: number; qtyLots: bigint; window: WindowSpec }[] = [];
+    const items: { nonce: bigint; isBid: boolean; tick: number; qtyLots: bigint }[] = [];
     const padKeys: ClientKey[] = [...this.tokenPadKeys()];
     for (let j = 0; j < ticksFor(i).length; j++) {
       const tick = ticksFor(i)[j];
@@ -269,11 +267,9 @@ export class Stress {
         isBid: false,
         tick,
         qtyLots: BigInt(randInt(2, 5, this.rnd)),
-        window: emptyRestWindow(),
       });
       padKeys.push({ t: "Level", market: MARKET, isBid: false, tick });
       padKeys.push({ t: "TickWord", market: MARKET, isBid: false, word: wordOf(tick) });
-      padKeys.push({ t: "LevelPage", market: MARKET, isBid: false, tick, page: 0 });
     }
     padKeys.push({ t: "TickSummary", market: MARKET, isBid: false });
     padKeys.push({ t: "BestTick", market: MARKET, isBid: false });

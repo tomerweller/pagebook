@@ -7,7 +7,6 @@ export type ClientKey =
   | { t: "Config" }
   | { t: "Market"; market: number }
   | { t: "Level"; market: number; isBid: boolean; tick: number }
-  | { t: "LevelPage"; market: number; isBid: boolean; tick: number; page: number }
   | { t: "Order"; market: number; owner: Hex32; nonce: bigint }
   | { t: "FeeAccrual"; market: number; token: Hex32 }
   | { t: "BestTick"; market: number; isBid: boolean }
@@ -54,8 +53,6 @@ export function keyStr(k: ClientKey): string {
       return `Market(${k.market})`;
     case "Level":
       return `Level(${k.market},${k.isBid},${k.tick})`;
-    case "LevelPage":
-      return `LevelPage(${k.market},${k.isBid},${k.tick},${k.page})`;
     case "Order":
       return `Order(${k.market},${k.owner},${k.nonce})`;
     case "FeeAccrual":
@@ -125,8 +122,6 @@ export function toLedgerKey(ctx: KeyContext, k: ClientKey): LedgerKeyWrap {
       return ck(ctx.contract, "Market", k.market);
     case "Level":
       return ck(ctx.contract, "Level", k.market, k.isBid, k.tick);
-    case "LevelPage":
-      return ck(ctx.contract, "LevelPage", k.market, k.isBid, k.tick, k.page);
     case "Order":
       return orderKey(ctx.contract, k.market, hexToAccount(k.owner), k.nonce);
     case "FeeAccrual":

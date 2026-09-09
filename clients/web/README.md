@@ -55,9 +55,10 @@ Example: `/?market=1&seed=demo`.
 ## How a write is built
 
 Every write goes simulate, then pad, then submit. `quote_place` (or a view)
-returns the levels and pages the walk touched. The pad adds the opposite-side
-band, consume/append windows, both tokens, and promotes read-only keys the
-book might write in flight. Architecture §14 is the spec.
+returns the levels the walk touched. The pad adds the opposite-side band of
+levels and bitmap words, the taker's own rest level, both tokens, and promotes
+read-only keys the book might write in flight. A level's whole queue is one
+entry, so there are no page keys or slot windows. Architecture §14 is the spec.
 
 ## Wallet caveats
 
