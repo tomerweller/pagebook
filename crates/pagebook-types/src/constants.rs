@@ -20,11 +20,15 @@ pub const TICK_INDEX_SPAN: u32 = WORD_TICKS * SUMMARY_WORDS;
 pub const BITMAP_BYTES: usize = 256;
 
 // XDR sizes measured with the SDK encoder (ADR-036, ADR-037): a Level is
-// 124 B empty and grows 12 B per slot held, 892 B at the default cap of 64;
-// the bitmaps are 264 B. Budgets are the measured maxima with a little headroom.
+// 124 B empty and grows 12 B per slot held — 892 B at the default cap of 64,
+// 1,660 B at LEVEL_CAP_MAX; the bitmaps are 264 B. Budgets are the measured
+// maxima with a little headroom. `BUDGET_LEVEL` is the budget at the DEFAULT
+// `level_cap`; a market raised past it is bounded by `BUDGET_LEVEL_MAX`
+// (max occupancy, the entry-size ground rule).
 pub const BUDGET_CONFIG: usize = 200;
 pub const BUDGET_MARKET: usize = 500;
 pub const BUDGET_LEVEL: usize = 1_000;
+pub const BUDGET_LEVEL_MAX: usize = 1_750;
 pub const BUDGET_ORDER: usize = 160;
 pub const BUDGET_FEE_ACCRUAL: usize = 50;
 pub const BUDGET_BEST_TICK: usize = 60;

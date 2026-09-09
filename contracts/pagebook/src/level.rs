@@ -48,8 +48,9 @@ pub fn sweep_reset(env: &Env, level: &mut Level) {
 /// scanning at most `max_slots`. A longer run leaves the head on a zero slot
 /// for the next take to clear (§7, stranded head).
 pub fn advance_head(level: &mut Level, max_slots: u32) {
+    let tail = level.tail();
     let mut scanned = 0u32;
-    while level.head_seq < level.tail() && scanned < max_slots {
+    while level.head_seq < tail && scanned < max_slots {
         if level.slot(level.head_seq) != 0 {
             break;
         }

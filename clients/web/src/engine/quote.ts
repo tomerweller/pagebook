@@ -54,7 +54,6 @@ function parseCrossed(raw: unknown): CrossedLevel[] {
     const r = row as Record<string, unknown>;
     return {
       tick: Number(r.tick),
-      openLots: BigInt(String(r.open_lots ?? r.openLots ?? 0)),
     };
   });
 }

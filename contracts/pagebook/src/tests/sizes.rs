@@ -1,7 +1,9 @@
+use super::harness::TX_WRITE_BYTES_CAP;
+use super::worst_case::CAL_REFRESH40_BYTES;
 use crate::{Config, DataKey, PageBook};
 use pagebook_types::{
     BestTick, FeeAccrual, Level, Market, Order, TickBitmap, BITMAP_BYTES, BUDGET_BEST_TICK,
-    BUDGET_CONFIG, BUDGET_FEE_ACCRUAL, BUDGET_LEVEL, BUDGET_MARKET, BUDGET_ORDER,
+    BUDGET_CONFIG, BUDGET_FEE_ACCRUAL, BUDGET_LEVEL, BUDGET_LEVEL_MAX, BUDGET_MARKET, BUDGET_ORDER,
     BUDGET_TICK_BITMAP, LEVEL_CAP, LEVEL_CAP_MAX,
 };
 use soroban_sdk::{
@@ -42,6 +44,16 @@ fn level_under_budget_at_default_cap() {
     assert!(n <= BUDGET_LEVEL, "Level XDR {n} > {BUDGET_LEVEL}");
 }
 
+/// Max occupancy is `LEVEL_CAP_MAX`, not the default cap: `set_market_caps`
+/// may raise `level_cap` to it, so the entry-size ground rule is asserted
+/// there too.
+#[test]
+fn level_under_budget_at_max_cap() {
+    let env = super::env();
+    let n = xdr_len(&env, level_with_slots(&env, LEVEL_CAP_MAX));
+    assert!(n <= BUDGET_LEVEL_MAX, "Level XDR {n} > {BUDGET_LEVEL_MAX}");
+}
+
 /// The occupancy-sized vector is the design point (ADR-036, ADR-037): the
 /// entry is 124 B empty and grows 12 B per slot, so a sparse level stays small
 /// and only a deep queue approaches the budget. Pinned at 0, 1, 32 and 64.
@@ -62,7 +74,7 @@ fn level_size_scales_with_occupancy() {
     // The heaviest legal shape at LEVEL_CAP_MAX: 40 Levels at cap plus the
     // fixed part of a fresh-tick batch must fit the per-tx write-byte cap.
     let on_ledger = max as u32 + 108;
-    assert!(40 * on_ledger + 21_320 <= 132_096);
+    assert!(40 * on_ledger + CAL_REFRESH40_BYTES <= TX_WRITE_BYTES_CAP);
 }
 
 #[test]

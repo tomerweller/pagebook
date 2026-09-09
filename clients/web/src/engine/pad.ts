@@ -7,7 +7,6 @@ export const MAX_REPLACE_BATCH = 40;
 
 export type CrossedLevel = {
   tick: number;
-  openLots: bigint;
 };
 
 export type Quoted = {
@@ -20,10 +19,6 @@ export type Quoted = {
   nonce: bigint;
   base: Hex32;
   quote: Hex32;
-};
-
-export type PadOut = {
-  keys: ClientKey[];
 };
 
 // Settle touches the order, its level, and the four balance entries. A level
@@ -76,7 +71,7 @@ export function keysForReplace(
 // end, the words those ticks and the limit fall in, the summaries and best
 // ticks on both sides, the taker's own rest level and word, the order, the fee
 // accruals, and the four balance entries.
-export function pad(q: Quoted, padEnd: number): PadOut {
+export function pad(q: Quoted, padEnd: number): ClientKey[] {
   const opp = !q.ownSide;
   const m = q.market;
   const keys: ClientKey[] = [];
@@ -106,13 +101,13 @@ export function pad(q: Quoted, padEnd: number): PadOut {
   keys.push({ t: "UserBalance", token: q.quote });
 
   dedup(keys);
-  return { keys };
+  return keys;
 }
 
 // Of the archived keys in a pad, the ones the call itself will touch and so
 // must be restored first: the crossed levels, the own rest, the bitmaps, and
 // the bookkeeping entries. A padded but untouched band level can stay archived.
-export function restoreMarks(q: Quoted, out: PadOut, archived: ClientKey[]): ClientKey[] {
+export function restoreMarks(q: Quoted, padKeys: ClientKey[], archived: ClientKey[]): ClientKey[] {
   const m = q.market;
   const opp = !q.ownSide;
   const touched: ClientKey[] = [
@@ -137,7 +132,7 @@ export function restoreMarks(q: Quoted, out: PadOut, archived: ClientKey[]): Cli
   const [wlo, whi] = wordSpan([q.startTick, q.limitTick]);
   for (let w = wlo; w <= whi; w++) touched.push({ t: "TickWord", market: m, isBid: opp, word: w });
 
-  return archived.filter((k) => out.keys.some((x) => sameKey(x, k)) && touched.some((x) => sameKey(x, k)));
+  return archived.filter((k) => padKeys.some((x) => sameKey(x, k)) && touched.some((x) => sameKey(x, k)));
 }
 
 export class NonceAlloc {

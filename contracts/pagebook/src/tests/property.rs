@@ -13,8 +13,7 @@
 extern crate std;
 
 use super::harness::{setup, Harness};
-use crate::{DataKey, Error, PlaceFlags};
-use pagebook_types::Level;
+use crate::{Error, PlaceFlags};
 use proptest::prelude::*;
 use soroban_sdk::{
     testutils::Address as _, token::StellarAssetClient, token::TokenClient, Address,
@@ -341,11 +340,7 @@ impl World {
                 assert_eq!(got, want, "open_lots side={is_bid} tick={tick}");
                 // Invariant 2 on the raw entry (ADR-037): open_lots is the sum
                 // of the slots from the head on, each holding its open lots.
-                let key = DataKey::Level(self.h.market, is_bid, tick);
-                let raw: Option<Level> = self
-                    .h
-                    .env
-                    .as_contract(&self.h.id, || self.h.env.storage().persistent().get(&key));
+                let raw = super::harness::raw_level(&self.h, is_bid, tick);
                 if let Some(lvl) = raw {
                     let mut sum = 0u64;
                     let mut s = lvl.head_seq;

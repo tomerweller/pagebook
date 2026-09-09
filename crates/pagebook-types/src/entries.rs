@@ -35,11 +35,12 @@ pub struct Market {
 /// One price level's FIFO queue (architecture §2): counters plus the quantity
 /// slots of the current generation, all in one entry (ADR-037). `slots.len()`
 /// is the tail: appends push, a sweep or empty-level reset empties the vector,
-/// so every held slot is meaningful and the entry is exactly as large as the
-/// queue is deep (124 B empty, 12 B per slot). Slot `s` lives at index `s`.
-/// A slot holds the order's *open* lots: a partial take decrements the head
-/// slot in place, and a zero slot, whether a cancel or consumption put it
-/// there, is skipped.
+/// so the entry is exactly as large as the queue is deep (124 B empty, 12 B
+/// per slot). Slot `s` lives at index `s`. A slot at or past the head holds
+/// the order's *open* lots: a partial take decrements the head slot in place,
+/// and a zero slot, whether a cancel or consumption put it there, is skipped.
+/// Slots behind the head are never read and may hold stale values; only
+/// `slots[head_seq..]` is meaningful.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Level {

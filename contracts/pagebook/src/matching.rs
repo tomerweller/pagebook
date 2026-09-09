@@ -433,8 +433,9 @@ fn consume_partial(
     want: u64,
     budget: &mut Budget,
 ) -> u64 {
+    let tail = lvl.tail();
     let mut left = want;
-    while left > 0 && lvl.head_seq < lvl.tail() && budget.slots > 0 {
+    while left > 0 && lvl.head_seq < tail && budget.slots > 0 {
         budget.slots -= 1;
         let open = lvl.slot(lvl.head_seq);
         if open == 0 {
@@ -442,11 +443,14 @@ fn consume_partial(
             continue;
         }
         let take = core::cmp::min(open, left);
-        lvl.set_slot(lvl.head_seq, open - take);
         level::consume_open(env, lvl, take);
         left -= take;
         if take == open {
+            // Fully consumed: the head moves past the slot and nothing reads
+            // behind the head, so the stale value needs no zero-write.
             lvl.head_seq += 1;
+        } else {
+            lvl.set_slot(lvl.head_seq, open - take);
         }
     }
     want - left

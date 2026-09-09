@@ -31,21 +31,13 @@
 
 extern crate std;
 
-use super::harness::{flags, mint, rest_ask, setup};
-use crate::{PlaceFlags, ReplaceItem};
+use super::harness::{flags, mint, no_rest, rest_ask, setup};
+use crate::ReplaceItem;
 use pagebook_types::WORD_TICKS;
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 const RENT_RESCALE_NUM: i64 = 1_000;
 const RENT_RESCALE_DEN: i64 = 12_000;
-
-fn no_rest() -> PlaceFlags {
-    PlaceFlags {
-        post_only: false,
-        fill_or_kill: false,
-        no_rest: true,
-    }
-}
 
 /// Set the ledger to mainnet TTLs so created entries pay 120-day rent.
 fn mainnet_ttls(env: &Env) {

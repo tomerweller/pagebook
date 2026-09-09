@@ -3,7 +3,7 @@
 
 extern crate std;
 
-use super::harness::{flags, mint, rest_ask, rest_bid, setup, Harness};
+use super::harness::{flags, mint, no_rest, rest_ask, rest_bid, setup, Harness};
 use crate::{Error, PlaceFlags, PlaceLeg, ReplaceItem};
 use soroban_sdk::{
     testutils::{Address as _, Events as _},
@@ -11,14 +11,6 @@ use soroban_sdk::{
     xdr::{ContractEventBody, ScSymbol, ScVal, StringM},
     Address,
 };
-
-fn no_rest() -> PlaceFlags {
-    PlaceFlags {
-        post_only: false,
-        fill_or_kill: false,
-        no_rest: true,
-    }
-}
 
 fn fok() -> PlaceFlags {
     PlaceFlags {

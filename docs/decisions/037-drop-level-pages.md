@@ -177,9 +177,16 @@ stay as dead code.
 Costs accepted. Pad v1's flat per-key cover (`WRITE_BYTES_PER` 720) does not
 cover a `Level` past 35 orders; it rises to 1,100 for markets at the default
 cap, or pad v1 is retired for pads in favor of the existence-aware v2 the
-trader and maker already run. A redeploy: the ADR-036 cutover procedure
-applies unchanged. `MAX_SLOTS_SCANNED` (64) stays a separate market cap; a
-market raised to 128 slots scans a deep level over two takes, as today.
+trader and maker already run. Because `level_cap` is raise-only up to 128, the
+flat rate is not a constant of the protocol anymore: the client derives it
+from the market's `level_cap` (1,100 at the default 64, plus 12 B per slot
+above it), so a raised market keeps its flat cover sound instead of failing on
+the one-entry write-byte shortfall. Relatedly, `BUDGET_LEVEL` (1,000 B) is the
+entry budget at the DEFAULT cap only; max occupancy is `LEVEL_CAP_MAX`, gated
+separately by `BUDGET_LEVEL_MAX` (1,750 B, measured 1,660) so the entry-size
+ground rule still binds at the true maximum. A redeploy: the ADR-036 cutover
+procedure applies unchanged. `MAX_SLOTS_SCANNED` (64) stays a separate market
+cap; a market raised to 128 slots scans a deep level over two takes, as today.
 
 ## What changed
 

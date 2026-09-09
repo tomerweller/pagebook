@@ -1,6 +1,9 @@
 use crate::{PageBook, PageBookClient, PlaceFlags};
 use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env};
 
+/// Network per-transaction write-byte cap (docs/03).
+pub const TX_WRITE_BYTES_CAP: u32 = 132_096;
+
 pub struct Harness {
     pub env: Env,
     pub _admin: Address,
@@ -48,6 +51,24 @@ pub fn mint(h: &Harness, token: &Address, to: &Address, amount: i128) {
 
 pub fn flags() -> PlaceFlags {
     PlaceFlags::none()
+}
+
+pub fn no_rest() -> PlaceFlags {
+    PlaceFlags {
+        post_only: false,
+        fill_or_kill: false,
+        no_rest: true,
+    }
+}
+
+/// The raw persistent `Level` entry, bypassing the `level` view.
+pub fn raw_level(h: &Harness, is_bid: bool, tick: u32) -> Option<pagebook_types::Level> {
+    h.env.as_contract(&h.id, || {
+        h.env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::Level(h.market, is_bid, tick))
+    })
 }
 
 pub fn rest_ask(h: &Harness, maker: &Address, tick: u32, qty: u64, nonce: u64) {

@@ -17,7 +17,7 @@ import {
 import { accountLedgerKey } from "../wallet/account";
 import type { Rpc } from "../book";
 import { scValKeyName, sortedKeyStrs, type ClientKey } from "./clientKeys";
-import { DEFAULT_GROWTH, PER_ADDED, WRITE_BYTES_PER, WRITE_ENTRY_FEE, applyPad, type ApplyPadSizes } from "./txdata";
+import { DEFAULT_GROWTH, PER_ADDED, WRITE_BYTES_PER, WRITE_ENTRY_FEE, applyPad, flatWriteBytesPer, type ApplyPadSizes } from "./txdata";
 
 const T1 = "01".repeat(32);
 const T2 = "02".repeat(32);
@@ -29,11 +29,7 @@ function fixtureQuoted(): Quoted {
     ownSide: true,
     limitTick: 20,
     startTick: 10,
-    crossed: [
-      { tick: 10, openLots: 5n },
-      { tick: 11, openLots: 2n },
-      { tick: 12, openLots: 1n },
-    ],
+    crossed: [{ tick: 10 }, { tick: 11 }, { tick: 12 }],
     taker: T1,
     nonce: 7n,
     base: T2,
@@ -92,7 +88,7 @@ const REPLACE_CROSS_SIDE = [
 test("pad fixture matches rust js_fixtures", () => {
   const q = fixtureQuoted();
   const out = pad(q, 12);
-  expect(sortedKeyStrs(out.keys)).toEqual(PLACE_3CROSS);
+  expect(sortedKeyStrs(out)).toEqual(PLACE_3CROSS);
 });
 
 test("settle fixture matches rust js_fixtures", () => {
@@ -198,10 +194,7 @@ function quotedFrom(fx: FixtureFile, c: FixtureCase): Quoted {
     ownSide: c.quoted.is_bid,
     limitTick: c.quoted.limit_tick,
     startTick: c.quoted.start_tick,
-    crossed: c.quoted.crossed.map((x) => ({
-      tick: x.tick,
-      openLots: BigInt(x.open_lots),
-    })),
+    crossed: c.quoted.crossed.map((x) => ({ tick: x.tick })),
     taker: fx.taker,
     nonce: BigInt(fx.nonce),
     base: fx.base,
@@ -221,7 +214,7 @@ test("pad conformance matches the shared rust fixture", () => {
   for (const c of fx.cases) {
     const q = quotedFrom(fx, c);
     const out = pad(q, c.options.pad_end);
-    expect(sortedKeyStrs(out.keys), c.name).toEqual(c.expected.keys);
+    expect(sortedKeyStrs(out), c.name).toEqual(c.expected.keys);
     if (c.settle && c.expected.keys_for_settle) {
       expect(
         sortedKeyStrs(keysForSettle(c.quoted.market, fx.taker, BigInt(fx.nonce), c.settle.is_bid, c.settle.tick, fx.base, fx.quote)),
@@ -342,6 +335,22 @@ test("applyPad sizes covers a nonexistent key at the creation estimate", () => {
   const map = new Map([[a.toXDR("base64"), { exists: false, actualSize: 404 }]]);
   const { data: out } = applyPad(data, [a], [], sizesOf(map, 16, 0));
   expect(Number(out.resources().writeBytes())).toBe(50 + WRITE_BYTES_PER); // sim + creation cover
+});
+
+test("the flat cover derives from the market's level_cap (ADR-037)", () => {
+  // At or below the default cap the rate is the constant; above, 12 B per
+  // raisable slot, so a full LEVEL_CAP_MAX Level (1,768 B on ledger) clears.
+  expect(flatWriteBytesPer()).toBe(WRITE_BYTES_PER);
+  expect(flatWriteBytesPer(64)).toBe(WRITE_BYTES_PER);
+  expect(flatWriteBytesPer(32)).toBe(WRITE_BYTES_PER);
+  expect(flatWriteBytesPer(128)).toBe(WRITE_BYTES_PER + 64 * 12);
+  expect(flatWriteBytesPer(128)).toBeGreaterThanOrEqual(1_768 + DEFAULT_GROWTH);
+
+  const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+  const a = ck(contract, "Level", 0, false, 10).xdr;
+  const data = emptyData([], []);
+  const { data: out } = applyPad(data, [a], [], undefined, 128);
+  expect(Number(out.resources().writeBytes())).toBe(50 + flatWriteBytesPer(128));
 });
 
 function contractErrorEvent(code: number, raisedBy?: string): string {

@@ -12,8 +12,8 @@
 extern crate std;
 
 use super::footprint::footprint_of;
-use super::harness::{flags, mint, setup, Harness};
-use crate::{DataKey, PlaceFlags};
+use super::harness::{flags, mint, no_rest, setup, Harness, TX_WRITE_BYTES_CAP};
+use crate::DataKey;
 use pagebook_types::{LEVEL_CAP, WORD_TICKS};
 use soroban_sdk::{testutils::Address as _, Address};
 
@@ -23,20 +23,12 @@ const CAL_MAX_SWEEP_WRITES: u32 = 72;
 const CAL_MAX_SWEEP_BYTES: u32 = 21_004;
 const CAL_BATCH40_WRITES: u32 = 124;
 const CAL_BATCH40_BYTES: u32 = 31_452;
-const CAL_REFRESH40_BYTES: u32 = 21_320;
+pub const CAL_REFRESH40_BYTES: u32 = 21_320;
 const CAL_DEEP_REST_BYTES: u32 = 1_796;
 const CAL_DEEP_BATCH8_BYTES: u32 = 12_680;
 const DEEP_BATCH_ITEMS: u64 = 8;
 const SLACK_WRITES: u32 = 2;
 const SLACK_BYTES: u32 = 512;
-
-fn no_rest() -> PlaceFlags {
-    PlaceFlags {
-        post_only: false,
-        fill_or_kill: false,
-        no_rest: true,
-    }
-}
 
 fn ask_tick(word: u32) -> u32 {
     WORD_TICKS * word + 5
@@ -252,7 +244,7 @@ fn bound_replace_batch_onto_deep_levels() {
         res.write_bytes
     );
     assert!(
-        forty <= 132_096,
+        forty <= TX_WRITE_BYTES_CAP,
         "a 40-item deep batch must fit the per-tx write-byte cap: {forty}"
     );
 }
@@ -307,8 +299,8 @@ fn max_replace_batch_dispersed_fits_every_per_tx_limit() {
         res.write_entries
     );
     assert!(
-        res.write_bytes <= 132_096,
-        "write bytes {} > 132,096",
+        res.write_bytes <= TX_WRITE_BYTES_CAP,
+        "write bytes {} > {TX_WRITE_BYTES_CAP}",
         res.write_bytes
     );
     assert!(

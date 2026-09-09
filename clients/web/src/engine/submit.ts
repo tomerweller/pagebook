@@ -7,7 +7,7 @@ import { readAccount } from "../wallet/account";
 import { NETWORK_PASSPHRASE } from "../wallet/network";
 import { scValKeyName, toLedgerKey, type ClientKey } from "./clientKeys";
 import { errorName, hostErrorMessage, parseContractError, sacErrorName } from "./errors";
-import { pad, restoreMarks, type PadOut, type Quoted } from "./pad";
+import { pad, restoreMarks, type Quoted } from "./pad";
 import { simulate } from "./quote";
 import { applyPad, classicFee, declaredFromSoroban, footprintIndexes, type ApplyPadSizes, type DeclaredResources } from "./txdata";
 
@@ -450,9 +450,12 @@ export type SubmitArgs = {
   args: StellarSdk.xdr.ScVal[];
   padKeys?: ClientKey[];
   quoted?: Quoted;
-  padOut?: PadOut;
+  padOut?: ClientKey[];
   tokens?: ClassicToken[];
   sizes?: ApplyPadSizes;
+  /** The market's `level_cap`, for the flat write-byte cover on a raised
+   *  market (ADR-037). Omitted, the default-cap rate applies. */
+  levelCap?: number;
 };
 
 export async function submitInvocation(a: SubmitArgs): Promise<EngineResult> {
@@ -534,7 +537,7 @@ async function submitOnce(a: SubmitArgs, kp: StellarSdk.Keypair): Promise<Engine
       archivedIdx = footprintIndexes(existing, markXdr);
     }
   }
-  const padded = applyPad(existing, extraXdr, archivedIdx, a.sizes);
+  const padded = applyPad(existing, extraXdr, archivedIdx, a.sizes, a.levelCap);
   const declared = declaredFromSoroban(padded.data);
   const fee = classicFee(padded.resourceFee);
   const finalTx = StellarSdk.TransactionBuilder.cloneFrom(assembled, { fee }).setSorobanData(padded.data).build();
@@ -715,15 +718,15 @@ async function archivedTouched(
   contract: string,
   caller: string,
   quoted: Quoted,
-  out: PadOut,
+  out: ClientKey[],
 ): Promise<ClientKey[]> {
   const ctx = { contract, caller };
-  const wraps = out.keys.map((k) => toLedgerKey(ctx, k));
+  const wraps = out.map((k) => toLedgerKey(ctx, k));
   const res = await rpc.getLedgerEntries(...wraps.map((w) => w.xdr));
   const present = new Set((res.entries ?? []).map((e) => (typeof e.key === "string" ? e.key : null)).filter((k): k is string => !!k));
   const missing: ClientKey[] = [];
   wraps.forEach((w, i) => {
-    if (!present.has(w.base64)) missing.push(out.keys[i]);
+    if (!present.has(w.base64)) missing.push(out[i]);
   });
   return restoreMarks(quoted, out, missing);
 }
@@ -762,10 +765,11 @@ export async function submitPlace(
     padEnd: number;
     extraPadKeys?: ClientKey[];
     sizes?: ApplyPadSizes;
+    levelCap?: number;
   },
 ): Promise<EngineResult> {
   const out = pad(opts.quoted, opts.padEnd);
-  const padKeys = opts.extraPadKeys ? [...out.keys, ...opts.extraPadKeys] : out.keys;
+  const padKeys = opts.extraPadKeys ? [...out, ...opts.extraPadKeys] : out;
   return submitInvocation({
     rpc,
     contract: opts.contract,
@@ -777,6 +781,7 @@ export async function submitPlace(
     padOut: out,
     tokens: opts.tokens,
     sizes: opts.sizes,
+    levelCap: opts.levelCap,
   });
 }
 
@@ -788,6 +793,7 @@ export async function submitPostOnlyPlace(
     padKeys: ClientKey[];
     tokens: ClassicToken[];
     sizes?: ApplyPadSizes;
+    levelCap?: number;
   },
 ): Promise<EngineResult> {
   return submitInvocation({
@@ -799,6 +805,7 @@ export async function submitPostOnlyPlace(
     padKeys: opts.padKeys,
     tokens: opts.tokens,
     sizes: opts.sizes,
+    levelCap: opts.levelCap,
   });
 }
 
@@ -813,6 +820,7 @@ export async function submitSettle(
     padKeys: ClientKey[];
     tokens: ClassicToken[];
     sizes?: ApplyPadSizes;
+    levelCap?: number;
   },
 ): Promise<EngineResult> {
   return submitInvocation({
@@ -824,6 +832,7 @@ export async function submitSettle(
     padKeys: opts.padKeys,
     tokens: opts.tokens,
     sizes: opts.sizes,
+    levelCap: opts.levelCap,
   });
 }
 
@@ -838,6 +847,7 @@ export async function submitReplaceBatch(
     padKeys: ClientKey[];
     tokens: ClassicToken[];
     sizes?: ApplyPadSizes;
+    levelCap?: number;
   },
 ): Promise<EngineResult> {
   return submitInvocation({
@@ -849,6 +859,7 @@ export async function submitReplaceBatch(
     padKeys: opts.padKeys,
     tokens: opts.tokens,
     sizes: opts.sizes,
+    levelCap: opts.levelCap,
   });
 }
 
@@ -866,6 +877,7 @@ export async function submitReplace(
     padKeys: ClientKey[];
     tokens: ClassicToken[];
     sizes?: ApplyPadSizes;
+    levelCap?: number;
   },
 ): Promise<EngineResult> {
   return submitInvocation({
@@ -884,5 +896,6 @@ export async function submitReplace(
     padKeys: opts.padKeys,
     tokens: opts.tokens,
     sizes: opts.sizes,
+    levelCap: opts.levelCap,
   });
 }

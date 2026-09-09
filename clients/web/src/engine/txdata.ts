@@ -4,8 +4,22 @@ export const WRITE_ENTRY_FEE = 2500;
 // Flat per-key write-byte cover (pad v1, and the creation estimate under
 // pad v2). A `Level` is one entry holding the whole queue (ADR-037): 124 B of
 // payload empty, 12 B more per resting order, 1,000 B on the ledger at the
-// default level_cap of 64. The flat rate must clear a full one plus growth.
+// default level_cap of 64. The flat rate must clear a full one plus growth —
+// and level_cap is raise-only up to 128, so the rate is per market, not a
+// constant: `flatWriteBytesPer` adds 12 B per slot above the default cap.
 export const WRITE_BYTES_PER = 1100;
+export const DEFAULT_LEVEL_CAP = 64;
+export const LEVEL_SLOT_BYTES = 12;
+
+/** The flat per-key rate for a market at `levelCap` (default-cap rate plus
+ *  the raisable slots). Callers that know the market's `level_cap` must pass
+ *  it; a raised market under the default-cap rate re-creates the one-entry
+ *  write-byte shortfall of 2026-08-26. */
+export function flatWriteBytesPer(levelCap?: number): number {
+  const cap = levelCap ?? DEFAULT_LEVEL_CAP;
+  if (cap <= DEFAULT_LEVEL_CAP) return WRITE_BYTES_PER;
+  return WRITE_BYTES_PER + (cap - DEFAULT_LEVEL_CAP) * LEVEL_SLOT_BYTES;
+}
 export const DISK_READ_PER = 400;
 // Instruction headroom mirrors tools/soak apply_pad: a walk can do more work
 // at apply than simulation saw (levels appear in flight during a trend);
@@ -28,8 +42,13 @@ function keyB64(k: StellarSdk.xdr.LedgerKey): string {
   return k.toXDR("base64");
 }
 
-function writeBytesFor(added: number, addedKeys: StellarSdk.xdr.LedgerKey[], sizes?: ApplyPadSizes): number {
-  if (!sizes || sizes.coverBytes === false) return WRITE_BYTES_PER * added;
+function writeBytesFor(
+  added: number,
+  addedKeys: StellarSdk.xdr.LedgerKey[],
+  sizes?: ApplyPadSizes,
+  levelCap?: number,
+): number {
+  if (!sizes || sizes.coverBytes === false) return flatWriteBytesPer(levelCap) * added;
   const growth = sizes.growth ?? DEFAULT_GROWTH;
   let extra = sizes.slack ?? 0;
   for (const k of addedKeys) {
@@ -42,7 +61,7 @@ function writeBytesFor(added: number, addedKeys: StellarSdk.xdr.LedgerKey[], siz
       // and a created entry must be covered at its post-creation size:
       // measured shortfalls of exactly one entry (204 to 300 bytes) took the
       // maker down on 2026-08-26. Cover at the per-type budget estimate.
-      extra += info?.createSize ?? WRITE_BYTES_PER;
+      extra += info?.createSize ?? flatWriteBytesPer(levelCap);
     }
   }
   return extra;
@@ -105,6 +124,7 @@ export function applyPad(
   extraKeys: StellarSdk.xdr.LedgerKey[],
   archivedIndexes: number[] = [],
   sizes?: ApplyPadSizes,
+  levelCap?: number,
 ): ApplyPadResult {
   const builder = new StellarSdk.SorobanDataBuilder(data);
   const ro = [...builder.getReadOnly()];
@@ -140,7 +160,7 @@ export function applyPad(
 
   const res = data.resources();
   const instructions = Math.floor(Number(res.instructions()) * INSTR_MULT) + INSTR_PER * added + INSTR_FIXED;
-  const writeBytes = Number(res.writeBytes()) + writeBytesFor(added, addedKeys, sizes);
+  const writeBytes = Number(res.writeBytes()) + writeBytesFor(added, addedKeys, sizes, levelCap);
   const diskReadBytes = Number(res.diskReadBytes()) + DISK_READ_PER * added;
   builder.setResources(instructions, diskReadBytes, writeBytes);
 

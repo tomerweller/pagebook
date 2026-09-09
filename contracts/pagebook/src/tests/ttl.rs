@@ -1,4 +1,5 @@
-use crate::{DataKey, PageBook, PlaceFlags, MAX_ENTRY_TTL, MIN_PERSISTENT_TTL};
+use super::harness::no_rest;
+use crate::{DataKey, PageBook, MAX_ENTRY_TTL, MIN_PERSISTENT_TTL};
 use soroban_sdk::{
     testutils::{storage::Instance as _, storage::Persistent as _, Address as _, Ledger as _},
     xdr::ScVal,
@@ -88,14 +89,6 @@ fn assert_hot_path_unchanged<F: FnOnce()>(h: &super::harness::Harness, call: F) 
             ttl_after, ttl_before,
             "TTL changed for {key:?}: {ttl_before} -> {ttl_after}"
         );
-    }
-}
-
-fn no_rest() -> PlaceFlags {
-    PlaceFlags {
-        post_only: false,
-        fill_or_kill: false,
-        no_rest: true,
     }
 }
 

@@ -226,7 +226,7 @@ fn settle_does_not_write_instance() {
 // assertion prints the measured numbers.
 // ---------------------------------------------------------------------------
 
-use super::harness::{flags, mint, rest_ask, rest_bid, setup, Harness};
+use super::harness::{flags, mint, no_rest, rest_ask, rest_bid, setup, Harness};
 use crate::{PlaceFlags, PlaceLeg, ReplaceItem};
 
 fn assert_within(name: &str, fp: &Footprint, max_reads: u32, max_writes: u32, max_bytes: u32) {
@@ -254,14 +254,6 @@ fn assert_within(name: &str, fp: &Footprint, max_reads: u32, max_writes: u32, ma
         fp.write_bytes,
         fp.write_bytes
     );
-}
-
-fn no_rest() -> PlaceFlags {
-    PlaceFlags {
-        post_only: false,
-        fill_or_kill: false,
-        no_rest: true,
-    }
 }
 
 fn place_fp(

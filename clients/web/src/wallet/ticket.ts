@@ -494,7 +494,7 @@ export function createTicket(opts: {
       const output = cur.isBid ? q.filledLots * m.lot_size : q.quoteAtoms;
       const feeAtoms = takerFeeAtoms(output, m.taker_fee_bps);
       const padded = pad(q.quoted, cur.tick);
-      const padFee = estimatePaddedFee(padded.keys.length);
+      const padFee = estimatePaddedFee(padded.length);
       const rem = cur.lots - q.filledLots;
       const ov = overrides();
       const avg =
@@ -593,6 +593,7 @@ export function createTicket(opts: {
         quoted: q.quoted,
         tokens: padTokens(),
         padEnd: now.tick,
+        levelCap: market()?.level_cap,
       });
       applyResult(res, q.filledLots, q.quoteAtoms, disp === "rests", nonce);
     } catch (e) {

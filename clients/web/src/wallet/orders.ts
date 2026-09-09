@@ -716,6 +716,7 @@ export function createOrders(opts: {
       nonce,
       padKeys: keys,
       tokens: padTokens(book),
+      levelCap: market()?.level_cap,
     });
     finish("settle", res, nonce);
   }
@@ -759,6 +760,7 @@ export function createOrders(opts: {
       qtyLots: st.replaceLots,
       padKeys: keys,
       tokens: padTokens(book),
+      levelCap: market()?.level_cap,
     });
     finish("replace", res);
   }
@@ -804,6 +806,7 @@ export function createOrders(opts: {
       items,
       padKeys,
       tokens: padTokens(book),
+      levelCap: market()?.level_cap,
     });
     finish("replace_batch", res);
   }

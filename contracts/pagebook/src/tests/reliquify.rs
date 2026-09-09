@@ -2,18 +2,10 @@
 //! tick becomes live again, the empty-side rest at a tick worse than a stale
 //! recorded best, and post-only's conservative check against a stale best.
 
-use super::harness::{mint, rest_ask, setup};
+use super::harness::{mint, no_rest, rest_ask, setup};
 use crate::{DataKey, Error, PlaceFlags};
 use pagebook_types::{bit_in_word, word_of, TickBitmap, BITMAP_BYTES};
 use soroban_sdk::{testutils::Address as _, Address, BytesN};
-
-fn no_rest() -> PlaceFlags {
-    PlaceFlags {
-        post_only: false,
-        fill_or_kill: false,
-        no_rest: true,
-    }
-}
 
 fn post_only() -> PlaceFlags {
     PlaceFlags {

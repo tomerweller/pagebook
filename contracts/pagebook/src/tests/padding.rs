@@ -7,8 +7,8 @@
 extern crate std;
 
 use super::footprint::keys_touched;
-use super::harness::{flags, mint, rest_ask, rest_bid, setup, Harness};
-use crate::{DataKey, Error, PlaceFlags, QuoteResult};
+use super::harness::{flags, mint, no_rest, rest_ask, rest_bid, setup, Harness};
+use crate::{DataKey, Error, QuoteResult};
 use pagebook_types::word_of;
 use soroban_sdk::{testutils::Address as _, Address};
 use std::vec::Vec;
@@ -98,14 +98,6 @@ fn assert_subset(touched: &[DataKey], declared: &[DataKey]) {
         extra.is_empty(),
         "place touched keys outside the declared set: {extra:?}"
     );
-}
-
-fn no_rest() -> PlaceFlags {
-    PlaceFlags {
-        post_only: false,
-        fill_or_kill: false,
-        no_rest: true,
-    }
 }
 
 /// Simulate a bid at `limit` for `qty`, declare padded to `pad_end`.

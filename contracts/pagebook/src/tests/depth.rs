@@ -7,18 +7,10 @@
 extern crate std;
 
 use super::footprint::keys_touched;
-use super::harness::{flags, mint, rest_ask, setup, Harness};
-use crate::{DataKey, Error, PlaceFlags};
+use super::harness::{flags, mint, no_rest, rest_ask, setup, Harness};
+use crate::{DataKey, Error};
 use pagebook_types::{Level, LEVEL_CAP, LEVEL_CAP_MAX};
 use soroban_sdk::{testutils::Address as _, Address};
-
-fn no_rest() -> PlaceFlags {
-    PlaceFlags {
-        post_only: false,
-        fill_or_kill: false,
-        no_rest: true,
-    }
-}
 
 fn take_bid(h: &Harness, taker: &Address, limit: u32, qty: u64, nonce: u64) -> u64 {
     mint(h, &h.quote, taker, 1_000_000);
@@ -36,14 +28,7 @@ fn take_bid(h: &Harness, taker: &Address, limit: u32, qty: u64, nonce: u64) -> u
 }
 
 fn raw_level(h: &Harness, is_bid: bool, tick: u32) -> Level {
-    h.env
-        .as_contract(&h.id, || {
-            h.env
-                .storage()
-                .persistent()
-                .get(&DataKey::Level(h.market, is_bid, tick))
-        })
-        .expect("Level entry")
+    super::harness::raw_level(h, is_bid, tick).expect("Level entry")
 }
 
 #[test]
@@ -344,5 +329,42 @@ fn tombstone_cleanup_persists_when_nothing_was_taken() {
     assert_eq!(
         filled, 1,
         "second taker skips the last 4 and reaches the live order"
+    );
+}
+
+/// §8: a rest-ALLOWED taker stopped mid-level by the scan cap refunds its
+/// remainder and never rests — resting would cross the level it stopped in.
+/// (The no_rest variants above exercise the same stop; this pins the
+/// `crossing_remains` refund itself.)
+#[test]
+fn scan_cap_stop_with_rest_allowed_refunds_the_remainder() {
+    let h = setup();
+    // Scan cap 8; a 12-deep one-lot ask level at tick 10.
+    h.client()
+        .set_market_caps(&h.market, &32, &8, &10, &1, &1_000_000, &LEVEL_CAP);
+    let maker = Address::generate(&h.env);
+    for n in 1..=12u64 {
+        rest_ask(&h, &maker, 10, 1, n);
+    }
+    let taker = Address::generate(&h.env);
+    mint(&h, &h.quote, &taker, 1_000_000);
+    // 10 of 12: less than the level, so the walk consumes partially (a
+    // whole-level take would sweep and read no slots), and the scan cap
+    // stops it at 8.
+    let (rested, filled, _) =
+        h.client()
+            .place(&taker, &h.market, &true, &10, &10, &10, &1, &flags());
+    assert_eq!(filled, 8, "the scan cap ends the take");
+    assert!(
+        !rested,
+        "the remainder refunds; resting would cross the book"
+    );
+    // The level still asks at 10 and no bid appeared: the book is uncrossed.
+    let lvl = h.client().level(&h.market, &false, &10);
+    assert_eq!(lvl.open_lots, 4);
+    assert_eq!(h.client().best(&h.market, &true), None);
+    assert!(
+        super::harness::raw_level(&h, true, 10).is_none(),
+        "no bid level was written"
     );
 }
