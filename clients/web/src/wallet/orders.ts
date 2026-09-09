@@ -514,9 +514,9 @@ export function createOrders(opts: {
     const crossed = st.replacePostOnly && wouldCross(book, st.replaceBid, st.replaceTick);
     const planned =
       book?.base && book.quote
-        ? keysForReplace(opts.getMarket(), "00".repeat(32), order.nonce, order.isBid, order.tick, st.replaceBid, st.replaceTick, "00".repeat(32), "00".repeat(32))
+        ? keysForReplace(opts.getMarket(), "00".repeat(32), order.nonce, order.isBid, order.tick, st.replaceBid, st.replaceTick, addrToHex(book.base), addrToHex(book.quote))
         : null;
-    // Mirrors keysForReplace's dedup'd split before token addresses are known.
+    // Distinct tokens keep four balance keys. Same split as keysForReplace when base != quote.
     let rw = 11;
     let ro = 2;
     if (planned) {

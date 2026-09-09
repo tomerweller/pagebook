@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
+import { accessOf } from "../engine/clientKeys";
 import { countLabel } from "../view/format";
-import { MAX_REPLACE_BATCH } from "../engine/pad";
+import { keysForReplace, MAX_REPLACE_BATCH } from "../engine/pad";
 import {
   batchRequoteTicks,
   isArchivedEntry,
@@ -83,4 +84,15 @@ test("countLabel singular and plural", () => {
 
 test("MAX_REPLACE_BATCH matches the contract constant", () => {
   expect(MAX_REPLACE_BATCH).toBe(40);
+});
+
+test("replace fee estimate counts 11 rw and 2 ro with distinct tokens", () => {
+  const planned = keysForReplace(0, "01".repeat(32), 1n, true, 19600, true, 19602, "02".repeat(32), "03".repeat(32));
+  let rw = 0;
+  let ro = 0;
+  for (const k of planned) {
+    if (accessOf(k) === "rw") rw += 1;
+    else ro += 1;
+  }
+  expect({ rw, ro }).toEqual({ rw: 11, ro: 2 });
 });

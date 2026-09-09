@@ -32,6 +32,15 @@ list's order. The previous mapping computed positions over
 `[...readWrite, ...readOnly]` of the simulation footprint, so a mark on a
 key the simulation listed read-only pointed at the wrong padded key.
 
+`archivedTouched` in `clients/web/src/engine/submit.ts` treats every pad
+key absent from `getLedgerEntries` as archived, including keys that do
+not exist yet (the new `Order`, a never-created own-side rest `Level`);
+`applyPad` appends every read-write pad key and marks any the client
+asks for, so a resting place lists those nonexistent keys in
+`archivedSorobanEntries`. The host accepts a restore mark on a live or
+nonexistent entry, so apply still succeeds; classifying by
+`liveUntilLedgerSeq` instead is tracked in issue #28.
+
 ## Fee effect
 
 Read-only planned keys no longer count as added write entries, so they drop
