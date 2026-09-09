@@ -18,13 +18,13 @@ pagebook/
 │           ├── admin.rs       # constructor, admin rotation, pause, keepalive
 │           ├── market.rs      # market create/config, quantization + §0.3 bound checks
 │           ├── keys.rs        # DataKey enum (contracttype, full-word variants) + TTL policy
-│           ├── level.rs       # Level/LevelPage packed encoding, positional queue, resets, settlement state machine
+│           ├── level.rs       # Level/LevelPage positional queue over occupancy-sized slot vectors, resets, settlement state machine
 │           ├── bitmap.rs      # TickWord/TickSummary ops: set/clear/next_set_tick(from, direction) — asks ascend, bids descend
 │           ├── matching.rs    # matching loop (place), sweep/partial, caps + windows, best maintenance
 │           ├── settle.rs      # vault SAC transfers, fee accrual (ceil), route netting
 │           ├── events.rs      # typed event emitters
 │           └── errors.rs      # contracterror enum
-├── crates/pagebook-types/     # nonce/coordinate types, packed entry layouts, shared with client SDK (no_std)
+├── crates/pagebook-types/     # nonce/coordinate types, named entry structs, shared with client SDK (no_std)
 └── docs/
     └── decisions/             # ADRs for deviations
 ```
@@ -150,14 +150,13 @@ default that a decision note may change once measured.
   `Level(u32, bool, u32)`, `LevelPage(u32, bool, u32, u32)`, `Order(u32, Address, u64)`,
   `FeeAccrual(u32, Address)`, `BestTick(u32, bool)`, `TickSummary(u32, bool)`,
   `TickWord(u32, bool, u32)`; `bool` is `is_bid`.
-- **Packed layouts** (little-endian, leading `version: u8 = 1`), field order exactly as
-  the architecture's contents columns: `Level` = version, generation u32, head_seq u32,
-  tail_seq u32, head_consumed_lots u64, open_lots u64, then `INLINE_SLOTS` × qty u64;
-  `LevelPage` = version, then `PAGE_SLOTS` × qty u64; `TickSummary` / `TickWord` =
-  version, then 256 bytes of bitmap, bit `i` = byte `i / 8`, mask `1 << (i % 8)`.
-  `BestTick`, `Order`, `Market`, `Config`, `FeeAccrual` are plain named
-  `#[contracttype]` structs (ADR-022: packing buys nothing off the hot rewrite path;
-  budgets are the measured named sizes).
+- **Entry encoding** (ADR-036): every entry is a named `#[contracttype]` struct.
+  `Level` = `generation u32, head_seq u32, tail_seq u32, head_consumed_lots u64,
+  open_lots u64, slots Vec<u64>` with `slots.len() == min(tail_seq, INLINE_SLOTS)`;
+  `LevelPage` = `slots Vec<u64>`, the reached prefix of the page; `TickSummary` /
+  `TickWord` = `BytesN<256>`, bit `i` = byte `i / 8`, mask `1 << (i % 8)`.
+  `BestTick`, `Order`, `Market`, `Config`, `FeeAccrual` are named structs (ADR-022).
+  Budgets are the measured named sizes at max occupancy.
 - **`page(seq)`** for an inline seq is 0; the append window for an inline tail is
   `{0, 1}` — a `PageRange` is never empty.
 - **Events**: topics = `(symbol name, market_id)`; data = the remaining fields from
@@ -177,10 +176,10 @@ default that a decision note may change once measured.
 ## Order of work
 
 - **M0 — scaffold.** Workspace, CI (`fmt`, `clippy`, test), `keys.rs` +
-  `pagebook-types` packed entry layouts, a serialized-size test per entry type at max
-  occupancy (budgets from architecture Part I — these assume the packed-`Bytes` encoding;
-  `contracttype` maps blow the Level budget ~2.5×, which is why packing is mandated,
-  not optional). Empty contract deploys to testnet via constructor. **Footprint-test
+  `pagebook-types` entry structs, a serialized-size test per entry type at max
+  occupancy (budgets from architecture Part I; the `Level` test also pins the empty and
+  one-slot sizes, since occupancy sizing is what keeps the named encoding cheap on the
+  hot path, ADR-036). Empty contract deploys to testnet via constructor. **Footprint-test
   spike (half a day, gates M2's test design):** confirm what the SDK test host exposes
   for the recorded footprint and budget, and land a `footprint_of(|| call)` test
   helper that returns the set of keys read and written plus write bytes. M2 and M4

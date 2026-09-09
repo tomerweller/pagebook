@@ -22,6 +22,7 @@ const CAL_MAX_SWEEP_WRITES: u32 = 72;
 const CAL_MAX_SWEEP_BYTES: u32 = 23_052;
 const CAL_BATCH40_WRITES: u32 = 124;
 const CAL_BATCH40_BYTES: u32 = 36_572;
+const CAL_REFRESH40_BYTES: u32 = 30_000;
 const CAL_DEEP_REST_BYTES: u32 = 1_476;
 const CAL_DEEP_BATCH40_BYTES: u32 = 51_080;
 const SLACK_WRITES: u32 = 2;
@@ -334,5 +335,41 @@ fn max_replace_batch_dispersed_fits_every_per_tx_limit() {
         res.contract_events_size_bytes <= 16_384,
         "event bytes {} > 16,384",
         res.contract_events_size_bytes
+    );
+}
+
+/// The §17 "full refresh" row: 40 quotes re-sized in place (same tick).
+#[test]
+fn bound_replace_batch_forty_same_tick_refresh() {
+    let h = setup();
+    let maker = Address::generate(&h.env);
+    for n in 1..=40u64 {
+        super::harness::rest_ask(&h, &maker, 10 + n as u32, 2, n);
+    }
+    let mut items = soroban_sdk::Vec::new(&h.env);
+    for n in 1..=40u64 {
+        items.push_back(crate::ReplaceItem {
+            nonce: n,
+            is_bid: false,
+            tick: 10 + n as u32,
+            qty_lots: 3,
+            window: window(&h),
+        });
+    }
+    let (_, fp) = footprint_of(&h.env, &h.id, || {
+        h.client().replace_batch(&maker, &h.market, &items)
+    });
+    let max_bytes = CAL_REFRESH40_BYTES + SLACK_BYTES;
+    std::println!(
+        "footprint[replace_batch 40 same-tick refresh]: memory_read_entries={} write_entries={} write_bytes={} (gate {})",
+        fp.memory_read_entries,
+        fp.write_entries,
+        fp.write_bytes,
+        max_bytes
+    );
+    assert!(
+        fp.write_bytes <= max_bytes,
+        "replace_batch 40 refresh: write_bytes {} > gate {max_bytes}",
+        fp.write_bytes
     );
 }

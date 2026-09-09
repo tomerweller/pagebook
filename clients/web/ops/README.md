@@ -27,12 +27,17 @@ Bring-up on a fresh host:
 2. `cp env.example env && chmod 600 env`; fill the two `PB_SECRET_*` values,
    extracted on the machine that has the keychain with
    `stellar keys secret pb-mm --config-dir .stellar` (repo root).
-3. Validate with the scratch overlay first (market 0, synthetic mid, scratch
-   identities; see `docker-compose.scratch.yml`). Pass = 30 minutes with no
-   `footprint` / `trapped:unknown` / `resource_limit` outcomes and the
-   watchdog printing `MM OK`.
-4. Cut over market 1 (state handoff below), then `docker compose up -d
-   --build`.
+3. Validate first with scratch identities against the live contract (for
+   example a 5-level maker on a funder identity topped up by `refill.ts`, as
+   the ADR-036 smoke did). Pass = 30 minutes with no `footprint` /
+   `trapped:unknown` / `resource_limit` outcomes and the watchdog printing
+   `MM OK`. `docker-compose.scratch.yml` targeted the PBA/PBB scratch market
+   on the retired `CDX3…U2RO` deployment and needs a scratch market on the
+   live contract before it can be used again.
+4. Cut over the production identities (state handoff below), then
+   `docker compose up -d --build`. `CONTRACT` and `MARKET` come from the
+   compose file's `x-market` block (XLM/USDC is market 0 on the live
+   contract).
 
 ## Cutover and state handoff
 
@@ -71,7 +76,8 @@ is how the original migration cut over).
 ## Fly deployment
 
 `clients/web/fly.toml` runs the maker, trader, and watchdog on one Fly Machine
-in `iad`. The app has no public service. A 1 GB volume mounted at `/data`
+in `iad`; its `[env]` block carries `CONTRACT`, `MARKET` (0), both SAC ids and
+the USDC issuer, which `deploy/fly-entrypoint.sh` passes to every bot. The app has no public service. A 1 GB volume mounted at `/data`
 holds `mm.json`, the bot logs, and the hourly watchdog log across restarts and
 deploys. The watchdog runs once an hour. If it finds a stale bot or a hard
 runtime error, it restarts that bot through the supervisor. Price-move and

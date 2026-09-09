@@ -48,8 +48,9 @@ Prices and quantities are integers:
 - The taker fee is rounded up. Matching itself does not round.
 
 Each side of a market has price levels. A level stores a FIFO queue of maker
-orders at one tick. The queue uses a packed `Level` entry for its counters and
-inline slots, with `LevelPage` entries for overflow. `BestTick`, `TickSummary`,
+orders at one tick. The queue uses a `Level` entry for its counters and inline
+slots (a vector as long as the queue has reached), with `LevelPage` entries for
+overflow. `BestTick`, `TickSummary`,
 and `TickWord` form a derived bitmap index for finding the next live level.
 
 A maker's `Order` entry is keyed by `(market, owner, nonce)`. The queue position
@@ -134,13 +135,13 @@ These are the main limits and behaviors behind the design:
 
 ## Testnet deployment
 
-Contract `CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO` is deployed
-on the Stellar testnet. Market 0 trades two test assets (`PBA`/`PBB`) with lot
-1, tick 1, and a 10 bps taker fee; market 1 trades native XLM against Circle's
-testnet USDC (10-XLM lots, 0.00001 USDC ticks, 5 bps), with a market maker
-quoting a 20-level ladder per side off the spot XLM-USD price
-([client view of market 1](https://tomerweller.com/pagebook/client/?market=1),
-ADR-026).
+Contract `CB6I37Y57URALZR2KWJNAYTR64LST3OXODBQUFBQKE76YTSBKJ4TDAZB` is deployed
+on the Stellar testnet (ADR-036). Its one market, market 0, trades native XLM
+against Circle's testnet USDC (10-XLM lots, 0.00001 USDC ticks, 5 bps), with a
+market maker quoting a 20-level ladder per side off the spot XLM-USD price
+([client view](https://tomerweller.com/pagebook/client/), ADR-026). The earlier
+deployment `CDX3…U2RO`, which also carried a `PBA`/`PBB` scratch market, is
+wound down and no longer kept alive.
 
 That page is now a trading client (`clients/web/`): the market view plus
 an in-page testnet wallet that can fund, add a trustline, place, settle, and
@@ -162,7 +163,7 @@ same ADR).
 | Path | Contents |
 |---|---|
 | `contracts/pagebook/` | Soroban contract modules and tests |
-| `crates/pagebook-types/` | Shared contract types, packed encodings, constants, and key helpers |
+| `crates/pagebook-types/` | Shared contract types (named entry structs), constants, and key helpers |
 | `crates/pagebook-client/` | Client-side key and footprint helpers |
 | `clients/web/ops/` | Live ops tooling on the web engine: market maker, trader, watchdog, soak, stress, resource sampler (ADR-031) |
 | `tools/soak/`, `tools/stress/` | Frozen import targets for `tools/research/`; superseded by `clients/web/ops/` (ADR-031) |

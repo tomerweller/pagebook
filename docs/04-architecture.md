@@ -121,8 +121,9 @@ it. Configuration (§1) is money-free and admin-governed; the vault (§6) is not
 PageBook's storage at all, but every settling footprint touches it.
 
 Payload sizes are XDR-serialized targets at max occupancy; M0 size tests enforce
-them. Packed entries carry a leading schema-version byte as a guard against misreading
-a layout (a mismatch is a typed error, never a silent decode). Each section below specifies one structure: purpose, key and
+them. Every entry is a named `#[contracttype]` struct or a fixed-size `BytesN`; the
+SDK's typed conversion is the decode guard (a foreign shape fails to convert, it never
+reads as something else; ADR-036). Each section below specifies one structure: purpose, key and
 durability, layout and target size, capacity where it has one, the invariants it owns
 (indexed in §19), and its lifecycle, who creates, writes, and deletes it, and how its
 TTL behaves. TTL constants and the policy summary: §18.
@@ -166,19 +167,25 @@ counters plus positional quantity slots. The queue records what happened at a pr
 
 | Entry | Durability | Key | Contents | Target size |
 |---|---|---|---|---|
-| `Level` | persistent | `Level(market, side, tick)` | packed `Bytes`: version u8, `generation:u32, head_seq:u32, tail_seq:u32, head_consumed_lots:u64, open_lots:u64`, then `INLINE_SLOTS` × qty:u64 inline slots (target 32) | ≤ 384 B |
-| `LevelPage` | persistent | `LevelPage(market, side, tick, page)` | packed `Bytes`: version u8, then `PAGE_SLOTS` × qty:u64 slots (target 32). Page `page` holds seqs `INLINE_SLOTS + page·PAGE_SLOTS …`, the first seqs past the inline slots land in page 0 | ≤ 320 B |
+| `Level` | persistent | `Level(market, side, tick)` | named struct: `generation:u32, head_seq:u32, tail_seq:u32, head_consumed_lots:u64, open_lots:u64, slots:Vec<u64>`; the inline quantity slots are occupancy-sized, `slots.len() == min(tail_seq, INLINE_SLOTS)` (target 32) | 188 B empty, +12 B per slot, 572 B full; budget 600 B |
+| `LevelPage` | persistent | `LevelPage(market, side, tick, page)` | named struct: `slots:Vec<u64>`, occupancy-sized up to `PAGE_SLOTS` (target 32). Page `page` holds seqs `INLINE_SLOTS + page·PAGE_SLOTS …`, the first seqs past the inline slots land in page 0 | 40 B empty, 424 B full; budget 450 B |
 
-**Packed encoding is mandatory here, and only here.** `Level` and `LevelPage` are
-fixed-layout `Bytes` blobs with a leading schema-version byte, not `#[contracttype]`
-structs, symbol-keyed `ScVal::Map` encoding roughly 1.5-2× the payload (a map-encoded
-Level at `INLINE_SLOTS = 32` measures 440-570 B against 296 B packed) and, because
-these two entries are rewritten in bulk on every take, would cascade into every
-write-byte and ops/ledger figure in §17. The bitmaps (§5) are packed too, at no cost
-(their payload is 256 raw bytes). Everything else, `Config`, `Market`, `BestTick`,
-`Order`, `FeeAccrual`, is a plain named `#[contracttype]` struct: their extra bytes
-buy nothing on the hot path (ADR-022). Slots store **qty only**; seq is implicit in
-slot position.
+**Named structs with occupancy-sized slot vectors.** `Level` and `LevelPage` are plain
+`#[contracttype]` structs (ADR-036; they were fixed-layout packed `Bytes` before that)
+whose `slots` vec is exactly as long as the queue has reached: `min(tail_seq,
+INLINE_SLOTS)` inline, the reached prefix of each page. The map encoding costs 12 B per
+slot plus about 150 B of field names, so a full 32-slot `Level` is 572 B against 296 B
+packed, but a level is written full only when 32 orders rest at one price. A swept
+level is written *empty* (188 B) and a one-order level at 200 B, and those are the
+writes on every hot path: the maximal sweep in §17 is 23.1 KB, down from 26.6 KB
+packed. The write-byte ceiling therefore sits on rewrites of deep levels (the 32nd rest
+at a price, a batch refresh onto deep queues), which §17 gates separately. A sweep or
+empty-level reset clears the inline vec; the first append of a generation into a page
+starts that page from empty (stale slots from the previous generation are unobservable
+behind `tail_seq` either way, invariant 9, but would otherwise keep the entry at its old
+size). A slot the vec does not hold reads as zero, never a panic. The bitmaps (§5) are
+`BytesN<256>`; `Config`, `Market`, `BestTick`, `Order`, `FeeAccrual` are named structs
+too (ADR-022). Slots store **qty only**; seq is implicit in slot position.
 
 **Positional layout (append-only).** Within a generation, seq `s` occupies inline slot
 `s` if `s < INLINE_SLOTS`, else slot `(s − INLINE_SLOTS) mod PAGE_SLOTS` of
@@ -230,8 +237,9 @@ Deep single-level queues are the only case that grows footprint per maker *count
 bounded by `PAGE_SLOTS` per entry.
 
 **Stale-slot rule (page reuse).** `LevelPage` keys do not include the generation, and a
-generation reset does not clear old pages, stale slot data from a prior generation can
-sit under a live key. Therefore: a slot is meaningful **iff its seq < tail_seq of the
+generation reset does not clear old pages (the first append of the new generation into
+a page replaces its contents, ADR-036), stale slot data from a prior generation can sit
+under a live key. Therefore: a slot is meaningful **iff its seq < tail_seq of the
 current generation**; appends write slots strictly sequentially with no gaps; readers
 MUST ignore everything at or beyond `tail_seq`. This is invariant 9 and gets its own
 tests (generation reset over dirty pages, then reuse).
@@ -304,8 +312,8 @@ the next place that walks through.
 | Entry | Durability | Key | Contents | Target size |
 |---|---|---|---|---|
 | `BestTick` | persistent | `BestTick(market, side)` | best tick (u32), empty flag | ~60 B (named struct; ADR-022) |
-| `TickSummary` | persistent | `TickSummary(market, side)` | summary bitmap: bit `word` = "`TickWord(word)` has any set bit" (2,048 words) | 257 B payload, 268 B XDR (ADR-017) |
-| `TickWord` | persistent | `TickWord(market, side, word)` | presence bitmap for ticks `[word·2048, (word+1)·2048)` | 257 B payload, 268 B XDR (ADR-017) |
+| `TickSummary` | persistent | `TickSummary(market, side)` | summary bitmap: bit `word` = "`TickWord(word)` has any set bit" (2,048 words) | `BytesN<256>`, 264 B XDR (ADR-036) |
+| `TickWord` | persistent | `TickWord(market, side, word)` | presence bitmap for ticks `[word·2048, (word+1)·2048)` | `BytesN<256>`, 264 B XDR (ADR-036) |
 
 **Coverage.** The bitmap hierarchy covers ticks `[0, 2048 × 2048 = 2^22)` per side per
 market, the market's tick band MUST fit inside one TickSummary entry, enforced at
@@ -336,7 +344,7 @@ step on the walk, and the place that lands on it clears it (§8). Archival is be
 for the same reason: a word comes back on restore exactly as last written, and every
 write that gives a tick liquidity touches its word, so the hard direction of the
 contract holds across the gap. A stale bit over an *archived* level is the one place
-the two combine: the walk that lands on it restores the `Level` (~0.067 XLM, surfaced
+the two combine: the walk that lands on it restores the `Level` (~0.05 to ~0.11 XLM by depth, surfaced
 by simulation and paid by that taker) and clears the bit, after which no walk ever
 touches that level again until someone rests there, so each such bit costs at most
 one restore, ever, against a seeding cost of a rest plus a cancel (§14; via `replace`
@@ -430,7 +438,7 @@ take whose window covers the run skips it (bounded by `MAX_SLOTS_SCANNED`) and m
 interleaving of takes and settles ending in the same counters pays the same amounts
 (single-price levels make this provable).
 
-**Budget** (§17): `settle` ≈ 9 touched entries, 5 writes, ~0.9 KB, **~0.0015
+**Budget** (§17): `settle` ≈ 9 touched entries, 5 writes, ~0.8 KB, **~0.0015
 XLM**, no rent; it only deletes and rewrites.
 
 ### 8. The matching walk (the taker path)
@@ -567,8 +575,8 @@ crossed after any operation completes: a matching loop terminated by a cap or wi
 refunds its remainder.
 
 **Budget** (§17): take-only, 8 levels swept ≈ 22 touched (band padding on top) /
-17 writes / ~5.3 KB / **~0.006 XLM**; maximal take (32 levels, 32 distinct `TickWord`
-entries) ≈ 77 touched + pad / 72 writes / ~26.6 KB / **~0.026 XLM** (arithmetic in
+17 writes / ~4.4 KB / **~0.006 XLM**; maximal take (32 levels, 32 distinct `TickWord`
+entries) ≈ 77 touched + pad / 72 writes / ~23.1 KB / **~0.025 XLM** (arithmetic in
 §17).
 
 ### 9. Rest (append)
@@ -622,10 +630,11 @@ damage is bounded to a quiet interval on one side of one market and heals on the
 first take; v1 accepts it rather than read the recorded best's `Level` on every
 post-only rest.
 
-**Budget** (§17): rest at an existing level ≈ 12 footprint / ~5 writes / ~0.9 KB /
-**~0.048 XLM** (dominated by `Order` rent); first touch / restore of a tick ≈ 15 / 8
-/ ~2.1 KB / **~0.115 XLM** (adds `Level` rent; ~0.27 XLM on an empty side, where the
-word, summary and best are created too).
+**Budget** (§17): rest at an existing level ≈ 13 footprint / 5 writes / ~1.1 KB /
+**~0.048 XLM** (dominated by `Order` rent; the 32nd rest at a price writes the full
+`Level`, ~1.5 KB); first touch / restore of a tick ≈ 15 / 8 / ~2.0 KB / **~0.099 XLM**
+(adds `Level` rent at its one-slot size; ~0.25 XLM on an empty side, where the word,
+summary and best are created too).
 
 ### 10. Replace: the maker update path
 
@@ -655,9 +664,9 @@ transaction. Failure of any item fails the batch (all-or-nothing).
 `QtyOutOfBounds`, `LevelFull`, `RetryRest`, `Crossed`); `Paused`, replace contains a
 rest, so it pauses with the entry side of the book (§12).
 
-**Budget** (§17): one quote to a new tick ≈ 13 touched / 7 writes / ~2.0 KB /
+**Budget** (§17): one quote to a new tick ≈ 13 touched / 7 writes / ~1.8 KB /
 **~0.0024 XLM** of execution (plus `Level` rent if the tick had none); a 40-quote
-same-tick refresh ≈ 90 / 83 / ~27.7 KB / **~0.031 XLM**, zero rent. Why this
+same-tick refresh ≈ 90 / 83 / ~23.9 KB / **~0.031 XLM**, zero rent. Why this
 matters, settle+place would re-pay ~0.046 XLM of `Order` rent per update, is the
 second reading in §17 and ADR-005.
 
@@ -840,8 +849,8 @@ tick between the sweep and apply and the walk reaches it, is the same class and
 likelihood as the pad v2 create race: rare, one fee, retry heals. Restore rent lands
 only on entries the taker's own execution needs, once. Keepalive (§12) is therefore
 load-bearing: a band whose gaps archive sheds pad coverage until something restores
-or recreates the levels. A stale bit over an archived level costs one restore (~0.067
-XLM) and one `MAX_LEVELS_CROSSED` slot, for exactly one taker, ever; seeding it costs
+or recreates the levels. A stale bit over an archived level costs one restore (~0.05
+to ~0.11 XLM by depth) and one `MAX_LEVELS_CROSSED` slot, for exactly one taker, ever; seeding it costs
 its author a rest plus a cancel, ~0.12 XLM fresh, or ~0.002 XLM per `replace` item on
 a nonce whose rent is already paid, plus a `Level` that must be created or restored at
 each new tick (§17 "rent bounds holding, not churn"). Even at the churn price the
@@ -907,32 +916,39 @@ temporary rent); it is inside every row below.
 
 | Op | Touched entries | Writes | Write bytes |
 |---|---|---|---|
-| place, rest only (existing level) | 13 | 5 | 1.2 KB |
-| place, rest only (new level, empty side) | 15 | 8 | 2.1 KB |
-| settle | 9 | 5 | 0.9 KB |
-| replace (one quote, new tick) | 13 | 7 | 2.0 KB |
-| replace_batch (40 quotes, same ticks: the refresh) | 90 | 83 | 27.7 KB |
-| replace_batch (40 quotes, each to a fresh tick) | 130 | 124 | 44.3 KB |
-| place, take only, 8 levels swept (one word) | 22 | 17 | 5.3 KB |
-| place, take 8 levels + rest | 27 | 22 | 6.9 KB |
-| place, maximal take (32 levels in 32 words) | 77 | 72 | 26.6 KB |
-| route (2 legs, 8 levels, no rest) | 22 | 17 | 5.3 KB |
+| place, rest only (existing level) | 13 | 5 | 1.1 KB |
+| place, rest only (the 32nd order at a price: full `Level`) | 13 | 5 | 1.5 KB |
+| place, rest only (new level, empty side) | 15 | 8 | 2.0 KB |
+| settle | 9 | 5 | 0.8 KB |
+| replace (one quote, new tick) | 13 | 7 | 1.8 KB |
+| replace_batch (40 quotes, same ticks: the refresh) | 90 | 83 | 23.9 KB |
+| replace_batch (40 quotes, each to a fresh tick) | 130 | 124 | 36.6 KB |
+| replace_batch (40 quotes, each onto a 31-deep level) | 129 | 123 | 51.1 KB |
+| place, take only, 8 levels swept (one word) | 22 | 17 | 4.4 KB |
+| place, take 8 levels + rest | 27 | 22 | 5.9 KB |
+| place, maximal take (32 levels in 32 words) | 77 | 72 | 23.1 KB |
+| route (2 legs, 8 levels, no rest) | 22 | 17 | 4.4 KB |
 | create_market | 9 | 3 | 1.0 KB |
 | set_market_caps | 5 | 2 | 0.7 KB |
 | collect_fees | 6 | 3 | 0.6 KB |
 | keepalive | 2 | 0 | 0 |
 | quote_place, views | 7 | 0 | 0 |
 
-Worst-case write-byte arithmetic for the max sweep, so nobody trusts the table
-blindly. The host meters each write as the full ledger entry (payload + key + ~56 B of
-framing): Level 404 B, TickWord 376, TickSummary 372, BestTick 156, FeeAccrual 184,
-SAC balance 224, auth nonce 72. 32 × 404 + 32 × 376 + 372 + 156 + 184 + 4 × 224 + 72 =
-**26,640 B over 72 writes** (32 Levels, 32 TickWords, summary, best, fee accrual, four
-SAC balances, nonce), within per-tx limits (400 entries / 200 writes / 132 KB) but
-**9.3% of a whole ledger's 286,720 write bytes**. Typical ops are the rest/settle rows
-(~1 KB); the ledger sustains hundreds of those, or ~10 max sweeps, per close, the
-reason every hot entry is a few hundred bytes. (SLP history suggests the ceiling
-rises; per-op bytes here are ~50-100× under a whole-book-blob design.)
+Worst-case write-byte arithmetic, so nobody trusts the table blindly. The host meters
+each write as the full ledger entry (payload + key + ~56 B of framing): a `Level` is
+296 B empty, 308 B with one order, 680 B with 32 (ADR-036); TickWord 372, TickSummary
+368, BestTick 156, FeeAccrual 184, SAC balance 224, auth nonce 72. The maximal sweep
+writes every swept `Level` *empty*: 32 × 296 + 32 × 372 + 368 + 156 + 184 + 4 × 224 +
+72 = **23,052 B over 72 writes** (32 Levels, 32 TickWords, summary, best, fee accrual,
+four SAC balances, nonce), 8.0% of a whole ledger's 286,720 write bytes. The
+write-byte ceiling is a batch refresh onto deep queues: 40 × 680 (new `Level`s, each
+now 32 deep) + 40 × 308 (old one-order `Level`s) + 40 × 276 (`Order`s) + 2 × 224 + 72 =
+**51,080 B over 123 writes**, 39% of the 132 KB per-tx cap and 17.8% of a ledger.
+Both are within per-tx limits (400 entries / 200 writes / 132 KB). Typical ops are
+the rest/settle rows (~1 KB); the ledger sustains hundreds of those, or ~12 maximal
+sweeps, per close, the reason every hot entry is a few hundred bytes. (SLP history
+suggests the ceiling rises; per-op bytes here are ~50-100× under a whole-book-blob
+design.)
 
 **Rent per created entry.** Rent is charged on the full ledger entry, at ~1,667
 stroops per byte per 120-day minimum TTL at the 1,000/KB floor (03 §Fees, ADR-004):
@@ -940,9 +956,9 @@ stroops per byte per 120-day minimum TTL at the 1,000/KB floor (03 §Fees, ADR-0
 | Entry | Full size | Rent per 120 d |
 |---|---|---|
 | `Order` | 276 B | ~0.046 XLM |
-| `Level` | 404 B | ~0.067 XLM |
-| `LevelPage` | ~376 B | ~0.063 XLM |
-| `TickWord` / `TickSummary` | 376 / 372 B | ~0.063 / ~0.062 XLM |
+| `Level` | 308 B at creation (one order); 680 B at 32 | ~0.051 XLM, growing to ~0.113 as orders rest (each adds 12 B, ~0.002 XLM, paid by that rest) |
+| `LevelPage` | 160 B at creation; 532 B at 32 | ~0.027 XLM, growing to ~0.089 |
+| `TickWord` / `TickSummary` | 372 / 368 B | ~0.062 / ~0.061 XLM |
 | `BestTick` | 156 B | ~0.026 XLM |
 | `FeeAccrual` | 184 B | ~0.031 XLM |
 | `Market` | 580 B | ~0.097 XLM |
@@ -958,17 +974,17 @@ rewrites are live and name what it creates:
 | Op | Est. resource fee | Of which |
 |---|---|---|
 | place, rest only (existing level) | **~0.048 XLM** | exec 0.0016 + `Order` rent 0.046 |
-| place, rest only (new tick, word already live) | **~0.115 XLM** | + `Level` rent 0.067 |
-| place, rest only (empty side: new word, summary, best) | **~0.27 XLM** | Order + Level + TickWord + TickSummary + BestTick |
+| place, rest only (new tick, word already live) | **~0.099 XLM** | + `Level` rent 0.051 |
+| place, rest only (empty side: new word, summary, best) | **~0.25 XLM** | Order + Level + TickWord + TickSummary + BestTick |
 | settle | **~0.0015 XLM** | exec only; no rent |
 | replace (one quote, to a new tick that has a `Level`) | **~0.0024 XLM** | exec only (measured shape); a same-tick size change is at most this |
-| replace (to a tick that never had a `Level`) | **~0.07 XLM** | + `Level` rent 0.067 |
+| replace (to a tick that never had a `Level`) | **~0.054 XLM** | + `Level` rent 0.051 |
 | replace_batch (40 quotes, same ticks) | **~0.031 XLM** | exec 312k stroops; zero rent |
-| replace_batch (40 quotes, each to a fresh tick) | **~2.7 XLM** | exec 0.043 + 40 × `Level` rent |
+| replace_batch (40 quotes, each to a fresh tick) | **~2.1 XLM** | exec 0.043 + 40 × `Level` rent |
 | + settle or replace of an *archived* `Order` (idle > 120 d) | **+ ~0.046 XLM** | `Order` restore rent, paid by the maker |
 | place, take only, 8 levels swept | **~0.006 XLM** | exec 62k stroops (+ `FeeAccrual` 0.031 and the taker's first balance 0.037, once) |
-| place, take 8 levels + rest (empty side, first take) | **~0.34 XLM** | exec 0.008 + the rest's five entries 0.264 + `FeeAccrual` and first balance 0.068 |
-| place, maximal take (32 levels) | **~0.026 XLM** | exec 256k stroops (72 writes) |
+| place, take 8 levels + rest (empty side, first take) | **~0.32 XLM** | exec 0.008 + the rest's five entries 0.246 + `FeeAccrual` and first balance 0.068 |
+| place, maximal take (32 levels) | **~0.025 XLM** | exec 253k stroops (72 writes) |
 | `create_market` | **~0.098 XLM** | `Market` rent 0.097 |
 | `collect_fees` | **~0.001 XLM** | exec (+ recipient's first balance 0.037, once) |
 | `keepalive` (whole venue, per ~120 d) | **~2.3 XLM** | wasm code-entry rent (~40 KB at ⅓ discount) |
@@ -1001,18 +1017,19 @@ Readings, in design terms:
   40-quote same-tick refresh in one tx is ~0.031 XLM, and the per-quote carrying cost
   stays ~0.0004 XLM/day regardless of update frequency. Moving quotes to ticks that
   have never held a level pays `Level` rent per new tick, once. Capacity, not fees,
-  then binds: at ~28 KB per same-tick refresh the *network* fits ~10 per ledger, and
-  ~6 when every quote changes tick (44 KB). Full analysis and SDEX comparison in
+  then binds: at ~24 KB per same-tick refresh the *network* fits ~12 per ledger, ~7
+  when every quote changes tick (36.6 KB), and ~5 when the new ticks hold deep queues
+  (51 KB). Full analysis and SDEX comparison in
   ADR-005.
 - **Padding is cheap in fees, not in capacity.** A declared-but-untouched key that
   does not exist costs its tx bytes (~300 stroops) plus, if read-write, the
   write-entry fee (2,500 stroops, 0.00025 XLM); one that exists and is read-write is
-  also charged its write bytes as if written (~350 stroops for a `Level`); a 100-key
+  also charged its write bytes as if written (~250 to ~580 stroops for a `Level`, by depth); a 100-key
   band is therefore ~0.03 XLM, still small. What it is not small in is capacity: each
   read-write key is one of the transaction's 200 and the ledger's 1,000 write entries,
   and each existing one is write bytes against 132 KB / 286,720 B (ADR-025). The
   exception in rent terms is an archived entry the walk *touches* (a stale bit over an
-  archived level): that one is restored at ~0.067 XLM, once, and simulation shows it
+  archived level): that one is restored at ~0.05 to ~0.11 XLM by depth, once, and simulation shows it
   (§14).
 - **Level rent is paid once per tick per ~120 days of activity**, by whoever
   creates/restores it (`Level`s are never deleted, so re-activating a swept tick is a
@@ -1090,9 +1107,9 @@ owns it; property tests cite these numbers.
   (`MarketByPair`) would come with it if duplicate pairs need refusing.
 - **Reimbursing `keepalive`**, pay the cranker's measured restore cost out of
   `FeeAccrual` so burn-address deployments do not depend on altruism (§12); v2.
-- **In-place upgrade** (`upgrade(wasm_hash)` + lazy migration of packed layouts on
-  touch, keyed by the schema-version byte), removed for v1 (ADR-023); a version
-  is a new deployment until a migration story exists and is tested.
+- **In-place upgrade** (`upgrade(wasm_hash)` + a tested migration story for stored
+  entries), removed for v1 (ADR-023); a version is a new deployment until that story
+  exists, as ADR-036 was.
 - **Synchronous hooks**: impossible to sandbox (no per-call cap); events instead.
 - **Geometric-tick market type** using Liquidity Book's `(1+step)^id` map, changes
   only the id→price function (bitmaps/levels/settlement untouched), removes the
