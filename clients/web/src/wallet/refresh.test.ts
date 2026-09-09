@@ -163,3 +163,61 @@ test("removed identity drops an in-flight balance load", async () => {
   expect(store.read().versions.wallet).toBe(afterRemove + 1);
   expect(store.read().wallet.account).toBeNull();
 });
+
+test("orders early return drops an in-flight load for the same identity", async () => {
+  const store = createStore<AppState>(emptyApp());
+  liveWallet(store, idA, 0);
+  const gate = createRequestGate<OrderInput>();
+  const load = deferred<OpenOrder[]>();
+  let calls = 0;
+  const deps = {
+    loadOpenOrders: async () => {
+      calls += 1;
+      if (calls === 1) return load.promise;
+      throw new Error("should not load");
+    },
+  };
+
+  const inflight = refreshOrders(store, gate, deps);
+  store.update((s) => {
+    s.wallet.account = { exists: false, balance: 0n, spendable: 0n, sequence: 0n, numSubEntries: 0 };
+  });
+  const afterMissing = store.read().versions.wallet;
+  await refreshOrders(store, gate, deps);
+  expect(store.read().versions.wallet).toBe(afterMissing + 1);
+  expect(store.read().wallet.openOrders).toEqual([]);
+  load.resolve([row(11)]);
+  await inflight;
+  expect(store.read().versions.wallet).toBe(afterMissing + 1);
+  expect(store.read().wallet.openOrders).toEqual([]);
+  expect([...store.read().book.ownTicks.bid]).toEqual([]);
+});
+
+test("disabled wallet drops an in-flight balance load for the same identity", async () => {
+  const store = createStore<AppState>(emptyApp());
+  liveWallet(store, idA, 0);
+  const gate = createRequestGate<string>();
+  const accLoad = deferred<AccountState>();
+
+  const inflight = refreshBalances(store, gate, {
+    readAccount: async () => accLoad.promise,
+    readTrustlines: async () => [],
+    credits: () => [],
+  });
+  store.update((s) => {
+    s.wallet.enabled = false;
+  });
+  const afterDisable = store.read().versions.wallet;
+  const early = await refreshBalances(store, gate, {
+    readAccount: async () => funded(),
+    readTrustlines: async () => [],
+    credits: () => [],
+  });
+  expect(early).toBe(false);
+  expect(store.read().versions.wallet).toBe(afterDisable + 1);
+  expect(store.read().wallet.account).toBeNull();
+  accLoad.resolve(funded());
+  expect(await inflight).toBe(false);
+  expect(store.read().versions.wallet).toBe(afterDisable + 1);
+  expect(store.read().wallet.account).toBeNull();
+});

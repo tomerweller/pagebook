@@ -272,7 +272,6 @@ export function createTicket(opts: {
   contract: string;
   getSecret: () => string | null;
   getPublic: () => string | null;
-  getMarket: () => number;
   onRefresh: () => void;
   onRested: (nonce: bigint, intent: TradeIntent) => void;
   onLog: (text: string, hash?: string) => void;
@@ -493,7 +492,7 @@ export function createTicket(opts: {
       t.flags.post_only,
       t.flags.fill_or_kill,
       t.flags.no_rest,
-      opts.getMarket(),
+      scopeOf(app.read()).market,
     ].join("|");
   }
 
@@ -519,6 +518,7 @@ export function createTicket(opts: {
       flags: { ...t.flags },
     };
     const token = previewGate.begin(scopeOf(app.read()), fields);
+    const key = quoteKey();
     const nonce = t.lastNonce ?? 1n;
     const lotSize = m.lot_size;
     const feeBps = m.taker_fee_bps;
@@ -527,7 +527,7 @@ export function createTicket(opts: {
     const quoteMeta = book.tokens.quote;
     app.update((s) => {
       if (s.ticket.preview.kind === "idle") s.ticket.preview = { kind: "loading" };
-      s.ticket.previewQuoteKey = quoteKey();
+      s.ticket.previewQuoteKey = key;
     });
     try {
       const q = await engine.simulatePlace(opts.rpc, {
@@ -548,14 +548,14 @@ export function createTicket(opts: {
       if (disp === "crossed") {
         app.update((s) => {
           s.ticket.preview = { kind: "typed", name: "Crossed" };
-          s.ticket.previewQuoteKey = quoteKey();
+          s.ticket.previewQuoteKey = key;
         });
         return;
       }
       if (disp === "unfilled") {
         app.update((s) => {
           s.ticket.preview = { kind: "typed", name: "Unfilled" };
-          s.ticket.previewQuoteKey = quoteKey();
+          s.ticket.previewQuoteKey = key;
         });
         return;
       }
@@ -589,7 +589,7 @@ export function createTicket(opts: {
           padFee,
           avg,
         };
-        s.ticket.previewQuoteKey = quoteKey();
+        s.ticket.previewQuoteKey = key;
       });
     } catch (e) {
       if (!previewGate.accepts(token, scopeOf(app.read()))) return;
@@ -597,7 +597,7 @@ export function createTicket(opts: {
       const code = parseContractError(msg);
       app.update((s) => {
         s.ticket.preview = code != null ? { kind: "typed", name: errorName(code) } : { kind: "err", message: msg };
-        s.ticket.previewQuoteKey = s.ticket.preview.kind === "err" ? "" : quoteKey();
+        s.ticket.previewQuoteKey = s.ticket.preview.kind === "err" ? "" : key;
       });
     }
   }
@@ -616,7 +616,7 @@ export function createTicket(opts: {
     submitVersion += 1;
     const intent = buildTradeIntent({
       contract: opts.contract,
-      market: opts.getMarket(),
+      market: scopeOf(app.read()).market,
       taker: pub,
       sequence: acc.sequence.toString(),
       isBid: t.isBid,

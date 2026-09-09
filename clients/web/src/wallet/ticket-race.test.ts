@@ -120,7 +120,6 @@ function makeTicket(
     contract: store.read().book.contract,
     getSecret: () => testId.secret,
     getPublic: () => store.read().wallet.active?.publicKey ?? null,
-    getMarket: () => store.read().book.market ?? 0,
     onRefresh: () => {},
     onRested: extra?.onRested ?? (() => {}),
     onLog: extra?.onLog ?? (() => {}),
@@ -218,6 +217,29 @@ test("account switch during a quote drops the result", async () => {
   sim.resolve(quoteResult({ market: 0, isBid: true, limitTick: 50, qty: 4n, contract: "", source: "", sequence: "", taker: "", nonce: 1n, base: "", quote: "" }, 1n));
   await inflight;
   expect(store.read().ticket.preview.kind).toBe("loading");
+});
+
+test("identity switch with a stale account object idles the preview", async () => {
+  const store = liveStore();
+  const sim = deferred<ReturnType<typeof quoteResult>>();
+  const t = makeTicket(store, {
+    simulatePlace: async (_rpc, opts) => sim.promise.then(() => quoteResult(opts, 1n)),
+    allocNonce: async () => 1n,
+    submitPlace: async () => ({ kind: "ok", hash: "h" }),
+  });
+
+  const inflight = t.preview();
+  sim.resolve(quoteResult({ market: 0, isBid: true, limitTick: 50, qty: 4n, contract: "", source: "", sequence: "", taker: "", nonce: 1n, base: "", quote: "" }, 1n));
+  await inflight;
+  expect(store.read().ticket.preview.kind).toBe("ok");
+
+  store.update((s) => {
+    s.wallet.active = otherId;
+    s.wallet.account = null;
+    s.wallet.trustlines = [];
+  });
+  await t.preview();
+  expect(store.read().ticket.preview.kind).toBe("idle");
 });
 
 test("submit threads one intent through nonce, quote, and place", async () => {

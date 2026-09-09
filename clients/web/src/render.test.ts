@@ -37,6 +37,12 @@ const testId = {
   secret: "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHW4",
 };
 
+const otherId = {
+  name: "u",
+  publicKey: "GBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHKY",
+  secret: "SBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADYK",
+};
+
 function ticketOpts(rpc: Rpc, store: ReturnType<typeof createStore<AppState>>) {
   return {
     store,
@@ -44,7 +50,7 @@ function ticketOpts(rpc: Rpc, store: ReturnType<typeof createStore<AppState>>) {
     contract: "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO",
     getSecret: () => null,
     getPublic: () => testId.publicKey,
-    getMarket: () => 1,
+    getMarket: () => 0,
     onRefresh: () => {},
     onRested: () => {},
     onLog: () => {},
@@ -823,4 +829,60 @@ test("persisted identity restores on boot without a seed param", async () => {
   await flush(20);
   expect(store.read().wallet.active?.name).toBe("key 1");
   expect(document.getElementById("wallet")!.textContent).not.toMatch(/generate/i);
+});
+
+test("identity switch drops the previous identity's ticket preview", async () => {
+  const mem = new Map<string, string>();
+  mem.set(
+    "pagebook.wallet.v1",
+    JSON.stringify({ identities: [testId, otherId], active: testId.name }),
+  );
+  const storage = {
+    getItem: (k: string) => mem.get(k) ?? null,
+    setItem: (k: string, v: string) => void mem.set(k, v),
+    removeItem: (k: string) => void mem.delete(k),
+  };
+  const rpc = stubRpc({ n: 0 });
+  rpc.getLedgerEntries = async () => {
+    throw new Error("rpc down");
+  };
+  document.body.innerHTML = `<aside id="wallet"></aside>`;
+  const store = createStore<AppState>(emptyApp());
+  mountWallet({
+    store,
+    el: document.getElementById("wallet")!,
+    rpc,
+    getMarket: () => 0,
+    onRefresh: () => {},
+    storage,
+  });
+  await flush(20);
+  store.update((s) => {
+    s.wallet.account = { exists: true, balance: 10n ** 10n, spendable: 10n ** 10n, sequence: 1n, numSubEntries: 0 };
+    s.wallet.trustlines = [
+      {
+        asset: { type: "credit", code: "USDC", issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5" },
+        exists: true,
+        balance: 10n ** 12n,
+      },
+    ];
+    s.book.snapshot = namedBook();
+    s.ticket.tick = 50;
+    s.ticket.lots = 4n;
+    s.ticket.sideLocked = true;
+  });
+  await new Promise((r) => setTimeout(r, 500));
+  expect(store.read().ticket.preview.kind).not.toBe("idle");
+
+  const sel = document.querySelector<HTMLSelectElement>("[data-act=switch]");
+  expect(sel).toBeTruthy();
+  sel!.value = otherId.name;
+  sel!.dispatchEvent(new Event("change", { bubbles: true }));
+  await flush();
+  expect(store.read().wallet.active?.name).toBe(otherId.name);
+  expect(store.read().wallet.account).toBeNull();
+  expect(store.read().wallet.trustlines).toEqual([]);
+
+  await new Promise((r) => setTimeout(r, 500));
+  expect(store.read().ticket.preview.kind).toBe("idle");
 });

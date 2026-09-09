@@ -17,7 +17,7 @@ import { checkTestnet } from "./network";
 import { createOrders, loadOpenOrders, rememberNonce, type OpenOrder } from "./orders";
 import { instrumentExtra } from "./awareness";
 import { createTicket, type TradeIntent } from "./ticket";
-import { refreshBalances as pullBalances, refreshOrders as pullOrders } from "./refresh";
+import { refreshBalances as pullBalances, refreshOrders as pullOrders, type OrderInput } from "./refresh";
 import { priceOf } from "../view/format";
 import type { AppState } from "../view/market";
 import type { Store } from "../store";
@@ -234,7 +234,7 @@ export function mountWallet(opts: {
   const ks = new Keystore(opts.storage ?? defaultStorage());
   const el = opts.el;
   const balGate = createRequestGate<string>();
-  const orderGate = createRequestGate<{ sequence: string }>();
+  const orderGate = createRequestGate<OrderInput>();
   let lastSeenKey = "";
   let shellReady = false;
   let bound = false;
@@ -259,7 +259,6 @@ export function mountWallet(opts: {
     contract: app.read().book.contract,
     getSecret: () => app.read().wallet.active?.secret ?? null,
     getPublic: () => app.read().wallet.active?.publicKey ?? null,
-    getMarket: opts.getMarket,
     onRefresh: opts.onRefresh,
     onRested: (nonce: bigint, intent: TradeIntent) => {
       rememberNonce(intent.taker, intent.contract, intent.market, nonce);
@@ -584,6 +583,8 @@ export function mountWallet(opts: {
             s.wallet.justCreated = true;
             s.wallet.reveal = true;
             s.wallet.autoSource = "generate";
+            s.wallet.account = null;
+            s.wallet.trustlines = [];
             s.wallet.status = "";
             s.ticket.sideLocked = false;
             resetAwareness(s);
@@ -606,6 +607,8 @@ export function mountWallet(opts: {
           syncIdentity(s, ks);
           s.wallet.justCreated = false;
           s.wallet.autoSource = "seed";
+          s.wallet.account = null;
+          s.wallet.trustlines = [];
           s.wallet.status = "";
           s.ticket.sideLocked = false;
           resetAwareness(s);
@@ -690,6 +693,8 @@ export function mountWallet(opts: {
           s.wallet.confirmDelete = false;
           s.wallet.confirmTrust = null;
           s.wallet.autoSource = null;
+          s.wallet.account = null;
+          s.wallet.trustlines = [];
           s.wallet.status = "";
           s.ticket.sideLocked = false;
           resetAwareness(s);
@@ -714,6 +719,8 @@ export function mountWallet(opts: {
           s.wallet.justCreated = true;
           s.wallet.reveal = true;
           s.wallet.autoSource = "import";
+          s.wallet.account = null;
+          s.wallet.trustlines = [];
           s.wallet.status = "";
           s.ticket.sideLocked = false;
           resetAwareness(s);
