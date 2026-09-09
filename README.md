@@ -135,13 +135,13 @@ These are the main limits and behaviors behind the design:
 
 ## Testnet deployment
 
-Contract `CB6I37Y57URALZR2KWJNAYTR64LST3OXODBQUFBQKE76YTSBKJ4TDAZB` is deployed
-on the Stellar testnet (ADR-036). Its one market, market 0, trades native XLM
+Contract `CAMHFJ32KHIJJIKCE35SRL37JES4QAWLFVLEAYCWVJGP2NZHU47F56F4` is deployed
+on the Stellar testnet (ADR-037). Its one market, market 0, trades native XLM
 against Circle's testnet USDC (10-XLM lots, 0.00001 USDC ticks, 5 bps), with a
 market maker quoting a 20-level ladder per side off the spot XLM-USD price
 ([client view](https://tomerweller.com/pagebook/client/), ADR-026). The earlier
-deployment `CDX3…U2RO`, which also carried a `PBA`/`PBB` scratch market, is
-wound down and no longer kept alive.
+deployments `CB6I…DAZB` (ADR-036) and `CDX3…U2RO` (which also carried a
+`PBA`/`PBB` scratch market) are wound down and no longer kept alive.
 
 That page is now a trading client (`clients/web/`): the market view plus
 an in-page testnet wallet that can fund, add a trustline, place, settle, and

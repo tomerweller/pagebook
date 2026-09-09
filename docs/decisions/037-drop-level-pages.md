@@ -229,3 +229,18 @@ cap; a market raised to 128 slots scans a deep level over two takes, as today.
   (`level_cap` replaces `MAX_PAGES` in the frozen-unless-re-proved row;
   `INLINE_SLOTS` / `PAGE_SLOTS` leave the frozen row); 08 formulas; README and
   both explainer pages.
+
+## Cutover record
+
+- 2026-09-09. Same admin and identities as ADR-036: `pagebook-builder-2`
+  (`GB2JQQZB…5SLK`) deploys and administers; `pb-mm-fly` and `pb-trader-fly`
+  run the bots; `pb-fly-funder-1` / `-2` are the smoke identities.
+- Wasm hash `572d959e2d135694e2f7c38cfafcfaf317e70ac207f01fd20f646e8cee9651a7`
+  (29,859 B), built from `main` at `9421a47` (CI green, 135 contract tests
+  and 220 web tests passing locally). Deploy tx `89269b…8d6b`.
+- Contract `CAMHFJ32KHIJJIKCE35SRL37JES4QAWLFVLEAYCWVJGP2NZHU47F56F4`.
+- Market 0 (tx `f3123f…dfaf8`): the ADR-026 geometry (native XLM SAC
+  `CDLZ…CYSC`, USDC SAC `CBIE…DAMA`, lot 100,000,000 stroops, tick 1,000, band
+  [1, 4,194,304), fee 5 bps, 1 to 1,000,000 lots); `level_cap` at its default
+  of 64. The `level` view reads back `depth` 0 on an empty tick.
+- Smoke, wind-down of `CB6I…DAZB` and the fly cutover: below.
