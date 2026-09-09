@@ -8,7 +8,7 @@ extern crate std;
 use super::footprint::keys_touched;
 use super::harness::{flags, mint, rest_ask, setup, window, Harness};
 use crate::{ConsumeWindow, DataKey, Error, PageRange, PlaceFlags, SlotWindow};
-use pagebook_types::{level_cap, INLINE_SLOTS, MAX_PAGES};
+use pagebook_types::{level_cap, Level, LevelPage, INLINE_SLOTS, MAX_PAGES};
 use soroban_sdk::{testutils::Address as _, Address};
 
 fn no_rest() -> PlaceFlags {
@@ -63,6 +63,76 @@ fn has_page(h: &Harness, is_bid: bool, tick: u32, page: u32) -> bool {
             .persistent()
             .has(&DataKey::LevelPage(h.market, is_bid, tick, page))
     })
+}
+
+fn page_len(h: &Harness, is_bid: bool, tick: u32, page: u32) -> u32 {
+    let p: Option<LevelPage> = h.env.as_contract(&h.id, || {
+        h.env
+            .storage()
+            .persistent()
+            .get(&DataKey::LevelPage(h.market, is_bid, tick, page))
+    });
+    p.map(|p| p.slots.len()).unwrap_or(0)
+}
+
+fn inline_len(h: &Harness, is_bid: bool, tick: u32) -> u32 {
+    let l: Option<Level> = h.env.as_contract(&h.id, || {
+        h.env
+            .storage()
+            .persistent()
+            .get(&DataKey::Level(h.market, is_bid, tick))
+    });
+    l.map(|l| l.slots.len()).unwrap_or(0)
+}
+
+/// Occupancy sizing (ADR-036): the inline vec and each page vec are exactly as
+/// long as the queue has reached; a sweep empties the inline vec, and the next
+/// generation's first append into a page starts it over instead of keeping the
+/// previous generation's 32 slots behind `tail_seq`.
+#[test]
+fn slot_vectors_track_occupancy_and_a_reused_page_starts_empty() {
+    let h = setup();
+    let maker = Address::generate(&h.env);
+    for n in 1..=3u64 {
+        rest_ask(&h, &maker, 20, 1, n);
+    }
+    assert_eq!(inline_len(&h, false, 20), 3);
+    assert!(!has_page(&h, false, 20, 0));
+
+    for n in 4..=40u64 {
+        rest_ask(&h, &maker, 20, 1, n);
+    }
+    assert_eq!(inline_len(&h, false, 20), INLINE_SLOTS);
+    assert_eq!(page_len(&h, false, 20, 0), 8);
+
+    // A mid-queue cancel tombstones in place: occupancy does not shrink.
+    h.client().settle(&maker, &h.market, &36);
+    assert_eq!(page_len(&h, false, 20, 0), 8);
+
+    let taker = Address::generate(&h.env);
+    let filled = take_bid(&h, &taker, 20, 39, 1, &window(&h));
+    assert_eq!(filled, 39, "sweep of the 39 open lots");
+    assert_eq!(
+        inline_len(&h, false, 20),
+        0,
+        "a sweep empties the inline vec"
+    );
+    assert_eq!(
+        page_len(&h, false, 20, 0),
+        8,
+        "the sweep does not touch the page"
+    );
+
+    for n in 101..=133u64 {
+        rest_ask(&h, &maker, 20, 1, n);
+    }
+    assert_eq!(inline_len(&h, false, 20), INLINE_SLOTS);
+    assert_eq!(
+        page_len(&h, false, 20, 0),
+        1,
+        "the first append into the page this generation starts it over"
+    );
+    assert_eq!(h.client().level(&h.market, &false, &20).open_lots, 33);
 }
 
 #[test]

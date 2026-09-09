@@ -1,6 +1,6 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { ck, instanceKey, sacBalanceKey, scValU32Base64, type LedgerKeyWrap } from "./keys";
-import { decodeLevel, decodeBitmap, wordOf, type Bitmap } from "./decode";
+import { parseLevel, decodeBitmap, wordOf, type Bitmap } from "./decode";
 
 const WORDS_PER_SIDE = 4;
 const MAX_KEYS = 200;
@@ -703,8 +703,12 @@ async function walkDepthOnce(rpc: Rpc, opts: WalkOpts): Promise<BookSnapshot> {
     const e = map3.get(keyObj.base64);
     if (!e) return null;
     const scv = contractScVal(e);
-    const bytes = scBytes(scv);
-    return bytes ? decodeLevel(bytes) : null;
+    if (!scv) return null;
+    try {
+      return parseLevel(scValToNative(scv));
+    } catch {
+      return null;
+    }
   }
 
   function collect(cands: number[], keyOffset: number, best: { empty: boolean; tick: number }) {

@@ -41,8 +41,8 @@ on a stored secret.
 
 | param | default | what it does |
 |---|---|---|
-| `contract` | `CDX3…U2RO` | PageBook contract id |
-| `market` | XLM/USDC if present, else `0` | market id; the header selector changes it |
+| `contract` | `CB6I…DAZB` | PageBook contract id |
+| `market` | XLM/USDC if present, else `0` | market id (XLM/USDC is market 0); the header selector changes it |
 | `rpc` | `https://soroban-testnet.stellar.org` | Soroban RPC URL |
 | `depth` | `12` | levels kept per side after empty levels are dropped |
 | `mock` | off | `?mock=1` renders a canned book and does not walk the chain |

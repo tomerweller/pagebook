@@ -1,12 +1,12 @@
 #![no_std]
 
+mod bitmap;
 mod constants;
 mod entries;
-mod packed;
 
+pub use bitmap::*;
 pub use constants::*;
 pub use entries::*;
-pub use packed::*;
 
 pub type MarketId = u32;
 

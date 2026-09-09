@@ -97,11 +97,14 @@ fn gate(name: &str, env: &Env, exec_row: i64, rent_row: i64) {
 
 /// Rent per created entry at the 1,000/KB floor over the 120-day minimum
 /// (stroops), from the full ledger-entry size (payload + key + framing).
-/// §17 "Rent per entry" carries the same numbers.
+/// §17 "Rent per entry" carries the same numbers. A `Level` is created by a
+/// first rest, so it is rented at one slot (308 B); it grows 12 B per further
+/// order up to 680 B at `INLINE_SLOTS`, paid incrementally by the rests that
+/// grow it (ADR-036).
 const RENT_ORDER: i64 = 460_000; // 276 B
-const RENT_LEVEL: i64 = 673_000; // 404 B
-const RENT_TICK_WORD: i64 = 627_000; // 376 B
-const RENT_TICK_SUMMARY: i64 = 620_000; // 372 B
+const RENT_LEVEL: i64 = 513_000; // 308 B, one slot
+const RENT_TICK_WORD: i64 = 620_000; // 372 B
+const RENT_TICK_SUMMARY: i64 = 613_000; // 368 B
 const RENT_BEST_TICK: i64 = 260_000; // 156 B
 const RENT_FEE_ACCRUAL: i64 = 307_000; // 184 B
 const RENT_MARKET: i64 = 967_000; // 580 B

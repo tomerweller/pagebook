@@ -1,7 +1,6 @@
-use crate::errors::Error;
 use crate::keys::DataKey;
-use pagebook_types::{bit_in_word, word_of, TickBitmap, TICK_BITMAP_BYTES, WORD_TICKS};
-use soroban_sdk::{Bytes, Env};
+use pagebook_types::{bit_in_word, word_of, TickBitmap, BITMAP_BYTES, WORD_TICKS};
+use soroban_sdk::{BytesN, Env};
 
 pub fn load_word(env: &Env, market: u32, is_bid: bool, word: u32) -> TickBitmap {
     load(env, DataKey::TickWord(market, is_bid, word))
@@ -11,20 +10,19 @@ pub fn load_summary(env: &Env, market: u32, is_bid: bool) -> TickBitmap {
     load(env, DataKey::TickSummary(market, is_bid))
 }
 
-/// A missing entry decodes as an all-zero bitmap; a present entry that fails to
-/// decode is a typed error, never silently empty (a silently empty word would hide
-/// live levels from matching and break invariant 3).
+/// A missing entry is an all-zero bitmap. A present entry of any other shape
+/// fails the SDK's typed conversion rather than reading as empty (a silently
+/// empty word would hide live levels from matching and break invariant 3).
 fn load(env: &Env, key: DataKey) -> TickBitmap {
     crate::store::note(&key);
-    match env.storage().persistent().get::<_, Bytes>(&key) {
-        Some(bytes) => {
-            if bytes.len() != TICK_BITMAP_BYTES as u32 {
-                env.panic_with_error(Error::CorruptEntry);
-            }
-            let mut raw = [0u8; TICK_BITMAP_BYTES];
-            bytes.copy_into_slice(&mut raw);
-            TickBitmap::decode(&raw).unwrap_or_else(|| env.panic_with_error(Error::CorruptEntry))
-        }
+    match env
+        .storage()
+        .persistent()
+        .get::<_, BytesN<BITMAP_BYTES>>(&key)
+    {
+        Some(bytes) => TickBitmap {
+            bits: bytes.to_array(),
+        },
         None => TickBitmap::default(),
     }
 }
@@ -33,7 +31,7 @@ fn save(env: &Env, key: DataKey, bm: &TickBitmap) {
     crate::store::note(&key);
     env.storage()
         .persistent()
-        .set(&key, &Bytes::from_array(env, &bm.encode()));
+        .set(&key, &BytesN::<BITMAP_BYTES>::from_array(env, &bm.bits));
 }
 
 pub fn is_set(env: &Env, market: u32, is_bid: bool, tick: u32) -> bool {

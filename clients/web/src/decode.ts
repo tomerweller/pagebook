@@ -1,10 +1,11 @@
-export const LEVEL_BYTES = 285;
-export const BITMAP_BYTES = 257;
+export const BITMAP_BYTES = 256;
 export const INLINE_SLOTS = 32;
 export const WORD_TICKS = 2048;
 export const SUMMARY_WORDS = 2048;
-export const PACKED_VERSION = 1;
 
+/// A `Level` entry as `scValToNative` hands it over: u32 fields arrive as
+/// numbers, u64 fields as bigints, and the occupancy-sized `slots` vec as an
+/// array (ADR-036). `slots.length` is `min(tail_seq, INLINE_SLOTS)`.
 export type LevelDecoded = {
   generation: number;
   head_seq: number;
@@ -39,28 +40,29 @@ function asBytes(bytes: Uint8Array | ArrayLike<number>): Uint8Array {
   return new Uint8Array(bytes);
 }
 
-export function decodeLevel(bytes: Uint8Array | ArrayLike<number>): LevelDecoded | null {
-  const buf = asBytes(bytes);
-  if (buf.length !== LEVEL_BYTES || buf[0] !== PACKED_VERSION) return null;
-  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-  const slots = new Array<bigint>(INLINE_SLOTS);
-  for (let i = 0; i < INLINE_SLOTS; i++) {
-    slots[i] = view.getBigUint64(29 + i * 8, true);
+export function parseLevel(native: unknown): LevelDecoded | null {
+  if (native == null || typeof native !== "object") return null;
+  const r = native as Record<string, unknown>;
+  if (!Array.isArray(r.slots)) return null;
+  try {
+    return {
+      generation: Number(toBigInt(r.generation)),
+      head_seq: Number(toBigInt(r.head_seq)),
+      tail_seq: Number(toBigInt(r.tail_seq)),
+      head_consumed_lots: toBigInt(r.head_consumed_lots),
+      open_lots: toBigInt(r.open_lots),
+      slots: r.slots.map(toBigInt),
+    };
+  } catch {
+    return null;
   }
-  return {
-    generation: view.getUint32(1, true),
-    head_seq: view.getUint32(5, true),
-    tail_seq: view.getUint32(9, true),
-    head_consumed_lots: view.getBigUint64(13, true),
-    open_lots: view.getBigUint64(21, true),
-    slots,
-  };
 }
 
+/// A `TickWord` / `TickSummary` entry: 256 raw bytes (`BytesN<256>`), bit `i`
+/// at byte `i >> 3`, mask `1 << (i & 7)`.
 export function decodeBitmap(bytes: Uint8Array | ArrayLike<number>): Bitmap | null {
-  const buf = asBytes(bytes);
-  if (buf.length !== BITMAP_BYTES || buf[0] !== PACKED_VERSION) return null;
-  const bits = buf.subarray(1);
+  const bits = asBytes(bytes);
+  if (bits.length !== BITMAP_BYTES) return null;
   const bm: Bitmap = {
     bits,
     bit(i) {

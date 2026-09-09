@@ -1,9 +1,7 @@
 use crate::errors::Error;
 use crate::keys::DataKey;
-use pagebook_types::{
-    BestTick, Config, FeeAccrual, Level, LevelPage, Market, Order, LEVEL_BYTES, LEVEL_PAGE_BYTES,
-};
-use soroban_sdk::{Address, Bytes, Env};
+use pagebook_types::{BestTick, Config, FeeAccrual, Level, LevelPage, Market, Order};
+use soroban_sdk::{Address, Env};
 
 pub fn load_config(env: &Env) -> Config {
     note(&DataKey::Config);
@@ -39,52 +37,36 @@ pub fn save_market(env: &Env, market: u32, m: &Market) {
     env.storage().persistent().set(&DataKey::Market(market), m);
 }
 
+/// A missing `Level` is the empty queue; a present one of the wrong shape fails
+/// the SDK's typed conversion rather than decoding as something else.
 pub fn load_level(env: &Env, market: u32, is_bid: bool, tick: u32) -> Level {
     let key = DataKey::Level(market, is_bid, tick);
     note(&key);
-    match env.storage().persistent().get::<_, Bytes>(&key) {
-        Some(bytes) => {
-            if bytes.len() != LEVEL_BYTES as u32 {
-                env.panic_with_error(Error::CorruptEntry);
-            }
-            let mut raw = [0u8; LEVEL_BYTES];
-            bytes.copy_into_slice(&mut raw);
-            Level::decode(&raw).unwrap_or_else(|| env.panic_with_error(Error::CorruptEntry))
-        }
-        None => Level::default(),
-    }
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Level::empty(env))
 }
 
 pub fn save_level(env: &Env, market: u32, is_bid: bool, tick: u32, level: &Level) {
-    note(&DataKey::Level(market, is_bid, tick));
-    let bytes = Bytes::from_array(env, &level.encode());
-    env.storage()
-        .persistent()
-        .set(&DataKey::Level(market, is_bid, tick), &bytes);
+    let key = DataKey::Level(market, is_bid, tick);
+    note(&key);
+    env.storage().persistent().set(&key, level);
 }
 
 pub fn load_page(env: &Env, market: u32, is_bid: bool, tick: u32, page: u32) -> LevelPage {
     let key = DataKey::LevelPage(market, is_bid, tick, page);
     note(&key);
-    match env.storage().persistent().get::<_, Bytes>(&key) {
-        Some(bytes) => {
-            if bytes.len() != LEVEL_PAGE_BYTES as u32 {
-                env.panic_with_error(Error::CorruptEntry);
-            }
-            let mut raw = [0u8; LEVEL_PAGE_BYTES];
-            bytes.copy_into_slice(&mut raw);
-            LevelPage::decode(&raw).unwrap_or_else(|| env.panic_with_error(Error::CorruptEntry))
-        }
-        None => LevelPage::default(),
-    }
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| LevelPage::empty(env))
 }
 
 pub fn save_page(env: &Env, market: u32, is_bid: bool, tick: u32, page: u32, p: &LevelPage) {
-    note(&DataKey::LevelPage(market, is_bid, tick, page));
-    let bytes = Bytes::from_array(env, &p.encode());
-    env.storage()
-        .persistent()
-        .set(&DataKey::LevelPage(market, is_bid, tick, page), &bytes);
+    let key = DataKey::LevelPage(market, is_bid, tick, page);
+    note(&key);
+    env.storage().persistent().set(&key, p);
 }
 
 pub fn load_best(env: &Env, market: u32, is_bid: bool) -> BestTick {

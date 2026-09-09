@@ -1,3 +1,6 @@
+# RETIRED (ADR-036): this overlay targets the PBA/PBB scratch market on the
+# CDX3…U2RO deployment, which is wound down. Recreate a scratch market on the
+# live contract and update CONTRACT / BASE_SAC / QUOTE_SAC before using it.
 # Scratch validation overlay: run the stack against market 0 (PBA/PBB test
 # assets) with scratch identities and a synthetic walking mid, before cutting
 # over market 1. Usage:

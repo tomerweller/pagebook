@@ -1,7 +1,10 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
 
 export const WRITE_ENTRY_FEE = 2500;
-export const WRITE_BYTES_PER = 600;
+// Flat per-key write-byte cover (pad v1, and the creation estimate under
+// pad v2). A `Level` covers at 296 B empty and grows 12 B per resting order to
+// 680 B at INLINE_SLOTS (ADR-036); the flat rate must clear the full one.
+export const WRITE_BYTES_PER = 720;
 export const DISK_READ_PER = 400;
 // Instruction headroom mirrors tools/soak apply_pad: a walk can do more work
 // at apply than simulation saw (levels appear in flight during a trend);
@@ -91,7 +94,10 @@ export type ApplyPadSizes = {
   latestLedger?: number;
 };
 
-export const DEFAULT_GROWTH = 32;
+// Headroom over an existing entry's size for growth between pad and apply:
+// a rest by someone else into a padded `Level` adds 12 B per order (ADR-036),
+// so 48 B rides out three in-flight appends.
+export const DEFAULT_GROWTH = 48;
 
 export function applyPad(
   data: StellarSdk.xdr.SorobanTransactionData,

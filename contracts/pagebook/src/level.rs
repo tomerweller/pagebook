@@ -1,6 +1,6 @@
 use crate::errors::Error;
 use crate::store;
-use pagebook_types::{is_inline, level_cap, page, slot_in_page, Level, Market};
+use pagebook_types::{is_inline, level_cap, page, slot_in_page, Level, LevelPage, Market};
 use soroban_sdk::Env;
 
 pub fn slot_qty(env: &Env, market: u32, is_bid: bool, tick: u32, level: &Level, seq: u32) -> u64 {
@@ -8,14 +8,18 @@ pub fn slot_qty(env: &Env, market: u32, is_bid: bool, tick: u32, level: &Level, 
         return 0;
     }
     if is_inline(seq) {
-        level.slots[seq as usize]
+        level.slot(seq)
     } else {
         let p = page(seq);
         let i = slot_in_page(seq);
-        store::load_page(env, market, is_bid, tick, p).slots[i as usize]
+        store::load_page(env, market, is_bid, tick, p).slot(i)
     }
 }
 
+/// Writes slot `seq`. An append (`seq == tail_seq`) that opens a page starts it
+/// from an empty vec: the page may hold the previous generation's slots, which
+/// are unobservable behind `tail_seq` but would otherwise keep the entry at its
+/// old size. A tombstone (`seq < tail_seq`) never truncates.
 pub fn write_slot(
     env: &Env,
     market: u32,
@@ -26,13 +30,17 @@ pub fn write_slot(
     qty: u64,
 ) {
     if is_inline(seq) {
-        level.slots[seq as usize] = qty;
+        level.set_slot(seq, qty);
         return;
     }
     let p = page(seq);
     let i = slot_in_page(seq);
-    let mut pg = store::load_page(env, market, is_bid, tick, p);
-    pg.slots[i as usize] = qty;
+    let mut pg = if seq == level.tail_seq && i == 0 {
+        LevelPage::empty(env)
+    } else {
+        store::load_page(env, market, is_bid, tick, p)
+    };
+    pg.set_slot(i, qty);
     store::save_page(env, market, is_bid, tick, p, &pg);
 }
 
@@ -96,6 +104,7 @@ pub fn sweep_reset(env: &Env, level: &mut Level) {
     level.head_consumed_lots = 0;
     level.tail_seq = 0;
     level.open_lots = 0;
+    level.clear_slots(env);
 }
 
 /// The one window predicate (05 "Encoding decisions"): an inline head is always

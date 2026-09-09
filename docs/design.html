@@ -438,7 +438,7 @@
 <section id="storage">
   <h3>Storage map <span class="ref"><a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md#part-i-data-structures">04 Part I</a></span></h3>
   <p>
-    Keys are one <code>#[contracttype]</code> <code>DataKey</code> enum: the variant name is the type, the fields are coordinates. Nothing that execution assigns (a generation, a queue position, a page index) may appear in a key the client has to put in the footprint. All entries are persistent except <code>Config</code>. Sizes are XDR-serialized budgets at max occupancy, enforced by tests. <code>Level</code> and <code>LevelPage</code> use packed <code>Bytes</code>, as do the 2,048-bit <code>TickWord</code> and <code>TickSummary</code> bitmaps. <code>Config</code>, <code>Market</code>, <code>BestTick</code>, <code>Order</code>, and <code>FeeAccrual</code> use named <code>#[contracttype]</code> structs.
+    Keys are one <code>#[contracttype]</code> <code>DataKey</code> enum: the variant name is the type, the fields are coordinates. Nothing that execution assigns (a generation, a queue position, a page index) may appear in a key the client has to put in the footprint. All entries are persistent except <code>Config</code>. Sizes are XDR-serialized budgets at max occupancy, enforced by tests. Every entry is a named <code>#[contracttype]</code> struct except the two 2,048-bit bitmaps, <code>TickWord</code> and <code>TickSummary</code>, which are 256-byte values. <code>Level</code> and <code>LevelPage</code> hold their quantity slots in a vector as long as the queue has reached, so a level's size follows its queue: 188 bytes empty, 12 more per resting order.
   </p>
   <div class="tablewrap">
     <table>
@@ -448,14 +448,14 @@
         <tr><td class="k">Config</td><td class="k">Config</td><td>admin, fee recipient, paused flag, market counter (instance storage)</td><td class="num">~190 B</td></tr>
         <tr><td class="k">Market</td><td class="k">Market(market_id)</td><td>token pair, lot_size, tick_size, tick band, fee bps, order-size bounds, loop caps, queue geometry</td><td class="num">≤ 500 B</td></tr>
         <tr class="band"><td colspan="4">Order store: authoritative, funds-bearing, never stale</td></tr>
-        <tr><td class="k">Level</td><td class="k">Level(market, side, tick)</td><td>packed bytes: five counters + <code>INLINE_SLOTS</code> quantity slots</td><td class="num">≤ 384 B</td></tr>
-        <tr><td class="k">LevelPage</td><td class="k">LevelPage(market, side, tick, page)</td><td>packed bytes: <code>PAGE_SLOTS</code> more quantity slots (overflow)</td><td class="num">≤ 320 B</td></tr>
+        <tr><td class="k">Level</td><td class="k">Level(market, side, tick)</td><td>five counters + the inline quantity slots, a vector as long as the queue has reached (up to <code>INLINE_SLOTS</code>)</td><td class="num">188 B empty, 572 B full</td></tr>
+        <tr><td class="k">LevelPage</td><td class="k">LevelPage(market, side, tick, page)</td><td>up to <code>PAGE_SLOTS</code> more quantity slots (overflow), sized the same way</td><td class="num">40 B empty, 424 B full</td></tr>
         <tr><td class="k">Order</td><td class="k">Order(market, owner, nonce)</td><td>side, tick, generation, seq, qty</td><td class="num">≤ 160 B</td></tr>
         <tr><td class="k">FeeAccrual</td><td class="k">FeeAccrual(market, token)</td><td>fees collected, not yet paid out</td><td class="num">~50 B</td></tr>
         <tr class="band"><td colspan="4">Tick index: derived, money-free, may run stale</td></tr>
         <tr><td class="k">BestTick</td><td class="k">BestTick(market, side)</td><td>best tick, empty flag</td><td class="num">~60 B</td></tr>
-        <tr><td class="k">TickSummary</td><td class="k">TickSummary(market, side)</td><td>2,048 bits: which <code>TickWord</code>s have any bit set</td><td class="num">268 B</td></tr>
-        <tr><td class="k">TickWord</td><td class="k">TickWord(market, side, word)</td><td>2,048 bits: which ticks in this word have liquidity</td><td class="num">268 B</td></tr>
+        <tr><td class="k">TickSummary</td><td class="k">TickSummary(market, side)</td><td>2,048 bits: which <code>TickWord</code>s have any bit set</td><td class="num">264 B</td></tr>
+        <tr><td class="k">TickWord</td><td class="k">TickWord(market, side, word)</td><td>2,048 bits: which ticks in this word have liquidity</td><td class="num">264 B</td></tr>
       </tbody>
     </table>
   </div>
@@ -613,7 +613,7 @@
           <line x1="192" y1="202" x2="192" y2="204" stroke="none"/>
           <text x="580" y="192" font-size="11.5" fill="currentColor">tick 100 set ⇒ Level(ask, 100) has liquidity</text>
           <text x="580" y="210" font-size="11.5" fill="var(--muted)">(or had it, and no walk has passed since)</text>
-          <text x="30" y="242" fill="var(--muted)" font-size="11.5">Real geometry: one summary entry per side, one word entry per 2,048 ticks; both 257-byte packed payloads.</text>
+          <text x="30" y="242" fill="var(--muted)" font-size="11.5">Real geometry: one summary entry per side, one word entry per 2,048 ticks; each a 256-byte value.</text>
         </g>
       </svg>
     </div>
@@ -869,13 +869,14 @@
     <table>
       <thead><tr><th>Operation</th><th class="num">Footprint entries</th><th class="num">Write entries</th><th class="num">Write bytes</th><th class="num">Est. resource fee</th><th>Dominated by</th></tr></thead>
       <tbody>
-        <tr><td>place, rest only, existing level</td><td class="num">13</td><td class="num">5</td><td class="num">1.2 KB</td><td class="num">~0.048 XLM</td><td>Order rent (min TTL)</td></tr>
-        <tr><td>place, rest only, first touch of a tick</td><td class="num">15</td><td class="num">8</td><td class="num">2.1 KB</td><td class="num">~0.115 XLM</td><td>+ Level rent (~0.27 on an empty side)</td></tr>
-        <tr><td>settle</td><td class="num">9</td><td class="num">5</td><td class="num">0.9 KB</td><td class="num">~0.0015 XLM</td><td>write entries, no rent</td></tr>
-        <tr><td>replace, one quote (new tick with a level)</td><td class="num">13</td><td class="num">7</td><td class="num">2.0 KB</td><td class="num">~0.0024 XLM</td><td>write entries, zero rent</td></tr>
-        <tr><td>replace_batch, 40 quotes (same ticks)</td><td class="num">90</td><td class="num">83</td><td class="num">27.7 KB</td><td class="num">~0.031 XLM</td><td>write entries, zero rent</td></tr>
-        <tr><td>place, take 8 levels</td><td class="num">22</td><td class="num">17</td><td class="num">5.3 KB</td><td class="num">~0.006 XLM</td><td>write entries + events</td></tr>
-        <tr><td>place, take 32 levels in 32 words (max)</td><td class="num">77</td><td class="num">72</td><td class="num">26.6 KB</td><td class="num">~0.026 XLM</td><td>write entries</td></tr>
+        <tr><td>place, rest only, existing level</td><td class="num">13</td><td class="num">5</td><td class="num">1.1 KB</td><td class="num">~0.048 XLM</td><td>Order rent (min TTL)</td></tr>
+        <tr><td>place, rest only, first touch of a tick</td><td class="num">15</td><td class="num">8</td><td class="num">2.0 KB</td><td class="num">~0.099 XLM</td><td>+ Level rent (~0.25 on an empty side)</td></tr>
+        <tr><td>settle</td><td class="num">9</td><td class="num">5</td><td class="num">0.8 KB</td><td class="num">~0.0015 XLM</td><td>write entries, no rent</td></tr>
+        <tr><td>replace, one quote (new tick with a level)</td><td class="num">13</td><td class="num">7</td><td class="num">1.8 KB</td><td class="num">~0.0024 XLM</td><td>write entries, zero rent</td></tr>
+        <tr><td>replace_batch, 40 quotes (same ticks)</td><td class="num">90</td><td class="num">83</td><td class="num">23.9 KB</td><td class="num">~0.031 XLM</td><td>write entries, zero rent</td></tr>
+        <tr><td>replace_batch, 40 quotes onto 31-deep levels</td><td class="num">129</td><td class="num">123</td><td class="num">51.1 KB</td><td class="num">~0.043 XLM</td><td>write bytes: every new Level written full</td></tr>
+        <tr><td>place, take 8 levels</td><td class="num">22</td><td class="num">17</td><td class="num">4.4 KB</td><td class="num">~0.006 XLM</td><td>write entries + events</td></tr>
+        <tr><td>place, take 32 levels in 32 words (max)</td><td class="num">77</td><td class="num">72</td><td class="num">23.1 KB</td><td class="num">~0.025 XLM</td><td>write entries</td></tr>
       </tbody>
     </table>
   </div>

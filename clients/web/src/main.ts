@@ -8,7 +8,7 @@ import { createStore } from "./store";
 import { refreshBookAndEvents } from "./sync";
 import "./style.css";
 
-const DEFAULT_CONTRACT = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+const DEFAULT_CONTRACT = "CB6I37Y57URALZR2KWJNAYTR64LST3OXODBQUFBQKE76YTSBKJ4TDAZB";
 const DEFAULT_RPC = "https://soroban-testnet.stellar.org";
 const DEFAULT_PAIR = ["XLM", "USDC"] as const;
 const MARKETS_TTL_MS = 120000;

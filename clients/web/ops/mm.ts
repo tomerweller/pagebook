@@ -233,7 +233,7 @@ export class MM {
       padKeys,
       tokens: this.tokens,
     });
-    this.sizes = await sweepPadSizes(this.rpc, keys, { growth: 32, chunk: 100, coverBytes: this.a.padV2 });
+    this.sizes = await sweepPadSizes(this.rpc, keys, { chunk: 100, coverBytes: this.a.padV2 });
   }
 
   async submit(label: string, extra: Record<string, unknown>, run: () => Promise<EngineResult>): Promise<SubmitPair> {

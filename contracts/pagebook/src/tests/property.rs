@@ -13,7 +13,8 @@
 extern crate std;
 
 use super::harness::{setup, window, Harness};
-use crate::{Error, PlaceFlags};
+use crate::{DataKey, Error, PlaceFlags};
+use pagebook_types::{Level, INLINE_SLOTS};
 use proptest::prelude::*;
 use soroban_sdk::{
     testutils::Address as _, token::StellarAssetClient, token::TokenClient, Address,
@@ -340,6 +341,21 @@ impl World {
                 let got = c.level(&self.h.market, &is_bid, &tick).open_lots;
                 let want = self.reference.open_lots(is_bid, tick);
                 assert_eq!(got, want, "open_lots side={is_bid} tick={tick}");
+                // Occupancy invariant (ADR-036): the inline vec is exactly as
+                // long as the queue has reached, never longer.
+                let key = DataKey::Level(self.h.market, is_bid, tick);
+                let raw: Option<Level> = self
+                    .h
+                    .env
+                    .as_contract(&self.h.id, || self.h.env.storage().persistent().get(&key));
+                if let Some(lvl) = raw {
+                    assert_eq!(
+                        lvl.slots.len(),
+                        core::cmp::min(lvl.tail_seq, INLINE_SLOTS),
+                        "slots.len() side={is_bid} tick={tick} tail_seq={}",
+                        lvl.tail_seq
+                    );
+                }
             }
             let recorded = c.best(&self.h.market, &is_bid);
             let truth = self.reference.best(is_bid);
