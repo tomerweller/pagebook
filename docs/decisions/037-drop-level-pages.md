@@ -229,3 +229,73 @@ cap; a market raised to 128 slots scans a deep level over two takes, as today.
   (`level_cap` replaces `MAX_PAGES` in the frozen-unless-re-proved row;
   `INLINE_SLOTS` / `PAGE_SLOTS` leave the frozen row); 08 formulas; README and
   both explainer pages.
+
+## Cutover record
+
+- 2026-09-09. Same admin and identities as ADR-036: `pagebook-builder-2`
+  (`GB2JQQZB…5SLK`) deploys and administers; `pb-mm-fly` and `pb-trader-fly`
+  run the bots; `pb-fly-funder-1` / `-2` are the smoke identities.
+- Wasm hash `572d959e2d135694e2f7c38cfafcfaf317e70ac207f01fd20f646e8cee9651a7`
+  (29,859 B), built from `main` at `9421a47` (CI green, 135 contract tests
+  and 220 web tests passing locally). Deploy tx `89269b…8d6b`.
+- Contract `CAMHFJ32KHIJJIKCE35SRL37JES4QAWLFVLEAYCWVJGP2NZHU47F56F4`.
+- Market 0 (tx `f3123f…dfaf8`): the ADR-026 geometry (native XLM SAC
+  `CDLZ…CYSC`, USDC SAC `CBIE…DAMA`, lot 100,000,000 stroops, tick 1,000, band
+  [1, 4,194,304), fee 5 bps, 1 to 1,000,000 lots); `level_cap` at its default
+  of 64. The `level` view reads back `depth` 0 on an empty tick.
+- Smoke, wind-down of `CB6I…DAZB` and the fly cutover: below.
+
+### Smoke run
+
+30 minutes on the new contract (2026-09-09, about 13:20 to 13:50 local), a
+5-level maker (`--levels 5 --base-lots 2 --step-lots 1`, pad v2) on
+`pb-fly-funder-1` and the trader (pad v2, 15 to 40 s between takes) on
+`pb-fly-funder-2`, both running the `main` code. The watchdog at the end:
+`MM OK`, maker last hour 185 ok / 32 simulation-rejected (post-only `Crossed`,
+free) / 0 apply-rejected / 0 bad, 16 heals, 71 fills for 193 lots; trader 61
+takes for 271 lots, 5 rests, 4 settles, 0 rejected, 0 bad. No `footprint`,
+`trapped:unknown` or `resource_limit` outcome on either side; the `main` web
+client rendered the book from the single-vector `Level` entries with no
+console errors. The smoke maker was then unquoted with `--cancel-all`.
+
+### Wind-down and cutover
+
+2026-09-09, about 13:55 to 14:15 local. As in ADR-036: the fly machine's stop
+file was set and the `CB6I…DAZB` maker and trader were sent SIGTERM (the trader
+settled its rests, the maker exited with 40 quotes live and a current state
+file, the machine halted); the machine was started once to `sftp` that state
+and stopped again; `mm.ts --cancel-all` on `CB6I…DAZB` market 0 with
+`pb-mm-fly`, run from the ADR-036 checkout so its pads matched that contract,
+settled all 40 (first tx `19d9d1…f88d`, last `f42a5f…2427`), and the `level`
+view at both recorded bests read `open_lots` 0. The old contract's keepalive
+stopped with the machine; its entries archive after testnet's minimum TTL.
+
+`fly deploy` with `CONTRACT` = the new address and `MARKET` = 0 (image
+`deployment-01M237S3F1NF3WCVCF7AA6CED7`) updated the stopped machine's config;
+it was then started by hand. The maker starts from a fresh state file
+(`/data/state/mm-<CONTRACT>-m0.json`); the keepalive and refill cranks follow
+the env; the hourly watchdog log on the volume is the acceptance record
+(`MM OK` twice, 30 minutes apart, no `footprint` / `trapped:unknown` /
+`resource_limit` outcome).
+
+### Duplicate-bot incident and cleanup
+
+The first boot on the new image (14:05Z) ran two makers and two traders at
+once: the entrypoint's watchdog ran before the bots had logged a loop, read
+them as stale, and its autofix `kill -TERM`ed the pid in each pid file. That
+pid was the `npx` wrapper, so the runner restarted the bot while the node
+process it had wrapped lived on. The two makers shared one state file, each
+overwriting the other's quote list, and the same thing had happened on the
+ADR-036 boot (its watchdog log shows "autofix: restarting trader" at 01:58Z).
+A batched `getLedgerEntries` scan of each identity's nonce range found what
+the state files had lost: on `CB6I…DAZB` 39 maker orders (including a 109-lot
+bid at 18833 from the duplicate) and 14 trader rests; on `CAMH…56F4` 41 maker
+orders and 1 trader rest. All 95 were settled with `mm.ts --cancel-all` over
+constructed state files (the `CB6I…DAZB` ones from the ADR-036 checkout so the
+pads matched), the rescans read zero live orders for both identities on both
+contracts, and `pb-mm-fly` ended at 89,209 XLM / 67,381 USDC.
+
+The entrypoint now launches each bot under `setsid` and signals the process
+group, and the watchdog waits five minutes after boot before its first check
+(`ops/README.md`). The machine was redeployed with that image
+(`deployment-01M238TBG4GZZV19S5P2B7KAEC`) and started fresh.
