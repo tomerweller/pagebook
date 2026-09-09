@@ -43,6 +43,10 @@ export function parseLevel(native: unknown): LevelDecoded | null {
   if (native == null || typeof native !== "object") return null;
   const r = native as Record<string, unknown>;
   if (!Array.isArray(r.slots)) return null;
+  // Every counter must be present: toBigInt maps null to 0n, and a schema
+  // drift that decoded as an all-zero level would silently empty the book
+  // instead of failing loudly.
+  if (r.generation == null || r.head_seq == null || r.open_lots == null) return null;
   try {
     return {
       generation: Number(toBigInt(r.generation)),

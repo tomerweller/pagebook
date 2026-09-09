@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRpc, type Rpc } from "../src/book";
+import { createRpc, fetchLevelCap, type Rpc } from "../src/book";
 import { addrToHex, toLedgerKey } from "../src/engine/clientKeys";
 import { pad } from "../src/engine/pad";
 import {
@@ -231,6 +231,7 @@ export class Trader {
       tokens: this.tokens,
       padEnd: limit,
       sizes,
+      levelCap: this.levelCap,
     });
   }
 
@@ -258,6 +259,7 @@ export class Trader {
         nonce: BigInt(nonce),
         padKeys,
         tokens: this.tokens,
+        levelCap: this.levelCap,
       }),
       this.restoreCtx(),
     );
@@ -303,7 +305,10 @@ export class Trader {
     }
   }
 
+  levelCap: number | undefined;
+
   async run(): Promise<void> {
+    this.levelCap = await fetchLevelCap(this.rpc, this.a.contract, this.a.market);
     this.bindSignals();
     while (!this.stop) {
       const t0 = this.now();

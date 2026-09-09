@@ -16,10 +16,14 @@ rm -f "$mm_pid_file" "$trader_pid_file" "$stop_file"
 contract=${CONTRACT:?CONTRACT is required}
 market=${MARKET:-0}
 base_sac=${BASE_SAC:?BASE_SAC is required}
-# The maker's quote list is only meaningful on the contract that holds those
-# orders, so the state file is keyed by contract: a redeploy to a new address
-# starts from an empty book instead of adopting the old one's nonces (ADR-036).
-mm_state="$state_dir/mm-$contract.json"
+# The maker's quote list is only meaningful on the contract and market that
+# hold those orders, so the state file is keyed by both: a redeploy to a new
+# address or market starts from an empty book instead of adopting the old
+# one's nonces (ADR-036). Migrate the contract-only file once for market 0.
+mm_state="$state_dir/mm-$contract-m$market.json"
+if [[ ! -f "$mm_state" && "$market" == "0" && -f "$state_dir/mm-$contract.json" ]]; then
+  mv "$state_dir/mm-$contract.json" "$mm_state"
+fi
 quote_sac=${QUOTE_SAC:?QUOTE_SAC is required}
 usdc_issuer=${USDC_ISSUER:?USDC_ISSUER is required}
 

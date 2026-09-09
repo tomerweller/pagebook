@@ -1169,3 +1169,17 @@ export function mockSnapshot(): MockSnapshot {
     moreAsks: false,
   };
 }
+
+/** The market's `level_cap`, read from its `Market` entry; undefined when the
+ *  entry is unreadable. Callers pass it to the submit layer so the flat
+ *  write-byte cover tracks a raised cap (ADR-037). */
+export async function fetchLevelCap(rpc: Rpc, contract: string, market: number): Promise<number | undefined> {
+  try {
+    const k = ck(contract, "Market", market);
+    const res = await fetchEntries(rpc, [k]);
+    const m = parseMarket(readNative(indexByKey(res.entries), k));
+    return m?.level_cap;
+  } catch {
+    return undefined;
+  }
+}

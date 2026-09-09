@@ -142,4 +142,8 @@ test("runKeepalive dry-run plans from synthetic getLedgerEntries", async () => {
   expect(r.summary.mid).toBe(105);
   expect(r.line.startsWith("KEEPALIVE dry ")).toBe(true);
   expect(lines.some((l) => l.action === "extend" && l.outcome === "dry")).toBe(true);
+  // The instance key is swept too; missing (or near-horizon) plans a
+  // `keepalive()` invocation.
+  expect(lines.some((l) => l.action === "keepalive" && l.outcome === "dry")).toBe(true);
+  expect(r.summary.instance).toBe("dry");
 });

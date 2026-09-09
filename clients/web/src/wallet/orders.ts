@@ -515,7 +515,7 @@ export function createOrders(opts: {
     const keys = book?.base && book.quote
       ? keysForReplace(opts.getMarket(), "00".repeat(32), order.nonce, order.isBid, order.tick, st.replaceBid, st.replaceTick, "00".repeat(32), "00".repeat(32)).length
       : 8;
-    const fee = estimatePaddedFee(keys);
+    const fee = estimatePaddedFee(keys, 0n, m?.level_cap);
     const rent = order.archived ? `restore rent ~ ${formatAtoms(ARCHIVE_RENT_STROOPS, 7)} XLM` : "";
     const qn = quant();
     const overrides = ov();

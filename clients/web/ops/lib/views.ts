@@ -47,11 +47,17 @@ function asNum(v: unknown): number {
 export function parseLevel(native: unknown): LevelView {
   if (native == null || typeof native !== "object") throw new Error("empty Level view");
   const r = native as Record<string, unknown>;
+  // The view emits snake_case symbol keys; a missing field means the contract
+  // does not speak the ADR-037 LevelInfo shape (wrong contract or wasm), and
+  // fabricating a 0 would hide that from every book-health check.
+  if (r.generation == null || r.head_seq == null || r.depth == null || r.open_lots == null) {
+    throw new Error("Level view missing fields: not an ADR-037 LevelInfo");
+  }
   return {
     generation: asNum(r.generation),
-    head_seq: asNum(r.head_seq ?? r.headSeq),
+    head_seq: asNum(r.head_seq),
     depth: asNum(r.depth),
-    open_lots: asNum(r.open_lots ?? r.openLots),
+    open_lots: asNum(r.open_lots),
   };
 }
 

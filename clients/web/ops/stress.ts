@@ -15,6 +15,7 @@ import {
   MARKET0_ISSUER,
   MARKET0_NONCE_BASE,
   MARKET0_QUOTE_SAC,
+  MARKET0_RETIRED,
 } from "./lib/market0";
 import { randInt, repr } from "./lib/math";
 import { openLog, type OpsLog } from "./lib/opslog";
@@ -388,6 +389,11 @@ export class Stress {
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const a = parseStressArgs(argv);
   if (a.network !== "testnet") throw new Error("only testnet is supported by the ops entry points today");
+  if (MARKET0_RETIRED) {
+    throw new Error(
+      "ops:stress targets the retired scratch market (ADR-036): create a scratch market on the live contract, repoint ops/lib/market0.ts, and flip MARKET0_RETIRED",
+    );
+  }
   const s = new Stress(a);
   if (a.phase === "seed") await s.seed();
   else if (a.phase === "run") await s.run();

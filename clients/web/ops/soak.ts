@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRpc, type Rpc } from "../src/book";
+import { createRpc, fetchLevelCap, type Rpc } from "../src/book";
 import { addrToHex } from "../src/engine/clientKeys";
 import {
   submitPlace,
@@ -215,6 +215,7 @@ export class Soak {
           quoted,
           tokens: this.tokens,
           padEnd: limit,
+          levelCap: this.levelCap,
         }),
       );
       return { out, nonce };
@@ -255,6 +256,7 @@ export class Soak {
         nonce: BigInt(nonce),
         padKeys,
         tokens: this.tokens,
+        levelCap: this.levelCap,
       }),
     );
   }
@@ -309,6 +311,7 @@ export class Soak {
             items,
             padKeys,
             tokens: this.tokens,
+            levelCap: this.levelCap,
           }),
         );
         if (bout === "ok") {
@@ -361,6 +364,7 @@ export class Soak {
             qtyLots: 1n,
             padKeys,
             tokens: this.tokens,
+            levelCap: this.levelCap,
           }),
         );
       }
@@ -392,8 +396,11 @@ export class Soak {
     }
   }
 
+  levelCap: number | undefined;
+
   async run(): Promise<Record<string, unknown>> {
     this.bindSignals();
+    this.levelCap = await fetchLevelCap(this.rpc, this.a.contract, this.a.market);
     const start = await this.latestFn();
     const loops = [this.takerLoop(), this.makerLoop(), this.spamLoop(), this.stormLoop()];
     await waitLedgers({

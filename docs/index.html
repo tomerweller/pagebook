@@ -351,7 +351,7 @@
   <h2>Tick index</h2>
   <p>Each market side has a bitmap of active price levels. Bit <code>T[i]&nbsp;=&nbsp;1</code> means tick <code>i</code> may have resting supply. Matching uses it to find the next candidate tick without scanning every price.</p>
   <h3>Implementation</h3>
-  <p>The index is stored in two levels: a summary identifies non-empty tick words, and each tick word identifies active ticks in its range. With 2,048-bit words under a 2,048-bit summary, one side covers <code>2^22</code>, or 4,194,304, ticks. Each bitmap has a 257-byte packed payload.</p>
+  <p>The index is stored in two levels: a summary identifies non-empty tick words, and each tick word identifies active ticks in its range. With 2,048-bit words under a 2,048-bit summary, one side covers <code>2^22</code>, or 4,194,304, ticks. Each bitmap is a 256-byte value, 264 bytes serialized.</p>
   <p>The index is derived state. A live level must have its bit set, but a set bit may point to an empty level. Matching verifies the level and clears stale bits lazily.</p>
 
   <figure>
@@ -441,7 +441,7 @@
       </g>
     </svg>
     </div>
-    <figcaption><b>The tick index is two levels of bitmaps.</b> A tick number splits into a word index and a bit index, so tick <code>15,805</code> lives at word 7, bit 1,469. The summary marks which words contain set bits; 2,048 words of 2,048 bits cover the <code>2^22</code>-tick range, and each bitmap is one 257-byte packed entry. The index is derived state, which is why a set bit can be stale.</figcaption>
+    <figcaption><b>The tick index is two levels of bitmaps.</b> A tick number splits into a word index and a bit index, so tick <code>15,805</code> lives at word 7, bit 1,469. The summary marks which words contain set bits; 2,048 words of 2,048 bits cover the <code>2^22</code>-tick range, and each bitmap is one 256-byte entry. The index is derived state, which is why a set bit can be stale.</figcaption>
   </figure>
 </section>
 
@@ -736,101 +736,77 @@
 <section id="results">
   <h2>Results</h2>
   <p>A draft implementation is live on testnet. The <a href="https://tomerweller.com/pagebook/client/">web client</a> reads a PageBook market directly from Soroban RPC — best bid and ask, depth per side, recent trades, the market's vault and fee balances — and trades on it with an in-page disposable testnet wallet.</p>
-  <p>Each row below is one representative landed transaction on the live XLM/USDC market: the median-fee sample of its category, except the maximum take, a constructed transaction that crossed the full 32-level limit in one call, filling 1,576 lots (15,760&nbsp;XLM, about 3,000&nbsp;USDC). Declared numbers include footprint padding; metered numbers are what execution actually used. Persistent-state rent is separate.</p>
+  <p>Each row below is a constructed worst-or-typical shape measured by the repository's resource gates: entries and write bytes metered by the SDK host against the mainnet cost snapshot, with the fee estimate from the architecture's per-operation table (execution plus any rent the shape creates). The maximum take crosses the full 32-level limit in one call. Persistent-state rent dominates wherever an entry is created.</p>
   <div class="tablewrap">
     <table class="results">
-      <caption class="sr-only">Measured resources and fee per invocation type, one landed transaction each</caption>
+      <caption class="sr-only">Measured entries, write bytes and estimated fee per invocation type</caption>
       <thead>
         <tr>
           <th scope="col">Invocation</th>
-          <th scope="col" class="num">R/W entries</th>
-          <th scope="col" class="num">Instructions (metered)</th>
-          <th scope="col" class="num">Writes declared</th>
-          <th scope="col" class="num">Writes metered</th>
-          <th scope="col" class="num">Fee charged</th>
+          <th scope="col" class="num">Entries read</th>
+          <th scope="col" class="num">Entries written</th>
+          <th scope="col" class="num">Write bytes (metered)</th>
+          <th scope="col" class="num">Est. resource fee</th>
         </tr>
       </thead>
       <tbody>
         <tr>
-          <td>Rest a maker quote (post-only)</td>
-          <td class="num">16</td>
-          <td class="num">3.0M</td>
-          <td class="num">7.8 KB</td>
-          <td class="num">3.1 KB</td>
-          <td class="num">0.0142 XLM</td>
+          <td>Rest a maker quote (existing level)</td>
+          <td class="num">13</td>
+          <td class="num">5</td>
+          <td class="num">1.1 KB</td>
+          <td class="num">~0.048 XLM</td>
         </tr>
         <tr>
-          <td>Rest inside the spread</td>
-          <td class="num">19</td>
-          <td class="num">3.3M</td>
-          <td class="num">9.1 KB</td>
-          <td class="num">4.6 KB</td>
-          <td class="num">0.0112 XLM</td>
+          <td>Rest opening an empty side</td>
+          <td class="num">15</td>
+          <td class="num">8</td>
+          <td class="num">1.9 KB</td>
+          <td class="num">~0.24 XLM</td>
         </tr>
         <tr>
           <td>Replace one quote</td>
-          <td class="num">17</td>
-          <td class="num">3.4M</td>
-          <td class="num">8.4 KB</td>
-          <td class="num">3.9 KB</td>
-          <td class="num">0.0077 XLM</td>
+          <td class="num">13</td>
+          <td class="num">7</td>
+          <td class="num">1.7 KB</td>
+          <td class="num">~0.0024 XLM</td>
         </tr>
         <tr>
-          <td>Replace 8 quotes in one batch</td>
-          <td class="num">52</td>
-          <td class="num">11.8M</td>
-          <td class="num">24.1 KB</td>
-          <td class="num">11.3 KB</td>
-          <td class="num">0.0234 XLM</td>
+          <td>Replace 40 quotes in one batch (same ticks)</td>
+          <td class="num">90</td>
+          <td class="num">83</td>
+          <td class="num">21.3 KB</td>
+          <td class="num">~0.031 XLM</td>
         </tr>
         <tr>
           <td>Settle a maker order</td>
-          <td class="num">11</td>
-          <td class="num">2.5M</td>
-          <td class="num">5.0 KB</td>
-          <td class="num">1.8 KB</td>
-          <td class="num">0.0051 XLM</td>
+          <td class="num">9</td>
+          <td class="num">5</td>
+          <td class="num">0.8 KB</td>
+          <td class="num">~0.0015 XLM</td>
         </tr>
         <tr>
-          <td>Take at the touch (1 level)</td>
-          <td class="num">21</td>
-          <td class="num">3.3M</td>
-          <td class="num">10.8 KB</td>
-          <td class="num">4.3 KB</td>
-          <td class="num">0.0092 XLM</td>
-        </tr>
-        <tr>
-          <td>Take across 2-3 levels</td>
-          <td class="num">37</td>
-          <td class="num">5.1M</td>
-          <td class="num">18.6 KB</td>
-          <td class="num">9.0 KB</td>
-          <td class="num">0.0153 XLM</td>
-        </tr>
-        <tr>
-          <td>Take across 4-6 levels</td>
-          <td class="num">57</td>
-          <td class="num">8.7M</td>
-          <td class="num">30.5 KB</td>
-          <td class="num">9.0 KB</td>
-          <td class="num">0.0241 XLM</td>
+          <td>Take across 8 levels</td>
+          <td class="num">22</td>
+          <td class="num">17</td>
+          <td class="num">3.9 KB</td>
+          <td class="num">~0.006 XLM</td>
         </tr>
         <tr>
           <td>Maximum take (32 levels, the budget cap)</td>
           <td class="num">77</td>
-          <td class="num">18.7M</td>
-          <td class="num">38.6 KB</td>
-          <td class="num">15.4 KB</td>
-          <td class="num">0.0357 XLM</td>
+          <td class="num">72</td>
+          <td class="num">21.0 KB</td>
+          <td class="num">~0.025 XLM</td>
         </tr>
       </tbody>
     </table>
   </div>
-  <p class="tablenote">R/W entries are declared, which is what admission charges. Settlement cost does not grow with queue depth.</p>
+  <p class="tablenote">Fees split into execution, which is small everywhere, and rent, which is paid where an entry is created. Settlement cost does not grow with queue depth.</p>
   <aside class="note">
     <p><span class="lbl">Rent.</span> Creating a persistent <code>Order</code> adds about 0.046&nbsp;XLM of rent for the 120-day minimum TTL, and a new price level may also create or restore level and bitmap entries. <code>replace</code> reuses the existing order record, so normal quote updates do not pay that order rent again.</p>
   </aside>
-  <p>Reading down the fee column: quoting costs fractions of a cent in XLM, and the heaviest legal taker transaction on this market cost 0.0357&nbsp;XLM while using under a third of every per-transaction cap. Full measurements are in the <a href="https://github.com/tomerweller/pagebook/blob/main/docs/09-resource-utilization.md">resource-utilization report</a>.</p>
+  <p>Reading down the fee column: quoting costs fractions of a cent in XLM, and the heaviest legal taker transaction uses 72 of the 200 per-transaction writes and about a sixth of the write-byte cap. The full shape-by-shape record is the <a href="https://github.com/tomerweller/pagebook/blob/main/docs/08-worst-case-matrix.md">worst-case matrix</a>.</p>
 </section>
 
 </main>

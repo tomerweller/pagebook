@@ -3,6 +3,8 @@
 // remain as provenance for ADR-027/028 (stress and decomposition runs). Create a
 // scratch market on the live contract and repoint them before running
 // `ops:stress` or the scratch compose overlay again.
+// Flip to false after repointing the constants below at a live scratch market.
+export const MARKET0_RETIRED = true;
 export const MARKET0_CONTRACT = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
 export const MARKET0_ID = 0;
 export const MARKET0_BASE_SAC = "CDAHSKHBGFENTV3XGWRWVIWE3ISAEYIZQNGD4GCWRDDIOIW4DVZ26FQG";

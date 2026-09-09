@@ -24,7 +24,7 @@ M3 branch.
 | | SDEX (classic protocol) | PageBook (Soroban contract) |
 |---|---|---|
 | Where matching runs | inside the protocol, at transaction apply | inside a contract invocation, at apply |
-| Order representation | `OfferEntry` ledger entry per offer; price a rational `n/d` of two i32s; amount an i64 | one `Order` entry per resting order plus a positional slot in a packed `Level`; price an integer tick; size in lots (§0.2, §2, §3) |
+| Order representation | `OfferEntry` ledger entry per offer; price a rational `n/d` of two i32s; amount an i64 | one `Order` entry per resting order plus a positional slot in the occupancy-sized `Level` entry; price an integer tick; size in lots (§0.2, §2, §3) |
 | Placing an order | `ManageBuyOffer` / `ManageSellOffer` / `CreatePassiveSellOffer`, ~100 stroops base fee | `place`, resource-priced; ~0.048 XLM to rest (dominated by 120-day `Order` rent), ~0.006 to 0.026 XLM to take (§17) |
 | Cost to hold an order | 0.5 XLM base reserve locked per offer, fully refundable; no rent | ~0.046 XLM per order per 120 days, non-refundable; entry archives after 120 idle days (§3, §18) |
 | Cost to update a quote | modify in place, ~100 stroops | `replace` rewrites the `Order` in place, ~0.002 XLM; a 40-quote same-tick `replace_batch` ~0.031 XLM (ADR-005) |
@@ -222,7 +222,7 @@ SDEX capacity is the ledger's operation limit (1,000 operations per ledger by va
 setting), shared with all classic traffic; each offer is one operation.
 
 PageBook capacity is Soroban's per-ledger write-byte budget (286,720 B): a maximal
-32-level sweep is ~27 KB, so about 10 of them fit in a ledger; hundreds of rests or
+32-level sweep is ~21 KB, so about 13 of them fit in a ledger; hundreds of rests or
 settles do; ~10 full 40-quote refreshes across all users (§17, ADR-005). And because
 every settling operation touches the vault's balance entry per token, all markets
 sharing a token form one serialization cluster under Soroban's parallel execution

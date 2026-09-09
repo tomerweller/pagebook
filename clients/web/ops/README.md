@@ -47,10 +47,11 @@ the maker between hosts without unquoting the market:
 1. On the old host: stop the maker WITHOUT `--cancel-on-exit` (SIGTERM; in
    compose, `docker compose stop mm`). Quotes stay live on the book; the
    state file is current at exit.
-2. Copy the state into the new host's volume:
-   `docker compose cp <src> mm:/app/ops/state/mm.json` (or `docker run --rm
-   -v pagebook-state:/s -v $(pwd):/h alpine cp /h/mm.json /s/mm.json`
-   before first start).
+2. Copy the state into the new host's volume, keeping the
+   `mm-<CONTRACT>-m<MARKET>.json` name:
+   `docker compose cp <src> mm:/app/ops/state/mm-<CONTRACT>-m<MARKET>.json`
+   (or `docker run --rm -v pagebook-state:/s -v $(pwd):/h alpine cp
+   /h/mm-<CONTRACT>-m<MARKET>.json /s/` before first start).
 3. Start the maker; its first cycle adopts the quotes and reconciles any
    fills from the gap. Fallback if adoption misbehaves: run once with
    `--cancel-all`, then start fresh (settle and requote).
@@ -78,10 +79,11 @@ is how the original migration cut over).
 `clients/web/fly.toml` runs the maker, trader, and watchdog on one Fly Machine
 in `iad`; its `[env]` block carries `CONTRACT`, `MARKET` (0), both SAC ids and
 the USDC issuer, which `deploy/fly-entrypoint.sh` passes to every bot. The
-maker's state file on the volume is `/data/state/mm-<CONTRACT>.json`, so a
-redeploy to a new contract starts from an empty book rather than adopting the
-previous contract's quote list; the old file stays on the volume as history. The app has no public service. A 1 GB volume mounted at `/data`
-holds `mm.json`, the bot logs, and the hourly watchdog log across restarts and
+maker's state file on the volume is `/data/state/mm-<CONTRACT>-m<MARKET>.json`,
+so a redeploy to a new contract or market starts from an empty book rather
+than adopting the previous book's quote list; the old file stays on the
+volume as history. The app has no public service. A 1 GB volume mounted at `/data`
+holds the maker state files, the bot logs, and the hourly watchdog log across restarts and
 deploys. The watchdog runs once an hour. If it finds a stale bot or a hard
 runtime error, it restarts that bot through the supervisor. Price-move and
 low-reserve alerts remain visible in the watchdog log for operator follow-up.

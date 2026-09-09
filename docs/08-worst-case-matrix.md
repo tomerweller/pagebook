@@ -297,7 +297,7 @@ bytes, 70% of the cap; the general bound 40 × (232 + 12 × cap) + 21,320 ≤
 
 The 40-quote §17 row assumed about two writes per item (a same-tick refresh:
 one `Level` + one `Order`), and that is what the same-tick shape measures (83
-writes, 23,880 bytes). Moving each quote to a new tick writes the old `Level`,
+writes, 21,320 bytes). Moving each quote to a new tick writes the old `Level`,
 the new `Level`, and the `Order` (three per item) and lands at 124 writes /
 31.5 KB.
 
@@ -321,9 +321,9 @@ notes once instead of per row.
    two SAC balances, and the auth nonce entry.
 4. Replace: write bytes ~2.0 KB, not 1.5 KB. Writes ~7, which is inside the
    ~8 target.
-5. `replace_batch` of 40 quotes that each change tick: ~124 writes / ~44 KB,
+5. `replace_batch` of 40 quotes that each change tick: ~124 writes / ~31.5 KB,
    not 90 / 24 KB. A same-tick qty-only refresh is closer to the old row.
-6. Max sweep, 32 levels in 32 words: ~72 writes / ~26 KB, not 70 / 22 KB.
+6. Max sweep, 32 levels in 32 words: ~72 writes / ~21 KB, not 70 / 22 KB.
    Recast the arithmetic as `32 × Level + 32 × TickWord + TickSummary +
    BestTick + FeeAccrual + SAC` using measured sizes plus framing, not the
    Level budget and a 1.2 KB lump. Drop "own-rest entries" from a take-only

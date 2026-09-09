@@ -2,10 +2,14 @@ import { expect, test } from "vitest";
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { createViews, parseLevel, parseOrder } from "./views";
 
-test("parseLevel throws on a null or absent native", () => {
+test("parseLevel throws on a null, absent, or non-ADR-037 native", () => {
   expect(() => parseLevel(null)).toThrow(/empty Level view/);
   expect(() => parseLevel(undefined)).toThrow(/empty Level view/);
-  expect(parseLevel({ generation: 1, open_lots: 4 }).open_lots).toBe(4);
+  // A partial shape means the contract does not speak LevelInfo — throw
+  // rather than fabricate zeros a book-health check would trust.
+  expect(() => parseLevel({ generation: 1, open_lots: 4 })).toThrow(/missing fields/);
+  const full = parseLevel({ generation: 1, head_seq: 2, depth: 3, open_lots: 4 });
+  expect(full).toEqual({ generation: 1, head_seq: 2, depth: 3, open_lots: 4 });
 });
 
 test("parseOrder throws on a null native rather than fabricating zeros", () => {

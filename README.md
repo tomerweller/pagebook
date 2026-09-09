@@ -129,9 +129,9 @@ These are the main limits and behaviors behind the design:
   balances. Asset authorization and issuer clawback settings remain external
   trust assumptions.
 - The network caps each transaction at 400 footprint entries, 200 written
-  entries, and 132 KB of write bytes. A measured maximal 32-level take declared
-  77 read/write entries and 38.6 KB of writes (15.4 KB metered) and cost
-  0.0357 XLM ([measurements](docs/09-resource-utilization.md)).
+  entries, and 132 KB of write bytes. The in-repo gates pin the maximal
+  32-level take at 72 written entries and ~21.0 KB of write bytes, about
+  ~0.025 XLM ([worst-case matrix](docs/08-worst-case-matrix.md)).
 
 ## Testnet deployment
 

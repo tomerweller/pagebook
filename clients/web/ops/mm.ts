@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRpc, type Rpc } from "../src/book";
+import { createRpc, fetchLevelCap, type Rpc } from "../src/book";
 import { addrToHex } from "../src/engine/clientKeys";
+import { pad } from "../src/engine/pad";
 import {
   submitPlace,
   submitPostOnlyPlace,
@@ -152,6 +153,7 @@ export class MM {
   badTicks = new Map<string, number>();
   healed = new Map<string, number>();
   sizes: ApplyPadSizes | undefined;
+  levelCap: number | undefined;
   restores: RestoreBudget = { n: 0 };
   private now: () => number;
   private sleep: (ms: number) => Promise<void>;
@@ -271,6 +273,7 @@ export class MM {
         padKeys,
         tokens: this.tokens,
         sizes: this.padSizes(),
+        levelCap: this.levelCap,
       }),
     );
     if (res.kind === "ok") {
@@ -302,6 +305,7 @@ export class MM {
           padKeys,
           tokens: this.tokens,
           sizes: this.padSizes(),
+        levelCap: this.levelCap,
         }),
       );
       if (res.kind === "ok") {
@@ -335,6 +339,7 @@ export class MM {
         padKeys,
         tokens: this.tokens,
         sizes: this.padSizes(),
+        levelCap: this.levelCap,
       }),
     );
     if (res.kind === "ok") {
@@ -381,6 +386,11 @@ export class MM {
       base: this.hex.base,
       quote: this.hex.quote,
     };
+    // The heal band's level keys are not in the cycle sweep; sweep them so
+    // pad v2 covers absent band keys at creation size instead of the flat
+    // rate (a default 150-tick band at the flat rate overruns the per-tx
+    // write-byte cap).
+    await this.refreshSizes(pad(quoted, healTarget));
     const flags = { post_only: false, fill_or_kill: false, no_rest: true };
     const { out } = await this.submit(
       "heal",
@@ -401,6 +411,7 @@ export class MM {
           tokens: this.tokens,
           padEnd: healTarget,
           sizes: this.padSizes(),
+        levelCap: this.levelCap,
         }),
     );
     return out;
@@ -418,6 +429,7 @@ export class MM {
         padKeys,
         tokens: this.tokens,
         sizes: this.padSizes(),
+        levelCap: this.levelCap,
       }),
     );
     if (res.kind === "ok" || (res.kind === "typed" && res.errorName === "UnknownOrder")) {
@@ -435,6 +447,9 @@ export class MM {
 
   async run(): Promise<void> {
     this.bindSignals();
+    // The market's level_cap sizes the flat write-byte cover (ADR-037);
+    // raise-only, so one read at startup is enough.
+    this.levelCap = await fetchLevelCap(this.rpc, this.a.contract, this.a.market);
     let loop = 0;
     while (!this.stop) {
       const t0 = this.now();

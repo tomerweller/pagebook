@@ -30,13 +30,19 @@ export const INSTR_PER = 120_000;
 export const INSTR_FIXED = 3_000_000;
 export const FEE_ONCE = Math.floor((INSTR_FIXED * 7) / 10_000);
 
-export const PER_ADDED =
-  WRITE_ENTRY_FEE +
-  Math.floor((WRITE_BYTES_PER * 875) / 1024) +
-  Math.floor((DISK_READ_PER * 447) / 1024) +
-  1_563 +
-  120 * 7 +
-  100;
+/** Resource-fee cover per added pad key. Scales with the flat write-byte
+ *  rate, so a raised-cap market's fee matches its declared bytes. */
+export function perAddedFee(levelCap?: number): number {
+  return (
+    WRITE_ENTRY_FEE +
+    Math.floor((flatWriteBytesPer(levelCap) * 875) / 1024) +
+    Math.floor((DISK_READ_PER * 447) / 1024) +
+    1_563 +
+    120 * 7 +
+    100
+  );
+}
+export const PER_ADDED = perAddedFee();
 
 function keyB64(k: StellarSdk.xdr.LedgerKey): string {
   return k.toXDR("base64");
@@ -165,7 +171,7 @@ export function applyPad(
   builder.setResources(instructions, diskReadBytes, writeBytes);
 
   const rf0 = BigInt(data.resourceFee().toString());
-  const rf = (rf0 * 13n) / 10n + BigInt(PER_ADDED * added) + BigInt(FEE_ONCE);
+  const rf = (rf0 * 13n) / 10n + BigInt(perAddedFee(levelCap) * added) + BigInt(FEE_ONCE);
   builder.setResourceFee(rf.toString());
 
   let out = builder.build();
@@ -200,7 +206,7 @@ export function classicFee(resourceFee: bigint): string {
   return (resourceFee + 1000n).toString();
 }
 
-export function estimatePaddedFee(addedKeys: number, simResourceFee = 0n): bigint {
-  const rf = (simResourceFee * 13n) / 10n + BigInt(PER_ADDED * addedKeys) + BigInt(FEE_ONCE);
+export function estimatePaddedFee(addedKeys: number, simResourceFee = 0n, levelCap?: number): bigint {
+  const rf = (simResourceFee * 13n) / 10n + BigInt(perAddedFee(levelCap) * addedKeys) + BigInt(FEE_ONCE);
   return rf + 1000n;
 }

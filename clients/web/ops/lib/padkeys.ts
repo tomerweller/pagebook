@@ -1,6 +1,6 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
 import type { Rpc } from "../../src/book";
-import { addrToHex, toLedgerKey, type ClientKey, type Hex32 } from "../../src/engine/clientKeys";
+import { addrToHex, scValKeyName, toLedgerKey, type ClientKey, type Hex32 } from "../../src/engine/clientKeys";
 import { tokenExtraKeys, type ClassicToken } from "../../src/engine/submit";
 import { DEFAULT_GROWTH, type ApplyPadSizes, type KeyLiveness, type PadKeySize } from "../../src/engine/txdata";
 import { wordOf } from "../../src/decode";
@@ -86,6 +86,30 @@ export function classifyLiveness(liveUntil: number | undefined, latestLedger: nu
   return "live";
 }
 
+// Creation cover per entry type: the payload at creation (sizes.rs pins a
+// one-order Level at 136 B XDR, an Order at ~150, a bitmap at 264, BestTick /
+// FeeAccrual under 60) plus ~108 B of key/entry framing, rounded up. A key the
+// sweep proved absent is covered at what the operation could create there —
+// not at the full-level flat rate, which at 1,100 B per key would push a
+// default 150-tick heal band past the 132,096 B per-transaction write cap.
+const CREATE_SIZES: Record<string, number> = {
+  Level: 300,
+  Order: 300,
+  TickWord: 400,
+  TickSummary: 400,
+  BestTick: 200,
+  FeeAccrual: 200,
+};
+
+function createSizeFor(key: StellarSdk.xdr.LedgerKey): number | undefined {
+  try {
+    const name = scValKeyName(key.contractData().key()).split("(")[0];
+    return CREATE_SIZES[name];
+  } catch {
+    return undefined;
+  }
+}
+
 export async function sweepPadSizes(
   rpc: Rpc,
   keys: StellarSdk.xdr.LedgerKey[],
@@ -113,7 +137,7 @@ export async function sweepPadSizes(
     for (const key of group) {
       const b64 = key.toXDR("base64");
       if (!seen.has(b64) && !byKey.has(b64)) {
-        byKey.set(b64, { exists: false, actualSize: 0 });
+        byKey.set(b64, { exists: false, actualSize: 0, createSize: createSizeFor(key) });
       }
     }
   }

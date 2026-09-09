@@ -249,7 +249,7 @@ default that a decision note may change once measured.
 - **M4 — resource hardening.** Build the **worst-case state-transition matrix** first
   (per op: entries touched × bytes, incl. bitmap dispersal, deep levels, TTL
   bumps, SAC entries), then footprint-count and write-byte assertions per op against
-  architecture §17's corrected table (max sweep: 72 writes / ~26.6 KB — construct the
+  architecture §17's corrected table (max sweep: 72 writes / ~21.0 KB — construct the
   32-level / 32-word shape explicitly); **fee gates**: measured resource fee per op
   (SDK budget + testnet simulation) asserted against §17's estimate table within a
   tolerance band, with the rent component isolated (it dominates and moves with the

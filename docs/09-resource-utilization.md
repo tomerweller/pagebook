@@ -11,10 +11,10 @@
 > instructions carry over. A fresh sample from the live contract is the
 > follow-up recorded in ADR-036.
 
-Every number in this document comes from a landed transaction on the live
-XLM/USDC market (market 1 on
-`CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO`, testnet,
-protocol 27): 30 sampled transactions per category out of the market maker's
+Every number in this document comes from a landed transaction on the
+then-live XLM/USDC market (market 1 on the retired
+`CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO` deployment,
+testnet, protocol 27): 30 sampled transactions per category out of the market maker's
 and the trader's continuous traffic (ADR-026), pulled from the RPC by
 `tools/mm/resources.py`. For each transaction it records two sides:
 

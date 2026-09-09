@@ -2,7 +2,8 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRpc, type Rpc } from "../src/book";
 import { keyStr, toLedgerKey, type ClientKey } from "../src/engine/clientKeys";
-import { extendKeys, restoreKeys } from "../src/engine/submit";
+import { extendKeys, restoreKeys, submitInvocation } from "../src/engine/submit";
+import { instanceKey } from "../src/keys";
 import { wordOf } from "../src/decode";
 import type { KeyLiveness } from "../src/engine/txdata";
 import { parseArgs, type ArgSpec } from "./lib/args";
@@ -150,6 +151,7 @@ export type KeepaliveDeps = {
   log?: OpsLog;
   restore?: typeof restoreKeys;
   extend?: typeof extendKeys;
+  invoke?: typeof submitInvocation;
 };
 
 export type KeepaliveSummary = {
@@ -159,6 +161,9 @@ export type KeepaliveSummary = {
   restores: number;
   extends: number;
   skipped: number;
+  /** The contract instance/wasm TTL: "skip" when comfortably live, else the
+   *  outcome of invoking the venue's `keepalive()` entrypoint. */
+  instance: string;
   dry: boolean;
 };
 
@@ -188,7 +193,11 @@ export async function runKeepalive(a: KeepaliveArgs, deps: KeepaliveDeps = {}): 
   });
   const ctx = { contract: a.contract, caller: id.address };
   const xdrKeys = keys.map((k) => toLedgerKey(ctx, k).xdr);
-  const sizes = await sweepPadSizes(rpc, xdrKeys, { chunk: 100, coverBytes: false });
+  // The venue's instance and wasm entries ride the contract's own
+  // `keepalive()` entrypoint (§12/§18), not ExtendFootprintTTL on data keys:
+  // sweep the instance key alongside the data keys to see its TTL.
+  const instXdr = instanceKey(a.contract).xdr;
+  const sizes = await sweepPadSizes(rpc, [...xdrKeys, instXdr], { chunk: 100, coverBytes: false });
   const latest = sizes.latestLedger ?? 0;
   const rows: KeepaliveRow[] = keys.map((key, i) => {
     const info = sizes.sizeOf(xdrKeys[i]);
@@ -248,6 +257,26 @@ export async function runKeepalive(a: KeepaliveArgs, deps: KeepaliveDeps = {}): 
       if (res.kind === "ok") extendsN += group.length;
     }
   }
+  // Instance/wasm TTL: invoke the contract's `keepalive()` when it nears the
+  // horizon (an archived instance restores through the simulation preamble).
+  let instance = "skip";
+  const instInfo = sizes.sizeOf(instXdr);
+  const instLive = instInfo?.liveUntil ?? 0;
+  if (!instInfo?.exists || instLive - latest < a.horizonLedgers) {
+    if (a.dryRun) {
+      log.record("keepalive", "dry", { key: "Instance", liveUntil: instLive, latest });
+      instance = "dry";
+    } else {
+      const doInvoke = deps.invoke ?? submitInvocation;
+      const call = () => doInvoke({ rpc, contract: a.contract, sourceSecret: id.secret, fn: "keepalive", args: [] });
+      let res = await call();
+      if (res.kind === "txBadSeq") {
+        res = await call();
+      }
+      instance = outcomeOf(res);
+      log.record("keepalive", instance, { key: "Instance", liveUntil: instLive, latest, tx: "hash" in res ? res.hash : "" });
+    }
+  }
   const planned = new Set(plan.map((p) => p.keyName));
   for (const row of rows) {
     // Singletons are few; record their remaining TTL even when healthy so the
@@ -265,6 +294,7 @@ export async function runKeepalive(a: KeepaliveArgs, deps: KeepaliveDeps = {}): 
     restores,
     extends: extendsN,
     skipped,
+    instance,
     dry: a.dryRun,
   };
   const line = `KEEPALIVE ${a.dryRun ? "dry" : "ok"} ${JSON.stringify(summary)}`;

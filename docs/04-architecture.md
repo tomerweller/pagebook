@@ -80,8 +80,8 @@ the floor is the dust-order defense, the ceiling is half the overflow proof.
 below i128 by construction. Config constants that bound loops but are not per-market:
 `MAX_ROUTE_LEGS` (target 4) and `MAX_REPLACE_BATCH` (40: a replace item's two events
 measure ~340 B together, so 40 items are ~13.9 KB of the 16,384-byte event budget
-(§13) and 64 would exceed it; 40 items on dispersed levels are ~170 footprint entries
-and ~164 writes, inside the 400 / 200 caps, ADR-024).
+(§13) and 64 would exceed it; 40 items on dispersed levels are ~130 footprint entries
+and ~124 writes, inside the 400 / 200 caps, ADR-024).
 
 ### 0.4 Actors
 
@@ -960,7 +960,7 @@ rewrites are live and name what it creates:
 | place, maximal take (32 levels) | **~0.025 XLM** | exec 253k stroops (72 writes) |
 | `create_market` | **~0.088 XLM** | `Market` rent 0.087 |
 | `collect_fees` | **~0.001 XLM** | exec (+ recipient's first balance 0.037, once) |
-| `keepalive` (whole venue, per ~120 d) | **~2.3 XLM** | wasm code-entry rent (~40 KB at ⅓ discount) |
+| `keepalive` (whole venue, per ~120 d) | **~1.7 XLM** | wasm code-entry rent (~30 KB at ⅓ discount) |
 
 Readings, in design terms:
 
