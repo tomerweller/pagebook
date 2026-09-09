@@ -190,12 +190,12 @@ pub fn pad(q: &Quoted, pad_end: u32) -> PadOut {
 /// The keys the simulated execution touched (as opposed to padded-only keys):
 /// mark for P23 restore exactly those of them RPC reports archived (§14
 /// "Archived keys in the pad"). `archived` is the RPC answer for `out.keys`.
+/// `Config` and `Market` are omitted: they are read-only on a trading call,
+/// and `archivedSorobanEntries` indexes the read-write list.
 pub fn restore_marks(q: &Quoted, out: &PadOut, archived: &[ClientKey]) -> Vec<ClientKey> {
     let m = q.market;
     let opp = !q.own_side;
     let mut touched = vec![
-        ClientKey::Config,
-        ClientKey::Market(m),
         ClientKey::TickSummary(m, opp),
         ClientKey::BestTick(m, opp),
         ClientKey::Level(m, q.own_side, q.limit_tick),
@@ -389,6 +389,19 @@ mod tests {
                 ClientKey::Level(0, true, 20)
             ]
         );
+    }
+
+    #[test]
+    fn restore_marks_skips_archived_config_and_market() {
+        let q = quoted();
+        let out = pad(&q, 25);
+        let archived = vec![
+            ClientKey::Config,
+            ClientKey::Market(0),
+            ClientKey::Level(0, false, 10),
+        ];
+        let marks = restore_marks(&q, &out, &archived);
+        assert_eq!(marks, vec![ClientKey::Level(0, false, 10)]);
     }
 
     #[test]

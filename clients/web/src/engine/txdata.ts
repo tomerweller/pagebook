@@ -22,10 +22,12 @@ export function flatWriteBytesPer(levelCap?: number): number {
   return WRITE_BYTES_PER + (cap - DEFAULT_LEVEL_CAP) * LEVEL_SLOT_BYTES;
 }
 export const DISK_READ_PER = 400;
-// Instruction headroom mirrors tools/soak apply_pad: a walk can do more work
-// at apply than simulation saw (levels appear in flight during a trend);
-// 1.2x + 1M fell short by measured margins during fast rallies (ADR-026,
-// ADR-028 era logs), so the flat part must not depend on the simulated amount.
+// Instruction headroom: a walk can do more work at apply than simulation
+// saw (levels appear in flight during a trend). 1.2x + 1M fell short by
+// measured margins during fast rallies (ADR-026, ADR-028 era logs), so the
+// flat part must not depend on the simulated amount. The TypeScript engine
+// counts added + addedRo; tools/soak apply_pad still promotes every planned
+// key to read-write and is the outlier (ADR-038).
 export const INSTR_MULT = 1.25;
 export const INSTR_PER = 120_000;
 export const INSTR_FIXED = 3_000_000;
@@ -129,18 +131,14 @@ export type ApplyPadSizes = {
 export const DEFAULT_GROWTH = 48;
 
 function simRestoreKeys(data: StellarSdk.xdr.SorobanTransactionData, rw: StellarSdk.xdr.LedgerKey[]): StellarSdk.xdr.LedgerKey[] {
-  try {
-    if (data.ext().switch() !== 1) return [];
-    const idxs = data.ext().resourceExt().archivedSorobanEntries();
-    const out: StellarSdk.xdr.LedgerKey[] = [];
-    for (const raw of idxs) {
-      const i = Number(raw);
-      if (Number.isInteger(i) && i >= 0 && i < rw.length) out.push(rw[i]);
-    }
-    return out;
-  } catch {
-    return [];
+  if (data.ext().switch() !== 1) return [];
+  const idxs = data.ext().resourceExt().archivedSorobanEntries();
+  const out: StellarSdk.xdr.LedgerKey[] = [];
+  for (const raw of idxs) {
+    const i = Number(raw);
+    if (Number.isInteger(i) && i >= 0 && i < rw.length) out.push(rw[i]);
   }
+  return out;
 }
 
 function unionLedgerKeys(a: StellarSdk.xdr.LedgerKey[], b: StellarSdk.xdr.LedgerKey[]): StellarSdk.xdr.LedgerKey[] {

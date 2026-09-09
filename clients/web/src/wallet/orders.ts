@@ -516,8 +516,9 @@ export function createOrders(opts: {
       book?.base && book.quote
         ? keysForReplace(opts.getMarket(), "00".repeat(32), order.nonce, order.isBid, order.tick, st.replaceBid, st.replaceTick, "00".repeat(32), "00".repeat(32))
         : null;
-    let rw = 7;
-    let ro = 1;
+    // Mirrors keysForReplace's dedup'd split before token addresses are known.
+    let rw = 11;
+    let ro = 2;
     if (planned) {
       rw = 0;
       ro = 0;

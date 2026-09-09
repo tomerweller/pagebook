@@ -148,6 +148,17 @@ test("restore_marks fixture matches rust js_fixtures", () => {
   ]);
 });
 
+test("restoreMarks does not mark archived Config or Market", () => {
+  const q = fixtureQuoted();
+  const out = pad(q, 12);
+  const archived: ClientKey[] = [
+    { t: "Config" },
+    { t: "Market", market: 0 },
+    { t: "Level", market: 0, isBid: false, tick: 10 },
+  ];
+  expect(sortedKeyStrs(restoreMarks(q, out, archived))).toEqual(["Level(0,false,10)"]);
+});
+
 type FixtureCase = {
   name: string;
   quoted: {
@@ -1010,23 +1021,23 @@ test("disjoint-token two-market envelopes share no writable PageBook instance", 
   const sacC = randomContract();
   const sacD = randomContract();
   const issuer = StellarSdk.Keypair.random().publicKey();
-  const simData = emptyData(
-    [
-      instanceKey(PAGEBOOK).xdr,
-      instanceKey(sacA).xdr,
-      instanceKey(sacB).xdr,
-      instanceKey(sacC).xdr,
-      instanceKey(sacD).xdr,
-    ],
-    [],
-  );
   const sent: string[] = [];
   const { rpc, kp } = mockRpc({
-    simulateTransaction: async () => ({
-      transactionData: simData.toXDR("base64"),
-      minResourceFee: "12000",
-      results: [{ xdr: StellarSdk.xdr.ScVal.scvVoid().toXDR("base64") }],
-    }),
+    simulateTransaction: async (xdr) => {
+      const tx = StellarSdk.TransactionBuilder.fromXDR(xdr, "Test SDF Network ; September 2015") as StellarSdk.Transaction;
+      const op = tx.operations[0] as StellarSdk.Operation.InvokeHostFunction;
+      const market = Number(op.func.invokeContract().args()[1].u32());
+      const listed = market === 0 ? [sacA] : [sacC];
+      const simData = emptyData(
+        [instanceKey(PAGEBOOK).xdr, ...listed.map((s) => instanceKey(s).xdr)],
+        [],
+      );
+      return {
+        transactionData: simData.toXDR("base64"),
+        minResourceFee: "12000",
+        results: [{ xdr: StellarSdk.xdr.ScVal.scvVoid().toXDR("base64") }],
+      };
+    },
     sendTransaction: async (xdr) => {
       sent.push(xdr);
       return { status: "PENDING", hash: `${sent.length}a`.repeat(32).slice(0, 64) };
@@ -1087,12 +1098,19 @@ test("disjoint-token two-market envelopes share no writable PageBook instance", 
   expect(env1.ro.has(keyB64(ck(PAGEBOOK, "Market", 1).xdr))).toBe(true);
   expect(env1.rw.has(keyB64(ck(PAGEBOOK, "Market", 1).xdr))).toBe(false);
 
-  for (const sac of [sacA, sacB, sacC, sacD]) {
+  for (const sac of [sacA, sacB]) {
     const sacInst = keyB64(instanceKey(sac).xdr);
     expect(env0.ro.has(sacInst)).toBe(true);
-    expect(env1.ro.has(sacInst)).toBe(true);
     expect(env0.rw.has(sacInst)).toBe(false);
+    expect(env1.ro.has(sacInst)).toBe(false);
     expect(env1.rw.has(sacInst)).toBe(false);
+  }
+  for (const sac of [sacC, sacD]) {
+    const sacInst = keyB64(instanceKey(sac).xdr);
+    expect(env1.ro.has(sacInst)).toBe(true);
+    expect(env1.rw.has(sacInst)).toBe(false);
+    expect(env0.ro.has(sacInst)).toBe(false);
+    expect(env0.rw.has(sacInst)).toBe(false);
   }
 
   const writable = new Set(["Level", "TickWord", "TickSummary", "BestTick", "Order", "FeeAccrual", "balance", "trustline"]);
