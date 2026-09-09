@@ -1,48 +1,92 @@
+import * as StellarSdk from "@stellar/stellar-sdk";
 import { expect, test } from "vitest";
 import {
-  decodeLevel,
+  parseLevel,
   decodeBitmap,
-  hexToBytes,
   formatInt,
   formatAtoms,
   ticksToPrice,
-  LEVEL_BYTES,
   BITMAP_BYTES,
 } from "./decode";
-import fixtures from "./fixtures.json";
+
+const xdr = StellarSdk.xdr;
+
+/// A `Level` ScVal as the contract stores it: a symbol-keyed map with u32 /
+/// u64 fields and a vec of u64 slots (ADR-036).
+function levelScVal(fields: {
+  generation: number;
+  head_seq: number;
+  tail_seq: number;
+  head_consumed_lots: bigint;
+  open_lots: bigint;
+  slots: bigint[];
+}): StellarSdk.xdr.ScVal {
+  const u64 = (v: bigint) => xdr.ScVal.scvU64(xdr.Uint64.fromString(v.toString()));
+  const entry = (k: string, v: StellarSdk.xdr.ScVal) =>
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(k), val: v });
+  return xdr.ScVal.scvMap([
+    entry("generation", xdr.ScVal.scvU32(fields.generation)),
+    entry("head_consumed_lots", u64(fields.head_consumed_lots)),
+    entry("head_seq", xdr.ScVal.scvU32(fields.head_seq)),
+    entry("open_lots", u64(fields.open_lots)),
+    entry("slots", xdr.ScVal.scvVec(fields.slots.map(u64))),
+    entry("tail_seq", xdr.ScVal.scvU32(fields.tail_seq)),
+  ]);
+}
 
 test("empty level", () => {
-  const lvl = decodeLevel(hexToBytes(fixtures.emptyLevel));
+  const scv = levelScVal({
+    generation: 0,
+    head_seq: 0,
+    tail_seq: 0,
+    head_consumed_lots: 0n,
+    open_lots: 0n,
+    slots: [],
+  });
+  const lvl = parseLevel(StellarSdk.scValToNative(scv));
   expect(lvl).toBeTruthy();
-  expect(hexToBytes(fixtures.emptyLevel).length).toBe(LEVEL_BYTES);
   expect(lvl!.generation).toBe(0);
-  expect(lvl!.head_seq).toBe(0);
   expect(lvl!.tail_seq).toBe(0);
   expect(lvl!.head_consumed_lots).toBe(0n);
   expect(lvl!.open_lots).toBe(0n);
-  expect(lvl!.slots.length).toBe(32);
-  expect(lvl!.slots.every((s) => s === 0n)).toBe(true);
+  expect(lvl!.slots.length).toBe(0);
 });
 
-test("occupied level", () => {
-  const lvl = decodeLevel(hexToBytes(fixtures.occupiedLevel));
+test("occupied level has as many slots as its tail", () => {
+  const scv = levelScVal({
+    generation: 3,
+    head_seq: 5,
+    tail_seq: 9,
+    head_consumed_lots: 7n,
+    open_lots: 123456789012n,
+    slots: [10n, 20n, 30n, 40n, 0n, 1n, 2n, 3n, 1n << 40n],
+  });
+  const lvl = parseLevel(StellarSdk.scValToNative(scv));
   expect(lvl).toBeTruthy();
   expect(lvl!.generation).toBe(3);
   expect(lvl!.head_seq).toBe(5);
   expect(lvl!.tail_seq).toBe(9);
   expect(lvl!.head_consumed_lots).toBe(7n);
   expect(lvl!.open_lots).toBe(123456789012n);
+  expect(lvl!.slots.length).toBe(9);
   expect(lvl!.slots[0]).toBe(10n);
-  expect(lvl!.slots[1]).toBe(20n);
-  expect(lvl!.slots[2]).toBe(30n);
   expect(lvl!.slots[3]).toBe(40n);
   expect(lvl!.slots[4]).toBe(0n);
-  expect(lvl!.slots[31]).toBe(1n << 40n);
+  expect(lvl!.slots[8]).toBe(1n << 40n);
+});
+
+test("parseLevel rejects foreign shapes", () => {
+  expect(parseLevel(null)).toBeNull();
+  expect(parseLevel(new Uint8Array(285))).toBeNull();
+  expect(parseLevel({ generation: 1 })).toBeNull();
+  expect(parseLevel({ generation: "x", slots: [] })).toBeNull();
 });
 
 test("bitmap bits", () => {
-  const bytes = hexToBytes(fixtures.bitmap);
-  expect(bytes.length).toBe(BITMAP_BYTES);
+  const bytes = new Uint8Array(BITMAP_BYTES);
+  bytes[0] = 0b1000_0001;
+  bytes[1] = 0b0000_0001;
+  bytes[255] = 0b1000_0000;
   const bm = decodeBitmap(bytes);
   expect(bm).toBeTruthy();
   expect(bm!.bit(0)).toBe(true);
@@ -52,13 +96,8 @@ test("bitmap bits", () => {
   expect(bm!.bit(1)).toBe(false);
   expect([...bm!.setBits()]).toEqual([0, 7, 8, 2047]);
   expect([...bm!.setBits(true)]).toEqual([2047, 8, 7, 0]);
-});
-
-test("reject bad packed values", () => {
-  expect(decodeLevel(new Uint8Array(285))).toBeNull();
-  const badLevel = hexToBytes(fixtures.emptyLevel);
-  badLevel[0] = 2;
-  expect(decodeLevel(badLevel)).toBeNull();
+  // The stored form is BytesN<256>: any other length is not a bitmap.
+  expect(decodeBitmap(new Uint8Array(257))).toBeNull();
   expect(decodeBitmap(new Uint8Array(10))).toBeNull();
 });
 
@@ -74,10 +113,10 @@ test("format integers without floats", () => {
 });
 
 test("prices pad to the market's tick precision", () => {
-  // market 1 quantization: tick 1000, lot 1e8, 7/7 decimals -> 5 decimals
+  // XLM/USDC quantization: tick 1000, lot 1e8, 7/7 decimals -> 5 decimals
   expect(ticksToPrice(19800, 1000n, 100000000n, 7, 7)).toBe("0.19800");
   expect(ticksToPrice(20000, 1000n, 100000000n, 7, 7)).toBe("0.20000");
   expect(ticksToPrice(19839, 1000n, 100000000n, 7, 7)).toBe("0.19839");
-  // market 0 quantization: tick 1, lot 1, 7/7 -> step 1, no padding
+  // unit quantization: tick 1, lot 1, 7/7 -> step 1, no padding
   expect(ticksToPrice(100, 1n, 1n, 7, 7)).toBe("100");
 });

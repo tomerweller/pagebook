@@ -17,7 +17,7 @@ import {
 import { accountLedgerKey } from "../wallet/account";
 import type { Rpc } from "../book";
 import { scValKeyName, sortedKeyStrs, type ClientKey } from "./clientKeys";
-import { DEFAULT_GROWTH, PER_ADDED, WRITE_ENTRY_FEE, applyPad, type ApplyPadSizes } from "./txdata";
+import { DEFAULT_GROWTH, PER_ADDED, WRITE_BYTES_PER, WRITE_ENTRY_FEE, applyPad, type ApplyPadSizes } from "./txdata";
 
 const T1 = "01".repeat(32);
 const T2 = "02".repeat(32);
@@ -349,7 +349,7 @@ test("applyPad unions, promotes, and floors fee per added RW key", () => {
   expect(rw).toContain(c.toXDR("base64"));
   const bump = resourceFee - (10_000n * 13n) / 10n;
   expect(bump).toBeGreaterThanOrEqual(BigInt(WRITE_ENTRY_FEE * added));
-  expect(Number(out.resources().writeBytes())).toBe(50 + 600 * added);
+  expect(Number(out.resources().writeBytes())).toBe(50 + WRITE_BYTES_PER * added);
   // Instruction headroom must match tools/soak apply_pad (ADR-026 hardening):
   // 1.25x simulated + 120k per added key + 3M flat.
   expect(Number(out.resources().instructions())).toBe(Math.floor(1_000_000 * 1.25) + 120_000 * added + 3_000_000);
@@ -384,7 +384,7 @@ test("applyPad sizes covers a nonexistent key at the creation estimate", () => {
   const data = emptyData([], []);
   const map = new Map([[a.toXDR("base64"), { exists: false, actualSize: 404 }]]);
   const { data: out } = applyPad(data, [a], [], sizesOf(map, 16, 0));
-  expect(Number(out.resources().writeBytes())).toBe(650); // 50 sim + 600 creation cover
+  expect(Number(out.resources().writeBytes())).toBe(50 + WRITE_BYTES_PER); // sim + creation cover
 });
 
 function contractErrorEvent(code: number, raisedBy?: string): string {
@@ -653,7 +653,7 @@ test("applyPad sizes mixed set plus slack pooled once", () => {
   ]);
   const { data: out, added } = applyPad(data, [a, b, c], [], sizesOf(map, 16, 50));
   expect(added).toBe(3);
-  expect(Number(out.resources().writeBytes())).toBe(50 + 404 + 16 + 50 + 600 + 600); // nonexistent/unswept keys covered at the creation estimate // two nonexistent keys now covered at 600 each
+  expect(Number(out.resources().writeBytes())).toBe(50 + 404 + 16 + 50 + 2 * WRITE_BYTES_PER); // two nonexistent/unswept keys covered at the creation estimate
   expect(Number(out.resources().instructions())).toBe(Math.floor(1_000_000 * 1.25) + 120_000 * 3 + 3_000_000);
 });
 

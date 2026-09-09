@@ -204,7 +204,10 @@ export class Trader {
 
   private async bandSizes(quoted: Parameters<typeof pad>[0], padEnd: number): Promise<ApplyPadSizes | undefined> {
     const keys = pad(quoted, padEnd).keys.map((k) => toLedgerKey({ contract: this.a.contract, caller: this.id.address }, k).xdr);
-    return sweepPadSizes(this.rpc, keys, { chunk: 100, coverBytes: false });
+    // Pad v2 (ADR-028): cover band keys at their live size, nonexistent ones at
+    // the creation estimate. Under the flat rate a wide band would run into the
+    // per-tx write-byte cap now that a full `Level` covers at 680 B (ADR-036).
+    return sweepPadSizes(this.rpc, keys, { chunk: 100, coverBytes: true });
   }
 
   private async submitPlaceOnce(
