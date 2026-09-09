@@ -109,6 +109,14 @@ function resetAwareness(s: AppState): void {
   s.wallet.ownHashes = new Set();
 }
 
+function resetIdentityState(s: AppState): void {
+  s.wallet.account = null;
+  s.wallet.trustlines = [];
+  s.wallet.openOrders = [];
+  s.book.ownTicks = { bid: new Set(), ask: new Set() };
+  resetAwareness(s);
+}
+
 function classicFromMeta(meta: TokenMeta | null | undefined): ClassicAsset | null {
   if (!meta?.name) return null;
   try {
@@ -583,11 +591,9 @@ export function mountWallet(opts: {
             s.wallet.justCreated = true;
             s.wallet.reveal = true;
             s.wallet.autoSource = "generate";
-            s.wallet.account = null;
-            s.wallet.trustlines = [];
             s.wallet.status = "";
             s.ticket.sideLocked = false;
-            resetAwareness(s);
+            resetIdentityState(s);
           });
           void refreshBalances();
         } catch (err) {
@@ -607,11 +613,9 @@ export function mountWallet(opts: {
           syncIdentity(s, ks);
           s.wallet.justCreated = false;
           s.wallet.autoSource = "seed";
-          s.wallet.account = null;
-          s.wallet.trustlines = [];
           s.wallet.status = "";
           s.ticket.sideLocked = false;
-          resetAwareness(s);
+          resetIdentityState(s);
         });
         void refreshBalances();
       } else if (act === "save-seed") {
@@ -657,11 +661,9 @@ export function mountWallet(opts: {
           s.wallet.confirmDelete = false;
           s.wallet.reveal = false;
           s.wallet.justCreated = false;
-          s.wallet.account = null;
-          s.wallet.trustlines = [];
           s.wallet.status = "";
           s.ticket.sideLocked = false;
-          resetAwareness(s);
+          resetIdentityState(s);
         });
         void refreshBalances();
       } else if (act === "friendbot") {
@@ -693,11 +695,9 @@ export function mountWallet(opts: {
           s.wallet.confirmDelete = false;
           s.wallet.confirmTrust = null;
           s.wallet.autoSource = null;
-          s.wallet.account = null;
-          s.wallet.trustlines = [];
           s.wallet.status = "";
           s.ticket.sideLocked = false;
-          resetAwareness(s);
+          resetIdentityState(s);
         });
         void refreshBalances();
       } catch (err) {
@@ -719,11 +719,9 @@ export function mountWallet(opts: {
           s.wallet.justCreated = true;
           s.wallet.reveal = true;
           s.wallet.autoSource = "import";
-          s.wallet.account = null;
-          s.wallet.trustlines = [];
           s.wallet.status = "";
           s.ticket.sideLocked = false;
-          resetAwareness(s);
+          resetIdentityState(s);
         });
         void refreshBalances();
       } catch (err) {
@@ -747,12 +745,15 @@ export function mountWallet(opts: {
 
   async function waitAccountExists(pub: string): Promise<boolean> {
     for (let i = 0; i < 16; i++) {
+      if (app.read().wallet.active?.publicKey !== pub) return false;
       const acc = await readAccount(opts.rpc, pub);
+      if (app.read().wallet.active?.publicKey !== pub) return false;
       if (acc.exists) {
         app.update((s) => {
+          if (s.wallet.active?.publicKey !== pub) return;
           s.wallet.account = acc;
         });
-        return true;
+        return app.read().wallet.active?.publicKey === pub;
       }
       await new Promise((r) => setTimeout(r, 400));
     }

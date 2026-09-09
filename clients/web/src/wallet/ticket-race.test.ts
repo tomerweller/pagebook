@@ -219,7 +219,7 @@ test("account switch during a quote drops the result", async () => {
   expect(store.read().ticket.preview.kind).toBe("loading");
 });
 
-test("identity switch with a stale account object idles the preview", async () => {
+test("null account after switch idles the preview", async () => {
   const store = liveStore();
   const sim = deferred<ReturnType<typeof quoteResult>>();
   const t = makeTicket(store, {
