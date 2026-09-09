@@ -101,11 +101,43 @@ how every other named entry already behaved.
 
 ### Smoke run
 
-_(filled in as the run completes)_
+30 minutes on the new contract, 2026-09-09 (about 21:00 to 21:30 local), a
+5-level maker (`--levels 5 --base-lots 2 --step-lots 1`, pad v2) on
+`pb-fly-funder-1` and the trader (pad v2, 15 to 40 s between takes) on
+`pb-fly-funder-2`, both topped up by `refill.ts`. The watchdog at the end:
+`MM OK`, maker last hour 143 ok / 30 simulation-rejected (post-only `Crossed`
+on a moving book, free) / 0 apply-rejected / 0 bad, 13 heals, 47 fills for 123
+lots; trader 52 takes for 164 lots, 8 rests, 7 settles, 0 rejected, 0 bad. No
+`footprint`, `trapped:unknown` or `resource_limit` outcome on either side; the
+dev web client rendered the book from the named `Level` entries with no
+console errors. The smoke maker was then unquoted with `--cancel-all` (10
+settles).
 
 ### Wind-down and cutover
 
-_(filled in as the steps land)_
+2026-09-09, about 21:30 to 21:40 local. The fly machine's stop file was set and
+the maker and trader were sent SIGTERM; the trader settled its resting orders
+and the maker exited leaving its 40 quotes live with a current state file, at
+which point the entrypoint's `wait -n` returned and the machine halted. The
+machine was started once more to `sftp` that state file (40 quotes, nonce
+counter 9 past the copy taken twenty minutes earlier) and stopped again. From
+the repo, `mm.ts --cancel-all` on `CDX3…U2RO` market 1 with `pb-mm-fly`
+settled all 40 (first tx `c9559d…15e1`, last `aa8281…8ea2`), escrow returned
+to the account (57k → 84k XLM, 63k → 68k USDC), and the published client
+showed the old book with no bids or asks in the window. Accrued fees stay in
+the old vault: `collect_fees` needs the old admin `pagebook-builder`, which is
+not in this keychain, and the tokens are test money. The old contract's
+keepalive stopped with the machine; its entries archive after testnet's
+minimum TTL.
+
+Fly configuration (`fly.toml`: `CONTRACT` = the new address, `MARKET` = 0;
+the maker's state file now `mm-<CONTRACT>.json`) is committed. The `fly deploy`
+itself is an operator step: the maker on `pb-mm-fly` and the trader on
+`pb-trader-fly` start on the new contract from an empty book, the keepalive
+and refill cranks follow the env, and the watchdog reports hourly. Acceptance
+is the ADR-031 criterion: `MM OK` twice, 30 minutes apart, with no
+`footprint` / `trapped:unknown` / `resource_limit` outcome. A fresh
+`ops/resources.ts` sample after that replaces the 09 numbers.
 
 ## What changed
 
@@ -122,7 +154,8 @@ _(filled in as the steps land)_
 - `clients/web`: `decode.ts` (`parseLevel`, 256-byte bitmaps), `book.ts`,
   `decode.test.ts`; `fixtures.json` deleted; `txdata.ts` byte model;
   `trader.ts` pad v2; `MARKET` env in `fly.toml`, `fly-entrypoint.sh`,
-  `docker-compose.yml`; scratch tooling (`market0.ts`,
+  `docker-compose.yml`; the fly maker's state file keyed by contract id
+  (`mm-<CONTRACT>.json`); scratch tooling (`market0.ts`,
   `docker-compose.scratch.yml`) marked retired; default contract and READMEs.
 - Docs: architecture Part I intro, §2, §5, §9, §10, §17, §20; 05 module tree
   and encoding decisions; 08 sizes, formulas, in-repo numbers, fee table; 09
