@@ -15,10 +15,35 @@ export type ClientKey =
   | { t: "VaultBalance"; token: Hex32 }
   | { t: "UserBalance"; token: Hex32 };
 
+export type Access = "ro" | "rw";
+
+export type PlannedLedgerKey = { key: StellarSdk.xdr.LedgerKey; access: Access };
+
+export function accessOf(k: ClientKey): Access {
+  switch (k.t) {
+    case "Config":
+    case "Market":
+      return "ro";
+    case "Level":
+    case "Order":
+    case "FeeAccrual":
+    case "BestTick":
+    case "TickSummary":
+    case "TickWord":
+    case "VaultBalance":
+    case "UserBalance":
+      return "rw";
+  }
+}
+
 export type KeyContext = {
   contract: string;
   caller: string;
 };
+
+export function toPlannedKey(ctx: KeyContext, k: ClientKey): PlannedLedgerKey {
+  return { key: toLedgerKey(ctx, k).xdr, access: accessOf(k) };
+}
 
 export function hex32(bytes: Uint8Array): Hex32 {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");

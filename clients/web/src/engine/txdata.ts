@@ -1,4 +1,5 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
+import type { PlannedLedgerKey } from "./clientKeys";
 
 export const WRITE_ENTRY_FEE = 2500;
 // Flat per-key write-byte cover (pad v1, and the creation estimate under
@@ -36,11 +37,12 @@ export function perAddedFee(levelCap?: number): number {
   return (
     WRITE_ENTRY_FEE +
     Math.floor((flatWriteBytesPer(levelCap) * 875) / 1024) +
-    Math.floor((DISK_READ_PER * 447) / 1024) +
-    1_563 +
-    120 * 7 +
-    100
+    perAddedRoFee()
   );
+}
+
+export function perAddedRoFee(): number {
+  return Math.floor((DISK_READ_PER * 447) / 1024) + 1_563 + 120 * 7 + 100;
 }
 export const PER_ADDED = perAddedFee();
 
@@ -84,6 +86,7 @@ export type DeclaredResources = {
 export type ApplyPadResult = {
   data: StellarSdk.xdr.SorobanTransactionData;
   added: number;
+  addedRo: number;
   dropped: number;
   resourceFee: bigint;
 };
@@ -125,10 +128,37 @@ export type ApplyPadSizes = {
 // so 48 B rides out three in-flight appends.
 export const DEFAULT_GROWTH = 48;
 
+function simRestoreKeys(data: StellarSdk.xdr.SorobanTransactionData, rw: StellarSdk.xdr.LedgerKey[]): StellarSdk.xdr.LedgerKey[] {
+  try {
+    if (data.ext().switch() !== 1) return [];
+    const idxs = data.ext().resourceExt().archivedSorobanEntries();
+    const out: StellarSdk.xdr.LedgerKey[] = [];
+    for (const raw of idxs) {
+      const i = Number(raw);
+      if (Number.isInteger(i) && i >= 0 && i < rw.length) out.push(rw[i]);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function unionLedgerKeys(a: StellarSdk.xdr.LedgerKey[], b: StellarSdk.xdr.LedgerKey[]): StellarSdk.xdr.LedgerKey[] {
+  const seen = new Set<string>();
+  const out: StellarSdk.xdr.LedgerKey[] = [];
+  for (const k of [...a, ...b]) {
+    const s = keyB64(k);
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(k);
+  }
+  return out;
+}
+
 export function applyPad(
   data: StellarSdk.xdr.SorobanTransactionData,
-  extraKeys: StellarSdk.xdr.LedgerKey[],
-  archivedIndexes: number[] = [],
+  extra: PlannedLedgerKey[],
+  restoreMarks: StellarSdk.xdr.LedgerKey[] = [],
   sizes?: ApplyPadSizes,
   levelCap?: number,
 ): ApplyPadResult {
@@ -139,74 +169,85 @@ export function applyPad(
   const roMap = new Map(ro.map((k) => [keyB64(k), k]));
 
   let added = 0;
+  let addedRo = 0;
   let dropped = 0;
   const addedKeys: StellarSdk.xdr.LedgerKey[] = [];
   const nextRo = [...ro];
   const nextRw = [...rw];
-  for (const k of extraKeys) {
+  for (const planned of extra) {
+    const k = planned.key;
     const s = keyB64(k);
     if (rwSet.has(s)) continue;
     if (sizes?.sizeOf(k)?.liveness === "archived") {
       dropped += 1;
       continue;
     }
-    if (roMap.has(s)) {
-      const idx = nextRo.findIndex((x) => keyB64(x) === s);
-      if (idx >= 0) nextRo.splice(idx, 1);
-      roMap.delete(s);
+    if (planned.access === "rw") {
+      if (roMap.has(s)) {
+        const idx = nextRo.findIndex((x) => keyB64(x) === s);
+        if (idx >= 0) nextRo.splice(idx, 1);
+        roMap.delete(s);
+      }
+      nextRw.push(k);
+      rwSet.add(s);
+      added += 1;
+      addedKeys.push(k);
+      continue;
     }
-    nextRw.push(k);
-    rwSet.add(s);
-    added += 1;
-    addedKeys.push(k);
+    if (roMap.has(s)) continue;
+    nextRo.push(k);
+    roMap.set(s, k);
+    addedRo += 1;
   }
 
   builder.setReadOnly(nextRo);
   builder.setReadWrite(nextRw);
 
   const res = data.resources();
-  const instructions = Math.floor(Number(res.instructions()) * INSTR_MULT) + INSTR_PER * added + INSTR_FIXED;
+  const paddedKeys = added + addedRo;
+  const instructions = Math.floor(Number(res.instructions()) * INSTR_MULT) + INSTR_PER * paddedKeys + INSTR_FIXED;
   const writeBytes = Number(res.writeBytes()) + writeBytesFor(added, addedKeys, sizes, levelCap);
-  const diskReadBytes = Number(res.diskReadBytes()) + DISK_READ_PER * added;
+  const diskReadBytes = Number(res.diskReadBytes()) + DISK_READ_PER * paddedKeys;
   builder.setResources(instructions, diskReadBytes, writeBytes);
 
   const rf0 = BigInt(data.resourceFee().toString());
-  const rf = (rf0 * 13n) / 10n + BigInt(perAddedFee(levelCap) * added) + BigInt(FEE_ONCE);
+  const rf =
+    (rf0 * 13n) / 10n +
+    BigInt(perAddedFee(levelCap) * added) +
+    BigInt(perAddedRoFee() * addedRo) +
+    BigInt(FEE_ONCE);
   builder.setResourceFee(rf.toString());
 
-  let out = builder.build();
-  if (archivedIndexes.length) {
-    out = new StellarSdk.xdr.SorobanTransactionData({
-      ext: new StellarSdk.xdr.SorobanTransactionDataExt(
-        1,
-        new StellarSdk.xdr.SorobanResourcesExtV0({ archivedSorobanEntries: archivedIndexes }),
-      ),
-      resources: out.resources(),
-      resourceFee: out.resourceFee(),
-    });
-  }
-  return { data: out, added, dropped, resourceFee: BigInt(out.resourceFee().toString()) };
-}
-
-export function footprintIndexes(
-  data: StellarSdk.xdr.SorobanTransactionData,
-  keys: StellarSdk.xdr.LedgerKey[],
-): number[] {
-  const builder = new StellarSdk.SorobanDataBuilder(data);
-  const all = [...builder.getReadWrite(), ...builder.getReadOnly()];
-  const want = new Set(keys.map(keyB64));
-  const idxs: number[] = [];
-  all.forEach((k, i) => {
-    if (want.has(keyB64(k))) idxs.push(i);
+  const marked = unionLedgerKeys(simRestoreKeys(data, rw), restoreMarks);
+  const want = new Set(marked.map(keyB64));
+  const archivedIndexes: number[] = [];
+  nextRw.forEach((k, i) => {
+    if (want.has(keyB64(k))) archivedIndexes.push(i);
   });
-  return idxs;
+
+  let out = builder.build();
+  out = new StellarSdk.xdr.SorobanTransactionData({
+    ext: archivedIndexes.length
+      ? new StellarSdk.xdr.SorobanTransactionDataExt(
+          1,
+          new StellarSdk.xdr.SorobanResourcesExtV0({ archivedSorobanEntries: archivedIndexes }),
+        )
+      : new StellarSdk.xdr.SorobanTransactionDataExt(0),
+    resources: out.resources(),
+    resourceFee: out.resourceFee(),
+  });
+  return { data: out, added, addedRo, dropped, resourceFee: BigInt(out.resourceFee().toString()) };
 }
 
 export function classicFee(resourceFee: bigint): string {
   return (resourceFee + 1000n).toString();
 }
 
-export function estimatePaddedFee(addedKeys: number, simResourceFee = 0n, levelCap?: number): bigint {
-  const rf = (simResourceFee * 13n) / 10n + BigInt(perAddedFee(levelCap) * addedKeys) + BigInt(FEE_ONCE);
+export function estimatePaddedFee(counts: { rw: number; ro: number }, simResourceFee = 0n, levelCap?: number): bigint {
+  const rf =
+    (simResourceFee * 13n) / 10n +
+    BigInt(perAddedFee(levelCap) * counts.rw) +
+    BigInt(perAddedRoFee() * counts.ro) +
+    BigInt(FEE_ONCE);
   return rf + 1000n;
 }

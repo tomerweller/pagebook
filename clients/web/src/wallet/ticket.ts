@@ -1,5 +1,6 @@
 import type { BookSnapshot, MarketInfo, Rpc } from "../book";
 import { formatAtoms, formatInt, formatRatio } from "../decode";
+import { accessOf } from "../engine/clientKeys";
 import { pad } from "../engine/pad";
 import { simulatePlace } from "../engine/quote";
 import { submitPlace, type ClassicToken, type EngineResult, type PlaceFlags } from "../engine/submit";
@@ -494,7 +495,13 @@ export function createTicket(opts: {
       const output = cur.isBid ? q.filledLots * m.lot_size : q.quoteAtoms;
       const feeAtoms = takerFeeAtoms(output, m.taker_fee_bps);
       const padded = pad(q.quoted, cur.tick);
-      const padFee = estimatePaddedFee(padded.length, 0n, m.level_cap);
+      let rw = 0;
+      let ro = 0;
+      for (const k of padded) {
+        if (accessOf(k) === "rw") rw += 1;
+        else ro += 1;
+      }
+      const padFee = estimatePaddedFee({ rw, ro }, 0n, m.level_cap);
       const rem = cur.lots - q.filledLots;
       const ov = overrides();
       const avg =

@@ -5,11 +5,11 @@ import { sacBalanceKey } from "../keys";
 import { accountLedgerKey, trustlineLedgerKey } from "../wallet/account";
 import { readAccount } from "../wallet/account";
 import { NETWORK_PASSPHRASE } from "../wallet/network";
-import { scValKeyName, toLedgerKey, type ClientKey } from "./clientKeys";
+import { scValKeyName, toLedgerKey, toPlannedKey, type ClientKey, type PlannedLedgerKey } from "./clientKeys";
 import { errorName, hostErrorMessage, parseContractError, sacErrorName } from "./errors";
 import { pad, restoreMarks, type Quoted } from "./pad";
 import { simulate } from "./quote";
-import { applyPad, classicFee, declaredFromSoroban, footprintIndexes, type ApplyPadSizes, type DeclaredResources } from "./txdata";
+import { applyPad, classicFee, declaredFromSoroban, type ApplyPadSizes, type DeclaredResources } from "./txdata";
 
 export type { DeclaredResources };
 
@@ -95,15 +95,15 @@ function sorobanReturnValue(meta: StellarSdk.xdr.TransactionMeta): StellarSdk.xd
 
 export type ClassicToken = { sac: string; code?: string; issuer?: string };
 
-export function tokenExtraKeys(pagebook: string, caller: string, tokens: ClassicToken[]): StellarSdk.xdr.LedgerKey[] {
-  const keys: StellarSdk.xdr.LedgerKey[] = [];
+export function tokenExtraKeys(pagebook: string, caller: string, tokens: ClassicToken[]): PlannedLedgerKey[] {
+  const keys: PlannedLedgerKey[] = [];
   for (const t of tokens) {
-    keys.push(instanceKey(t.sac).xdr);
-    keys.push(sacBalanceKey(t.sac, pagebook).xdr);
+    keys.push({ key: instanceKey(t.sac).xdr, access: "ro" });
+    keys.push({ key: sacBalanceKey(t.sac, pagebook).xdr, access: "rw" });
     if (t.code && t.issuer) {
-      keys.push(trustlineLedgerKey(caller, { type: "credit", code: t.code, issuer: t.issuer }));
+      keys.push({ key: trustlineLedgerKey(caller, { type: "credit", code: t.code, issuer: t.issuer }), access: "rw" });
     } else {
-      keys.push(accountLedgerKey(caller));
+      keys.push({ key: accountLedgerKey(caller), access: "rw" });
     }
   }
   return keys;
@@ -520,24 +520,21 @@ async function submitOnce(a: SubmitArgs, kp: StellarSdk.Keypair): Promise<Engine
     return { kind: "rpc", message: e instanceof Error ? e.message : String(e) };
   }
 
-  const extraXdr: StellarSdk.xdr.LedgerKey[] = [];
+  const extra: PlannedLedgerKey[] = [];
   if (a.padKeys) {
     const ctx = { contract: a.contract, caller: kp.publicKey() };
-    for (const k of a.padKeys) extraXdr.push(toLedgerKey(ctx, k).xdr);
+    for (const k of a.padKeys) extra.push(toPlannedKey(ctx, k));
   }
-  if (a.tokens) extraXdr.push(...tokenExtraKeys(a.contract, kp.publicKey(), a.tokens));
+  if (a.tokens) extra.push(...tokenExtraKeys(a.contract, kp.publicKey(), a.tokens));
 
   const env = assembled.toEnvelope();
   const existing = env.v1().tx().ext().sorobanData();
-  let archivedIdx: number[] = [];
+  let restoreMarkKeys: StellarSdk.xdr.LedgerKey[] = [];
   if (a.quoted && a.padOut) {
     const marks = await archivedTouched(a.rpc, a.contract, kp.publicKey(), a.quoted, a.padOut);
-    if (marks.length) {
-      const markXdr = marks.map((k) => toLedgerKey({ contract: a.contract, caller: kp.publicKey() }, k).xdr);
-      archivedIdx = footprintIndexes(existing, markXdr);
-    }
+    restoreMarkKeys = marks.map((k) => toLedgerKey({ contract: a.contract, caller: kp.publicKey() }, k).xdr);
   }
-  const padded = applyPad(existing, extraXdr, archivedIdx, a.sizes, a.levelCap);
+  const padded = applyPad(existing, extra, restoreMarkKeys, a.sizes, a.levelCap);
   const declared = declaredFromSoroban(padded.data);
   const fee = classicFee(padded.resourceFee);
   const finalTx = StellarSdk.TransactionBuilder.cloneFrom(assembled, { fee }).setSorobanData(padded.data).build();

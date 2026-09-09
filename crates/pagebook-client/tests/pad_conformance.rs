@@ -2,8 +2,8 @@
 //! TypeScript loads the same JSON.
 
 use pagebook_client::{
-    keys_for_replace, keys_for_settle, pad, restore_marks, sorted_key_strs, ClientKey,
-    CrossedLevel, Quoted,
+    access_of, keys_for_replace, keys_for_settle, pad, restore_marks, sorted_key_strs, Access,
+    ClientKey, CrossedLevel, Quoted,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -79,10 +79,15 @@ struct ReplaceIn {
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 struct Expected {
     keys: Vec<String>,
+    read_only: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     keys_for_settle: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    settle_read_only: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     keys_for_replace: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    replace_read_only: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     restore_marks: Option<Vec<String>>,
 }
@@ -159,11 +164,21 @@ fn to_quoted(q: &QuotedIn, taker: [u8; 32], nonce: u64, base: [u8; 32], quote: [
     }
 }
 
+fn read_only_strs(keys: &[ClientKey]) -> Vec<String> {
+    sorted_key_strs(
+        &keys
+            .iter()
+            .filter(|k| access_of(k) == Access::ReadOnly)
+            .cloned()
+            .collect::<Vec<_>>(),
+    )
+}
+
 fn compute(case: &Case, taker: [u8; 32], nonce: u64, base: [u8; 32], quote: [u8; 32]) -> Expected {
     let q = to_quoted(&case.quoted, taker, nonce, base, quote);
     let out = pad(&q, case.options.pad_end);
-    let keys_for_settle = case.settle.as_ref().map(|s| {
-        sorted_key_strs(&keys_for_settle(
+    let settle_keys = case.settle.as_ref().map(|s| {
+        keys_for_settle(
             case.quoted.market,
             taker,
             nonce,
@@ -171,10 +186,10 @@ fn compute(case: &Case, taker: [u8; 32], nonce: u64, base: [u8; 32], quote: [u8;
             s.tick,
             base,
             quote,
-        ))
+        )
     });
-    let keys_for_replace = case.replace.as_ref().map(|r| {
-        sorted_key_strs(&keys_for_replace(
+    let replace_keys = case.replace.as_ref().map(|r| {
+        keys_for_replace(
             case.quoted.market,
             taker,
             nonce,
@@ -184,7 +199,7 @@ fn compute(case: &Case, taker: [u8; 32], nonce: u64, base: [u8; 32], quote: [u8;
             r.new_tick,
             base,
             quote,
-        ))
+        )
     });
     let restore = case.archived.as_ref().map(|rows| {
         let archived: Vec<ClientKey> = rows.iter().map(|s| parse_key(s)).collect();
@@ -192,8 +207,11 @@ fn compute(case: &Case, taker: [u8; 32], nonce: u64, base: [u8; 32], quote: [u8;
     });
     Expected {
         keys: sorted_key_strs(&out.keys),
-        keys_for_settle,
-        keys_for_replace,
+        read_only: read_only_strs(&out.keys),
+        keys_for_settle: settle_keys.as_ref().map(|k| sorted_key_strs(k)),
+        settle_read_only: settle_keys.as_ref().map(|k| read_only_strs(k)),
+        keys_for_replace: replace_keys.as_ref().map(|k| sorted_key_strs(k)),
+        replace_read_only: replace_keys.as_ref().map(|k| read_only_strs(k)),
         restore_marks: restore,
     }
 }
@@ -302,8 +320,11 @@ fn inputs() -> Fixture {
 fn empty_expected() -> Expected {
     Expected {
         keys: vec![],
+        read_only: vec![],
         keys_for_settle: None,
+        settle_read_only: None,
         keys_for_replace: None,
+        replace_read_only: None,
         restore_marks: None,
     }
 }

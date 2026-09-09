@@ -66,11 +66,11 @@ export function keysForReplace(
   return keys;
 }
 
-// The architecture §14 pad rule for a place. Everything is declared
-// read-write: the opposite-side band of levels from the start tick to the pad
-// end, the words those ticks and the limit fall in, the summaries and best
-// ticks on both sides, the taker's own rest level and word, the order, the fee
-// accruals, and the four balance entries.
+// The architecture §14 pad rule for a place. The opposite-side band of
+// levels from the start tick to the pad end, the words those ticks and the
+// limit fall in, the summaries and bests on both sides, the taker's own rest
+// level and word, the order, the fee accruals, and the four balance entries
+// are read-write. Config and Market are read-only.
 export function pad(q: Quoted, padEnd: number): ClientKey[] {
   const opp = !q.ownSide;
   const m = q.market;

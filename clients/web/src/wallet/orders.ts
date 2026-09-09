@@ -1,7 +1,7 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
 import type { BookEvent, BookSnapshot, MarketInfo, Rpc } from "../book";
 import { formatAtoms, formatInt } from "../decode";
-import { addrToHex } from "../engine/clientKeys";
+import { accessOf, addrToHex } from "../engine/clientKeys";
 import { keysForReplace, keysForSettle, MAX_REPLACE_BATCH } from "../engine/pad";
 import { simulate } from "../engine/quote";
 import { submitReplace, submitReplaceBatch, submitSettle, type ClassicToken, type EngineResult } from "../engine/submit";
@@ -512,10 +512,21 @@ export function createOrders(opts: {
     const st = ui();
     const net = m ? replaceNet(order, st.replaceBid, st.replaceTick, st.replaceLots, m.lot_size, m.tick_size) : { base: 0n, quote: 0n };
     const crossed = st.replacePostOnly && wouldCross(book, st.replaceBid, st.replaceTick);
-    const keys = book?.base && book.quote
-      ? keysForReplace(opts.getMarket(), "00".repeat(32), order.nonce, order.isBid, order.tick, st.replaceBid, st.replaceTick, "00".repeat(32), "00".repeat(32)).length
-      : 8;
-    const fee = estimatePaddedFee(keys, 0n, m?.level_cap);
+    const planned =
+      book?.base && book.quote
+        ? keysForReplace(opts.getMarket(), "00".repeat(32), order.nonce, order.isBid, order.tick, st.replaceBid, st.replaceTick, "00".repeat(32), "00".repeat(32))
+        : null;
+    let rw = 7;
+    let ro = 1;
+    if (planned) {
+      rw = 0;
+      ro = 0;
+      for (const k of planned) {
+        if (accessOf(k) === "rw") rw += 1;
+        else ro += 1;
+      }
+    }
+    const fee = estimatePaddedFee({ rw, ro }, 0n, m?.level_cap);
     const rent = order.archived ? `restore rent ~ ${formatAtoms(ARCHIVE_RENT_STROOPS, 7)} XLM` : "";
     const qn = quant();
     const overrides = ov();

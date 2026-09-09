@@ -784,13 +784,14 @@ own-side set applies to every rest, a `replace` item included. For **both** toke
 (not only the one simulation happened to move): the SAC contract instance, the vault's
 SAC balance, and the caller's own balance entry (a trustline for a classic asset), plus
 both `FeeAccrual`s. That list is exhaustive: a take-plus-rest place touches nothing
-else. Two rules the testnet soak made explicit (ADR-025): every band key is declared
-**read-write**, and a key simulation listed as read-only (an empty level, a word with
-no bit) is *promoted* to read-write, because the book may move it in flight and the
-walk would then write it; and the declared resources need headroom over the simulated
-ones (about 100k instructions per padded key, existing or not, measured on testnet
-(ADR-026), write bytes for band keys that exist, disk-read bytes for classic
-entries), since simulation budgets exactly what it touched. Write-byte cover for an
+else. Two rules the testnet soak made explicit (ADR-025): every key the invocation may
+write is declared **read-write**, and a key simulation listed as read-only (an empty
+level, a word with no bit) is *promoted* to read-write, because the book may move it
+in flight and the walk would then write it; and the declared resources need headroom
+over the simulated ones (about 100k instructions per padded key, existing or not,
+measured on testnet (ADR-026), write bytes for band keys that exist, disk-read bytes
+for classic entries), since simulation budgets exactly what it touched. `Config`,
+`Market`, and both token instances are declared read-only (§16). Write-byte cover for an
 existing band key is either a flat 1,100 B per key, enough for a `Level` at the default
 `level_cap` (pad v1), or the entry's actual size from the same RPC sweep that reads
 liveness (pad v2, ADR-028). Band padding is required because a new level can appear at

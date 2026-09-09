@@ -1,6 +1,5 @@
 import { expect, test } from "vitest";
 import * as StellarSdk from "@stellar/stellar-sdk";
-import { ck, instanceKey } from "../keys";
 import padConformance from "../../../../crates/pagebook-client/fixtures/pad-conformance.json";
 import { ERROR_CODE_COUNT, ERROR_CODE_MAX, ERROR_MESSAGES, ERROR_NAMES, hostErrorMessage, parseContractError } from "./errors";
 import { keysForReplace, keysForSettle, pad, restoreMarks, type Quoted } from "./pad";
@@ -12,12 +11,14 @@ import {
   ledgerKeyFromKeyXdr,
   restoreKeys,
   submitInvocation,
+  submitPlace,
   submitRestorePreamble,
 } from "./submit";
-import { accountLedgerKey } from "../wallet/account";
+import { accountLedgerKey, trustlineLedgerKey } from "../wallet/account";
 import type { Rpc } from "../book";
-import { scValKeyName, sortedKeyStrs, type ClientKey } from "./clientKeys";
-import { DEFAULT_GROWTH, PER_ADDED, WRITE_BYTES_PER, WRITE_ENTRY_FEE, applyPad, flatWriteBytesPer, type ApplyPadSizes } from "./txdata";
+import { accessOf, addrToHex, scValKeyName, sortedKeyStrs, type ClientKey, type PlannedLedgerKey } from "./clientKeys";
+import { ck, instanceKey, sacBalanceKey } from "../keys";
+import { DEFAULT_GROWTH, DISK_READ_PER, PER_ADDED, WRITE_BYTES_PER, WRITE_ENTRY_FEE, applyPad, flatWriteBytesPer, perAddedFee, perAddedRoFee, type ApplyPadSizes } from "./txdata";
 
 const T1 = "01".repeat(32);
 const T2 = "02".repeat(32);
@@ -100,6 +101,37 @@ test("replace fixture matches rust js_fixtures", () => {
   expect(sortedKeyStrs(keys)).toEqual(REPLACE_CROSS_SIDE);
 });
 
+test("accessOf is ro for Config and Market and rw for every other variant", () => {
+  const samples: ClientKey[] = [
+    { t: "Config" },
+    { t: "Market", market: 0 },
+    { t: "Level", market: 0, isBid: true, tick: 1 },
+    { t: "Order", market: 0, owner: T1, nonce: 1n },
+    { t: "FeeAccrual", market: 0, token: T2 },
+    { t: "BestTick", market: 0, isBid: true },
+    { t: "TickSummary", market: 0, isBid: false },
+    { t: "TickWord", market: 0, isBid: true, word: 0 },
+    { t: "VaultBalance", token: T2 },
+    { t: "UserBalance", token: T3 },
+  ];
+  expect(samples.map((k) => k.t).sort()).toEqual([
+    "BestTick",
+    "Config",
+    "FeeAccrual",
+    "Level",
+    "Market",
+    "Order",
+    "TickSummary",
+    "TickWord",
+    "UserBalance",
+    "VaultBalance",
+  ]);
+  for (const k of samples) {
+    if (k.t === "Config" || k.t === "Market") expect(accessOf(k)).toBe("ro");
+    else expect(accessOf(k)).toBe("rw");
+  }
+});
+
 test("restore_marks fixture matches rust js_fixtures", () => {
   const q = fixtureQuoted();
   const out = pad(q, 12);
@@ -138,8 +170,11 @@ type FixtureCase = {
   archived?: string[];
   expected: {
     keys: string[];
+    read_only: string[];
     keys_for_settle?: string[];
+    settle_read_only?: string[];
     keys_for_replace?: string[];
+    replace_read_only?: string[];
     restore_marks?: string[];
   };
 };
@@ -215,11 +250,13 @@ test("pad conformance matches the shared rust fixture", () => {
     const q = quotedFrom(fx, c);
     const out = pad(q, c.options.pad_end);
     expect(sortedKeyStrs(out), c.name).toEqual(c.expected.keys);
+    expect(sortedKeyStrs(out.filter((k) => accessOf(k) === "ro")), `${c.name} read_only`).toEqual(c.expected.read_only);
     if (c.settle && c.expected.keys_for_settle) {
-      expect(
-        sortedKeyStrs(keysForSettle(c.quoted.market, fx.taker, BigInt(fx.nonce), c.settle.is_bid, c.settle.tick, fx.base, fx.quote)),
-        `${c.name} settle`,
-      ).toEqual(c.expected.keys_for_settle);
+      const settle = keysForSettle(c.quoted.market, fx.taker, BigInt(fx.nonce), c.settle.is_bid, c.settle.tick, fx.base, fx.quote);
+      expect(sortedKeyStrs(settle), `${c.name} settle`).toEqual(c.expected.keys_for_settle);
+      if (c.expected.settle_read_only) {
+        expect(sortedKeyStrs(settle.filter((k) => accessOf(k) === "ro")), `${c.name} settle_read_only`).toEqual(c.expected.settle_read_only);
+      }
     }
     if (c.replace && c.expected.keys_for_replace) {
       const keys = keysForReplace(
@@ -234,6 +271,9 @@ test("pad conformance matches the shared rust fixture", () => {
         fx.quote,
       );
       expect(sortedKeyStrs(keys), `${c.name} replace`).toEqual(c.expected.keys_for_replace);
+      if (c.expected.replace_read_only) {
+        expect(sortedKeyStrs(keys.filter((k) => accessOf(k) === "ro")), `${c.name} replace_read_only`).toEqual(c.expected.replace_read_only);
+      }
     }
     if (c.archived && c.expected.restore_marks) {
       expect(sortedKeyStrs(restoreMarks(q, out, c.archived.map(parseKey))), `${c.name} restore`).toEqual(c.expected.restore_marks);
@@ -282,21 +322,50 @@ function emptyData(ro: StellarSdk.xdr.LedgerKey[], rw: StellarSdk.xdr.LedgerKey[
   });
 }
 
+function dataWithExt(
+  ro: StellarSdk.xdr.LedgerKey[],
+  rw: StellarSdk.xdr.LedgerKey[],
+  archivedIndexes: number[],
+): StellarSdk.xdr.SorobanTransactionData {
+  const base = emptyData(ro, rw);
+  return new StellarSdk.xdr.SorobanTransactionData({
+    ext: new StellarSdk.xdr.SorobanTransactionDataExt(
+      1,
+      new StellarSdk.xdr.SorobanResourcesExtV0({ archivedSorobanEntries: archivedIndexes }),
+    ),
+    resources: base.resources(),
+    resourceFee: base.resourceFee(),
+  });
+}
+
+function rw(key: StellarSdk.xdr.LedgerKey): PlannedLedgerKey {
+  return { key, access: "rw" };
+}
+
+function ro(key: StellarSdk.xdr.LedgerKey): PlannedLedgerKey {
+  return { key, access: "ro" };
+}
+
+function keyB64(k: StellarSdk.xdr.LedgerKey): string {
+  return k.toXDR("base64");
+}
+
 test("applyPad unions, promotes, and floors fee per added RW key", () => {
   const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
   const a = ck(contract, "Level", 0, false, 10).xdr;
   const b = ck(contract, "Level", 0, false, 11).xdr;
   const c = instanceKey(contract).xdr;
   const data = emptyData([a], [c]);
-  const { data: out, added, resourceFee } = applyPad(data, [a, b], [0]);
+  // c was already read-write in the simulation footprint, so padding does not demote it.
+  const { data: out, added, resourceFee } = applyPad(data, [rw(a), rw(b)], [c]);
   expect(added).toBe(2);
   const builder = new StellarSdk.SorobanDataBuilder(out);
-  const ro = builder.getReadOnly().map((k) => k.toXDR("base64"));
-  const rw = builder.getReadWrite().map((k) => k.toXDR("base64"));
-  expect(ro).not.toContain(a.toXDR("base64"));
-  expect(rw).toContain(a.toXDR("base64"));
-  expect(rw).toContain(b.toXDR("base64"));
-  expect(rw).toContain(c.toXDR("base64"));
+  const roKeys = builder.getReadOnly().map((k) => k.toXDR("base64"));
+  const rwKeys = builder.getReadWrite().map((k) => k.toXDR("base64"));
+  expect(roKeys).not.toContain(a.toXDR("base64"));
+  expect(rwKeys).toContain(a.toXDR("base64"));
+  expect(rwKeys).toContain(b.toXDR("base64"));
+  expect(rwKeys).toContain(c.toXDR("base64"));
   const bump = resourceFee - (10_000n * 13n) / 10n;
   expect(bump).toBeGreaterThanOrEqual(BigInt(WRITE_ENTRY_FEE * added));
   expect(Number(out.resources().writeBytes())).toBe(50 + WRITE_BYTES_PER * added);
@@ -322,7 +391,7 @@ test("applyPad sizes covers an existing key at actual+growth", () => {
   const a = ck(contract, "Level", 0, false, 10).xdr;
   const data = emptyData([], []);
   const map = new Map([[a.toXDR("base64"), { exists: true, actualSize: 404 }]]);
-  const { data: out, added } = applyPad(data, [a], [], sizesOf(map));
+  const { data: out, added } = applyPad(data, [rw(a)], [], sizesOf(map));
   expect(added).toBe(1);
   expect(Number(out.resources().writeBytes())).toBe(50 + 404 + DEFAULT_GROWTH);
   expect(Number(out.resources().instructions())).toBe(Math.floor(1_000_000 * 1.25) + 120_000 * added + 3_000_000);
@@ -333,7 +402,7 @@ test("applyPad sizes covers a nonexistent key at the creation estimate", () => {
   const a = ck(contract, "Level", 0, false, 10).xdr;
   const data = emptyData([], []);
   const map = new Map([[a.toXDR("base64"), { exists: false, actualSize: 404 }]]);
-  const { data: out } = applyPad(data, [a], [], sizesOf(map, 16, 0));
+  const { data: out } = applyPad(data, [rw(a)], [], sizesOf(map, 16, 0));
   expect(Number(out.resources().writeBytes())).toBe(50 + WRITE_BYTES_PER); // sim + creation cover
 });
 
@@ -349,7 +418,7 @@ test("the flat cover derives from the market's level_cap (ADR-037)", () => {
   const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
   const a = ck(contract, "Level", 0, false, 10).xdr;
   const data = emptyData([], []);
-  const { data: out } = applyPad(data, [a], [], undefined, 128);
+  const { data: out } = applyPad(data, [rw(a)], [], undefined, 128);
   expect(Number(out.resources().writeBytes())).toBe(50 + flatWriteBytesPer(128));
 });
 
@@ -598,13 +667,13 @@ test("applyPad drops archived pad keys and reports dropped", () => {
     [b.toXDR("base64"), { exists: true, actualSize: 100, liveness: "live" as const }],
     [c.toXDR("base64"), { exists: true, actualSize: 50, liveness: "archived" as const }],
   ]);
-  const { data: out, added, dropped } = applyPad(data, [a, b, c], [], sizesOf(map));
+  const { data: out, added, dropped } = applyPad(data, [rw(a), rw(b), rw(c)], [], sizesOf(map));
   expect(dropped).toBe(1);
   expect(added).toBe(1);
-  const rw = new StellarSdk.SorobanDataBuilder(out).getReadWrite().map((k) => k.toXDR("base64"));
-  expect(rw).not.toContain(a.toXDR("base64"));
-  expect(rw).toContain(b.toXDR("base64"));
-  expect(rw).toContain(c.toXDR("base64"));
+  const rwKeys = new StellarSdk.SorobanDataBuilder(out).getReadWrite().map((k) => k.toXDR("base64"));
+  expect(rwKeys).not.toContain(a.toXDR("base64"));
+  expect(rwKeys).toContain(b.toXDR("base64"));
+  expect(rwKeys).toContain(c.toXDR("base64"));
 });
 
 test("applyPad sizes mixed set plus slack pooled once", () => {
@@ -617,10 +686,104 @@ test("applyPad sizes mixed set plus slack pooled once", () => {
     [a.toXDR("base64"), { exists: true, actualSize: 404 }],
     [b.toXDR("base64"), { exists: false, actualSize: 999 }],
   ]);
-  const { data: out, added } = applyPad(data, [a, b, c], [], sizesOf(map, 16, 50));
+  const { data: out, added } = applyPad(data, [rw(a), rw(b), rw(c)], [], sizesOf(map, 16, 50));
   expect(added).toBe(3);
   expect(Number(out.resources().writeBytes())).toBe(50 + 404 + 16 + 50 + 2 * WRITE_BYTES_PER); // two nonexistent/unswept keys covered at the creation estimate
   expect(Number(out.resources().instructions())).toBe(Math.floor(1_000_000 * 1.25) + 120_000 * 3 + 3_000_000);
+});
+
+test("applyPad keeps a planned read-only key in read-only", () => {
+  const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+  const inst = instanceKey(contract).xdr;
+  const market = ck(contract, "Market", 0).xdr;
+  const level = ck(contract, "Level", 0, false, 10).xdr;
+  const data = emptyData([inst, market], []);
+  const { data: out, added, addedRo, resourceFee } = applyPad(data, [ro(inst), ro(market), rw(level)]);
+  expect(added).toBe(1);
+  expect(addedRo).toBe(0);
+  const builder = new StellarSdk.SorobanDataBuilder(out);
+  const roKeys = builder.getReadOnly().map(keyB64);
+  const rwKeys = builder.getReadWrite().map(keyB64);
+  expect(roKeys).toContain(keyB64(inst));
+  expect(roKeys).toContain(keyB64(market));
+  expect(rwKeys).not.toContain(keyB64(inst));
+  expect(rwKeys).not.toContain(keyB64(market));
+  expect(rwKeys).toContain(keyB64(level));
+  expect(Number(out.resources().writeBytes())).toBe(50 + WRITE_BYTES_PER);
+  const bump = resourceFee - (10_000n * 13n) / 10n;
+  expect(bump).toBe(BigInt(perAddedFee() + Math.floor((3_000_000 * 7) / 10_000)));
+});
+
+test("applyPad adds an absent read-only key to the read-only list", () => {
+  const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+  const market = ck(contract, "Market", 0).xdr;
+  const data = emptyData([], []);
+  const { data: out, added, addedRo, resourceFee } = applyPad(data, [ro(market)]);
+  expect(added).toBe(0);
+  expect(addedRo).toBe(1);
+  const builder = new StellarSdk.SorobanDataBuilder(out);
+  expect(builder.getReadOnly().map(keyB64)).toContain(keyB64(market));
+  expect(builder.getReadWrite()).toHaveLength(0);
+  expect(Number(out.resources().writeBytes())).toBe(50);
+  expect(Number(out.resources().diskReadBytes())).toBe(100 + DISK_READ_PER);
+  expect(Number(out.resources().instructions())).toBe(Math.floor(1_000_000 * 1.25) + 120_000 + 3_000_000);
+  const bump = resourceFee - (10_000n * 13n) / 10n;
+  expect(bump).toBe(BigInt(perAddedRoFee() + Math.floor((3_000_000 * 7) / 10_000)));
+});
+
+test("applyPad never demotes a simulation read-write key", () => {
+  const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+  const inst = instanceKey(contract).xdr;
+  const data = emptyData([], [inst]);
+  const { data: out, added, addedRo } = applyPad(data, [ro(inst)]);
+  expect(added).toBe(0);
+  expect(addedRo).toBe(0);
+  const builder = new StellarSdk.SorobanDataBuilder(out);
+  expect(builder.getReadWrite().map(keyB64)).toContain(keyB64(inst));
+  expect(builder.getReadOnly().map(keyB64)).not.toContain(keyB64(inst));
+});
+
+test("applyPad still promotes a simulation read-only Level to read-write", () => {
+  const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+  const level = ck(contract, "Level", 0, false, 10).xdr;
+  const data = emptyData([level], []);
+  const { data: out, added, addedRo } = applyPad(data, [rw(level)]);
+  expect(added).toBe(1);
+  expect(addedRo).toBe(0);
+  const builder = new StellarSdk.SorobanDataBuilder(out);
+  expect(builder.getReadWrite().map(keyB64)).toContain(keyB64(level));
+  expect(builder.getReadOnly().map(keyB64)).not.toContain(keyB64(level));
+});
+
+test("applyPad restore metadata remaps indexes onto the final read-write list", () => {
+  const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+  const k0 = ck(contract, "Level", 0, false, 10).xdr;
+  const k1 = ck(contract, "Level", 0, false, 11).xdr;
+  const k2 = ck(contract, "Level", 0, false, 12).xdr;
+  const data = dataWithExt([k2], [k0, k1], [1]);
+  const { data: out } = applyPad(data, [rw(k2)], [k2]);
+  expect(out.ext().switch()).toBe(1);
+  const finalRw = new StellarSdk.SorobanDataBuilder(out).getReadWrite();
+  const idxs = out.ext().resourceExt().archivedSorobanEntries();
+  const marked = idxs.map((i) => keyB64(finalRw[Number(i)])).sort();
+  expect(marked).toEqual([keyB64(k1), keyB64(k2)].sort());
+
+  const { data: none } = applyPad(emptyData([], [k0]), [rw(k1)]);
+  expect(none.ext().switch()).toBe(0);
+});
+
+test("applyPad drops an archived planned read-only key", () => {
+  const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
+  const market = ck(contract, "Market", 0).xdr;
+  const data = emptyData([], []);
+  const map = new Map([[keyB64(market), { exists: true, actualSize: 100, liveness: "archived" as const }]]);
+  const { data: out, added, addedRo, dropped } = applyPad(data, [ro(market)], [], sizesOf(map));
+  expect(dropped).toBe(1);
+  expect(added).toBe(0);
+  expect(addedRo).toBe(0);
+  const builder = new StellarSdk.SorobanDataBuilder(out);
+  expect(builder.getReadOnly().map(keyB64)).not.toContain(keyB64(market));
+  expect(builder.getReadWrite().map(keyB64)).not.toContain(keyB64(market));
 });
 
 function accountDataXdr(pubkey: string, seq = "10"): string {
@@ -814,4 +977,142 @@ test("submitInvocation restores a simulate restorePreamble then re-simulates", a
   expect(restores).toBe(1);
   expect(sims).toBe(2);
   expect(got.kind).toBe("ok");
+});
+
+function randomContract(): string {
+  return StellarSdk.StrKey.encodeContract(StellarSdk.Keypair.random().rawPublicKey());
+}
+
+function footprintSets(xdr: string): { ro: Set<string>; rw: Set<string>; data: StellarSdk.xdr.SorobanTransactionData } {
+  const tx = StellarSdk.TransactionBuilder.fromXDR(xdr, "Test SDF Network ; September 2015") as StellarSdk.Transaction;
+  const data = tx.toEnvelope().v1().tx().ext().sorobanData();
+  const fp = data.resources().footprint();
+  return {
+    ro: new Set(fp.readOnly().map(keyB64)),
+    rw: new Set(fp.readWrite().map(keyB64)),
+    data,
+  };
+}
+
+function rwKind(k: StellarSdk.xdr.LedgerKey): string {
+  const sw = k.switch().name;
+  if (sw === "trustline") return "trustline";
+  if (sw !== "contractData") return sw;
+  const name = scValKeyName(k.contractData().key()).split("(")[0];
+  if (name === "Config") return "instance";
+  if (name === "Balance") return "balance";
+  return name;
+}
+
+test("disjoint-token two-market envelopes share no writable PageBook instance", async () => {
+  const sacA = randomContract();
+  const sacB = randomContract();
+  const sacC = randomContract();
+  const sacD = randomContract();
+  const issuer = StellarSdk.Keypair.random().publicKey();
+  const simData = emptyData(
+    [
+      instanceKey(PAGEBOOK).xdr,
+      instanceKey(sacA).xdr,
+      instanceKey(sacB).xdr,
+      instanceKey(sacC).xdr,
+      instanceKey(sacD).xdr,
+    ],
+    [],
+  );
+  const sent: string[] = [];
+  const { rpc, kp } = mockRpc({
+    simulateTransaction: async () => ({
+      transactionData: simData.toXDR("base64"),
+      minResourceFee: "12000",
+      results: [{ xdr: StellarSdk.xdr.ScVal.scvVoid().toXDR("base64") }],
+    }),
+    sendTransaction: async (xdr) => {
+      sent.push(xdr);
+      return { status: "PENDING", hash: `${sent.length}a`.repeat(32).slice(0, 64) };
+    },
+    getTransaction: async () => ({ status: "SUCCESS", txHash: "aa".repeat(32) }),
+  });
+  const caller = kp.publicKey();
+  const flags = { post_only: false, fill_or_kill: false, no_rest: false };
+
+  const place = async (market: number, baseSac: string, quoteSac: string, baseCode: string, quoteCode: string) => {
+    const quoted = {
+      market,
+      ownSide: true,
+      limitTick: 10,
+      startTick: 10,
+      crossed: [],
+      taker: addrToHex(caller),
+      nonce: 1n,
+      base: addrToHex(baseSac),
+      quote: addrToHex(quoteSac),
+    };
+    return submitPlace(rpc, {
+      contract: PAGEBOOK,
+      secret: kp.secret(),
+      taker: caller,
+      market,
+      isBid: true,
+      limitTick: 10,
+      qtyLots: 1n,
+      startTick: 10,
+      nonce: 1n,
+      flags,
+      quoted,
+      tokens: [
+        { sac: baseSac, code: baseCode, issuer },
+        { sac: quoteSac, code: quoteCode, issuer },
+      ],
+      padEnd: 10,
+    });
+  };
+
+  const a = await place(0, sacA, sacB, "AAAA", "BBBB");
+  const b = await place(1, sacC, sacD, "CCCC", "DDDD");
+  expect(a.kind).toBe("ok");
+  expect(b.kind).toBe("ok");
+  expect(sent).toHaveLength(2);
+
+  const env0 = footprintSets(sent[0]);
+  const env1 = footprintSets(sent[1]);
+  const inst = keyB64(instanceKey(PAGEBOOK).xdr);
+  expect(env0.ro.has(inst)).toBe(true);
+  expect(env1.ro.has(inst)).toBe(true);
+  expect(env0.rw.has(inst)).toBe(false);
+  expect(env1.rw.has(inst)).toBe(false);
+
+  expect(env0.ro.has(keyB64(ck(PAGEBOOK, "Market", 0).xdr))).toBe(true);
+  expect(env0.rw.has(keyB64(ck(PAGEBOOK, "Market", 0).xdr))).toBe(false);
+  expect(env1.ro.has(keyB64(ck(PAGEBOOK, "Market", 1).xdr))).toBe(true);
+  expect(env1.rw.has(keyB64(ck(PAGEBOOK, "Market", 1).xdr))).toBe(false);
+
+  for (const sac of [sacA, sacB, sacC, sacD]) {
+    const sacInst = keyB64(instanceKey(sac).xdr);
+    expect(env0.ro.has(sacInst)).toBe(true);
+    expect(env1.ro.has(sacInst)).toBe(true);
+    expect(env0.rw.has(sacInst)).toBe(false);
+    expect(env1.rw.has(sacInst)).toBe(false);
+  }
+
+  const writable = new Set(["Level", "TickWord", "TickSummary", "BestTick", "Order", "FeeAccrual", "balance", "trustline"]);
+  for (const env of [env0, env1]) {
+    const fp = env.data.resources().footprint();
+    for (const k of fp.readWrite()) {
+      expect(writable.has(rwKind(k))).toBe(true);
+    }
+    for (const k of fp.readOnly()) {
+      const kind = rwKind(k);
+      expect(kind === "instance" || kind === "Market").toBe(true);
+    }
+  }
+
+  const rw0 = [...env0.rw];
+  const shared = rw0.filter((k) => env1.rw.has(k));
+  expect(shared).toEqual([]);
+
+  expect(env0.rw.has(keyB64(sacBalanceKey(sacA, PAGEBOOK).xdr))).toBe(true);
+  expect(env0.rw.has(keyB64(trustlineLedgerKey(caller, { type: "credit", code: "AAAA", issuer })))).toBe(true);
+  expect(env1.rw.has(keyB64(sacBalanceKey(sacC, PAGEBOOK).xdr))).toBe(true);
+  expect(env1.rw.has(keyB64(trustlineLedgerKey(caller, { type: "credit", code: "CCCC", issuer })))).toBe(true);
 });
