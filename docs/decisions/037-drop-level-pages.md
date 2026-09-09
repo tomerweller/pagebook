@@ -244,3 +244,16 @@ cap; a market raised to 128 slots scans a deep level over two takes, as today.
   [1, 4,194,304), fee 5 bps, 1 to 1,000,000 lots); `level_cap` at its default
   of 64. The `level` view reads back `depth` 0 on an empty tick.
 - Smoke, wind-down of `CB6I…DAZB` and the fly cutover: below.
+
+### Smoke run
+
+30 minutes on the new contract (2026-09-09, about 13:20 to 13:50 local), a
+5-level maker (`--levels 5 --base-lots 2 --step-lots 1`, pad v2) on
+`pb-fly-funder-1` and the trader (pad v2, 15 to 40 s between takes) on
+`pb-fly-funder-2`, both running the `main` code. The watchdog at the end:
+`MM OK`, maker last hour 185 ok / 32 simulation-rejected (post-only `Crossed`,
+free) / 0 apply-rejected / 0 bad, 16 heals, 71 fills for 193 lots; trader 61
+takes for 271 lots, 5 rests, 4 settles, 0 rejected, 0 bad. No `footprint`,
+`trapped:unknown` or `resource_limit` outcome on either side; the `main` web
+client rendered the book from the single-vector `Level` entries with no
+console errors. The smoke maker was then unquoted with `--cancel-all`.
