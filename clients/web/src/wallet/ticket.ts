@@ -10,7 +10,7 @@ import { errorMessageByName, errorName, errorTitleByName, parseContractError } f
 import { countLabel, esc, txLink } from "../view/format";
 import { tokenDecimals, tokenLabel, type UrlOverrides } from "../view/format";
 import { parseAssetFromSacName, type AccountState, type TrustlineState } from "./account";
-import { MarkupCache } from "../view/stable";
+import { setAttr, setHtml, setText } from "../view/stable";
 import type { Store } from "../store";
 import type { AppState } from "../view/market";
 import {
@@ -284,7 +284,10 @@ export function createTicket(opts: {
   let previewTimer: ReturnType<typeof setTimeout> | null = null;
   let rootEl: HTMLElement | null = null;
   let bound = false;
-  const cache = new MarkupCache();
+  let mounted = false;
+  let lastWritten = new Map<string, string>();
+  const composing = new Set<string>();
+  const pending = new Map<string, string>();
 
   function snap(): BookSnapshot | null {
     return app.read().book.snapshot;
@@ -787,55 +790,99 @@ export function createTicket(opts: {
     return `${esc(label)}${t.phaseDetail ? ` · ${esc(t.phaseDetail)}` : ""}${hash}`;
   }
 
-  function fullHtml(): string {
+  function shellHtml(): string {
+    return `<section class="ticket">
+      <h3>place order</h3>
+      <div class="ticket-side">
+        <button type="button" data-act="buy"></button>
+        <button type="button" data-act="sell"></button>
+      </div>
+      <div class="ticket-fields">
+        <label><span class="ticket-label" data-role="price-label"></span>
+          <div class="ticket-step">
+            <button type="button" data-act="price-dec" aria-label="one tick down">−</button>
+            <input class="wallet-input" data-field="price" inputmode="decimal" />
+            <button type="button" data-act="price-inc" aria-label="one tick up">+</button>
+          </div>
+        </label>
+        <label><span class="ticket-label" data-role="qty-label"></span>
+          <div class="ticket-step">
+            <button type="button" data-act="qty-dec" aria-label="one lot down">−</button>
+            <input class="wallet-input" data-field="qty" inputmode="decimal" />
+            <button type="button" data-act="qty-inc" aria-label="one lot up">+</button>
+          </div>
+        </label>
+      </div>
+      <p class="wallet-muted" data-role="human"></p>
+      <div class="ticket-flags">
+        <label class="ticket-flag" title="rest only; reject if the order would take"><input type="checkbox" data-flag="post_only" /> post-only</label>
+        <label class="ticket-flag" title="fill completely or revert; nothing rests"><input type="checkbox" data-flag="fill_or_kill" /> fill-or-kill</label>
+        <label class="ticket-flag" title="take what is there and refund the rest; do not rest"><input type="checkbox" data-flag="no_rest" /> no-rest</label>
+      </div>
+      <p class="wallet-muted" data-role="why"></p>
+      <div data-role="preview"></div>
+      <div data-role="cta"></div>
+    </section>`;
+  }
+
+  function ctaHtml(): string {
     const v = validation();
+    const t = tkt();
+    const sym = balances().baseSymbol;
+    const busy = t.submitting || t.phase === "simulating" || t.phase === "signing" || t.phase === "sending";
+    if (t.phase === "idle") {
+      return `<button type="button" data-act="place" class="ticket-cta ${t.isBid ? "bid" : "ask"}" ${!v.ok || busy || (t.preview.kind === "typed" && t.preview.name === "Crossed") ? "disabled" : ""}>${t.isBid ? "BUY" : "SELL"} ${esc(sym)}</button>`;
+    }
+    return `<div class="ticket-cta ticket-status ${t.isBid ? "bid" : "ask"} ${esc(t.phase)}" data-act="status-ack" data-role="strip">${stripInner()}</div>`;
+  }
+
+  function writeValue(field: string, str: string): void {
+    if (lastWritten.get(field) === str) return;
+    if (composing.has(field)) {
+      pending.set(field, str);
+      return;
+    }
+    const input = rootEl?.querySelector<HTMLInputElement>(`[data-field="${field}"]`);
+    if (!input) return;
+    if (input.value !== str) input.value = str;
+    lastWritten.set(field, str);
+  }
+
+  function patch(): void {
+    if (!rootEl) return;
     const qn = quant();
     const b = balances();
     const t = tkt();
     const human = qn ? snapLine(qn) : "";
     const sym = b.baseSymbol;
     const qsym = b.quoteSymbol;
-    const busy = t.submitting || t.phase === "simulating" || t.phase === "signing" || t.phase === "sending";
     const pStep = qn ? oneTickPriceStep(qn) : "any";
     const qStep = qn ? oneLotQtyStep(qn) : "any";
-    const priceStr = displayPrice();
-    const qtyStr = displayQty();
-    return `<section class="ticket">
-      <h3>place order</h3>
-      <div class="ticket-side">
-        <button type="button" data-act="buy" class="${t.isBid ? "on bid" : ""}">BUY ${esc(sym)}</button>
-        <button type="button" data-act="sell" class="${!t.isBid ? "on ask" : ""}">SELL ${esc(sym)}</button>
-      </div>
-      <div class="ticket-fields">
-        <label><span class="ticket-label" title="price · ${esc(qsym)} per ${esc(sym)}">price · ${esc(qsym)}/${esc(sym)}</span>
-          <div class="ticket-step">
-            <button type="button" data-act="price-dec" aria-label="one tick down">−</button>
-            <input class="wallet-input" data-field="price" inputmode="decimal" step="${esc(pStep)}" value="${esc(priceStr)}" />
-            <button type="button" data-act="price-inc" aria-label="one tick up">+</button>
-          </div>
-        </label>
-        <label><span class="ticket-label">quantity · ${esc(sym)}</span>
-          <div class="ticket-step">
-            <button type="button" data-act="qty-dec" aria-label="one lot down">−</button>
-            <input class="wallet-input" data-field="qty" inputmode="decimal" step="${esc(qStep)}" value="${esc(qtyStr)}" />
-            <button type="button" data-act="qty-inc" aria-label="one lot up">+</button>
-          </div>
-        </label>
-      </div>
-      <p class="wallet-muted" data-role="human">${esc(human)}</p>
-      <div class="ticket-flags">
-        <label class="ticket-flag" title="rest only; reject if the order would take"><input type="checkbox" data-flag="post_only" ${t.flags.post_only ? "checked" : ""} /> post-only</label>
-        <label class="ticket-flag" title="fill completely or revert; nothing rests"><input type="checkbox" data-flag="fill_or_kill" ${t.flags.fill_or_kill ? "checked" : ""} /> fill-or-kill</label>
-        <label class="ticket-flag" title="take what is there and refund the rest; do not rest"><input type="checkbox" data-flag="no_rest" ${t.flags.no_rest ? "checked" : ""} /> no-rest</label>
-      </div>
-      <p class="wallet-muted" data-role="why">${v.ok ? "" : esc(v.reason)}</p>
-      <div data-role="preview">${previewHtml()}</div>
-      ${
-        t.phase === "idle"
-          ? `<button type="button" data-act="place" class="ticket-cta ${t.isBid ? "bid" : "ask"}" ${!v.ok || busy || (t.preview.kind === "typed" && t.preview.name === "Crossed") ? "disabled" : ""}>${t.isBid ? "BUY" : "SELL"} ${esc(sym)}</button>`
-          : `<div class="ticket-cta ticket-status ${t.isBid ? "bid" : "ask"} ${esc(t.phase)}" data-act="status-ack" data-role="strip">${stripInner()}</div>`
-      }
-    </section>`;
+    const buy = rootEl.querySelector("[data-act=buy]");
+    const sell = rootEl.querySelector("[data-act=sell]");
+    setAttr(buy, "class", t.isBid ? "on bid" : "");
+    setAttr(sell, "class", !t.isBid ? "on ask" : "");
+    setText(buy, `BUY ${sym}`);
+    setText(sell, `SELL ${sym}`);
+    const priceLabel = rootEl.querySelector("[data-role=price-label]");
+    setAttr(priceLabel, "title", `price · ${qsym} per ${sym}`);
+    setText(priceLabel, `price · ${qsym}/${sym}`);
+    setText(rootEl.querySelector("[data-role=qty-label]"), `quantity · ${sym}`);
+    setAttr(rootEl.querySelector("[data-field=price]"), "step", pStep);
+    setAttr(rootEl.querySelector("[data-field=qty]"), "step", qStep);
+    writeValue("price", displayPrice());
+    writeValue("qty", displayQty());
+    const post = rootEl.querySelector<HTMLInputElement>("[data-flag=post_only]");
+    const fok = rootEl.querySelector<HTMLInputElement>("[data-flag=fill_or_kill]");
+    const nr = rootEl.querySelector<HTMLInputElement>("[data-flag=no_rest]");
+    if (post) post.checked = t.flags.post_only;
+    if (fok) fok.checked = t.flags.fill_or_kill;
+    if (nr) nr.checked = t.flags.no_rest;
+    setText(rootEl.querySelector("[data-role=human]"), human);
+    const check = validation();
+    setText(rootEl.querySelector("[data-role=why]"), check.ok ? "" : check.reason);
+    setHtml(rootEl.querySelector("[data-role=preview]"), previewHtml());
+    setHtml(rootEl.querySelector("[data-role=cta]"), ctaHtml());
   }
 
   function bind(root: HTMLElement): void {
@@ -899,6 +946,19 @@ export function createTicket(opts: {
         schedulePreview();
       }
     });
+    root.addEventListener("compositionstart", (e) => {
+      const field = (e.target as HTMLInputElement).dataset.field;
+      if (field === "price" || field === "qty") composing.add(field);
+    });
+    root.addEventListener("compositionend", (e) => {
+      const field = (e.target as HTMLInputElement).dataset.field;
+      if (field !== "price" && field !== "qty") return;
+      composing.delete(field);
+      const next = pending.get(field);
+      if (next === undefined) return;
+      pending.delete(field);
+      writeValue(field, next);
+    });
     root.addEventListener("change", (e) => {
       const el = e.target as HTMLInputElement;
       const key = el.dataset.flag as keyof PlaceFlags | undefined;
@@ -942,20 +1002,16 @@ export function createTicket(opts: {
     });
   }
 
-  function renderTicket(): void {
-    if (!rootEl) return;
+  function ticketKey(): string {
+    const v = app.read().versions;
+    return `${v.book}|${v.wallet}|${v.ticket}`;
+  }
+
+  function ticketEffects(): void {
     const w = app.read().wallet;
-    if (!w.enabled || !w.active) {
-      cache.write("ticket", rootEl, "");
-      return;
-    }
+    if (!w.enabled || !w.active) return;
     maybeDefaultTick();
     maybeDefaultSide();
-    cache.write("ticket", rootEl, fullHtml());
-    if (!bound) {
-      bind(rootEl);
-      bound = true;
-    }
     if (tkt().focusQty) {
       // Focus after the whole render pass: on the tap that OPENS the sheet,
       // this render can run while .wallet-body is still display:none and
@@ -976,14 +1032,33 @@ export function createTicket(opts: {
     if (quoteKey() !== tkt().previewQuoteKey) schedulePreview();
   }
 
-  app.register(
-    "ticket",
-    () => renderTicket(),
-    () => {
-      const v = app.read().versions;
-      return `${v.book}|${v.wallet}|${v.ticket}`;
-    },
-  );
+  function renderTicket(): void {
+    if (!rootEl) return;
+    const w = app.read().wallet;
+    if (!w.enabled || !w.active) {
+      setHtml(rootEl, "");
+      mounted = false;
+      lastWritten = new Map();
+      composing.clear();
+      pending.clear();
+      return;
+    }
+    if (!mounted) {
+      setHtml(rootEl, shellHtml());
+      lastWritten = new Map();
+      composing.clear();
+      pending.clear();
+      mounted = true;
+      if (!bound) {
+        bind(rootEl);
+        bound = true;
+      }
+    }
+    patch();
+  }
+
+  app.subscribe("ticket-effects", () => ticketEffects(), ticketKey);
+  app.register("ticket", () => renderTicket(), ticketKey);
 
   return {
     attach(root) {
