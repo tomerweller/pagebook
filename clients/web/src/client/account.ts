@@ -1,6 +1,7 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
-import type { Rpc, RpcLedgerEntry } from "../book";
 import { toBigInt } from "../decode";
+import { entryData } from "./entries";
+import type { Rpc } from "./rpc";
 
 export const BASE_RESERVE_STROOPS = 5_000_000n;
 
@@ -40,23 +41,6 @@ export function parseAssetFromSacName(name: string): ClassicAsset {
   return { type: "credit", code, issuer };
 }
 
-function ledgerData(entry: RpcLedgerEntry): StellarSdk.xdr.LedgerEntryData | null {
-  if (entry.val && typeof entry.val === "object" && "switch" in entry.val && typeof entry.val.switch === "function") {
-    return entry.val;
-  }
-  const raw = entry.xdr || (typeof entry.val === "string" ? entry.val : null);
-  if (!raw) return null;
-  try {
-    return StellarSdk.xdr.LedgerEntryData.fromXDR(raw, "base64");
-  } catch {
-    try {
-      return StellarSdk.xdr.LedgerEntry.fromXDR(raw, "base64").data();
-    } catch {
-      return null;
-    }
-  }
-}
-
 export function accountLedgerKey(pubkey: string): StellarSdk.xdr.LedgerKey {
   const kp = StellarSdk.Keypair.fromPublicKey(pubkey);
   return StellarSdk.xdr.LedgerKey.account(new StellarSdk.xdr.LedgerKeyAccount({ accountId: kp.xdrAccountId() }));
@@ -81,8 +65,7 @@ export async function readAccount(rpc: Rpc, pubkey: string): Promise<AccountStat
   const res = await rpc.getLedgerEntries(accountLedgerKey(pubkey));
   const entry = res.entries?.[0];
   if (!entry) return emptyAccount();
-  const data = ledgerData(entry);
-  if (!data) return emptyAccount();
+  const data = entryData(entry);
   try {
     if (data.switch().name !== "account") return emptyAccount();
     const acc = data.account();
@@ -105,8 +88,7 @@ export async function readTrustline(rpc: Rpc, pubkey: string, asset: CreditAsset
   const res = await rpc.getLedgerEntries(trustlineLedgerKey(pubkey, asset));
   const entry = res.entries?.[0];
   if (!entry) return { asset, exists: false, balance: 0n };
-  const data = ledgerData(entry);
-  if (!data) return { asset, exists: false, balance: 0n };
+  const data = entryData(entry);
   try {
     if (data.switch().name !== "trustline") return { asset, exists: false, balance: 0n };
     const tl = data.trustLine();
@@ -123,8 +105,7 @@ export async function readTrustlines(rpc: Rpc, pubkey: string, assets: CreditAss
   const found = new Set<string>();
   const out: TrustlineState[] = [];
   for (const entry of res.entries ?? []) {
-    const data = ledgerData(entry);
-    if (!data) continue;
+    const data = entryData(entry);
     try {
       if (data.switch().name !== "trustline") continue;
       const tl = data.trustLine();

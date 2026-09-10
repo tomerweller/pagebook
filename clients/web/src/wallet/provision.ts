@@ -1,4 +1,4 @@
-import type { CreditAsset } from "./account";
+import type { CreditAsset } from "../client/account";
 
 export type ProvisionSource = "generate" | "seed" | "import";
 

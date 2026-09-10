@@ -1,7 +1,7 @@
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRpc, type Rpc } from "../src/book";
+import { createRpc, type Rpc } from "../src/client/rpc";
 import { parseArgs, type ArgSpec } from "./lib/args";
 import { Feed } from "./lib/feed";
 import { loadIdentity } from "./lib/identity";

@@ -1,15 +1,12 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRpc, fetchLevelCap, type Rpc } from "../src/book";
+import { fetchLevelCap } from "../src/client/protocol";
+import { createRpc, type Rpc } from "../src/client/rpc";
 import { addrToHex } from "../src/engine/clientKeys";
 import type { Quoted } from "../src/engine/pad";
-import {
-  decodePlaceResult,
-  restoreKeys,
-  submitPlace,
-  submitSettle,
-  type ClassicToken,
-} from "../src/engine/submit";
+import { decodePlaceResult } from "../src/engine/diagnose";
+import { type ClassicToken } from "../src/engine/op";
+import { restoreKeys, submitPlace, submitSettle } from "../src/engine/submit";
 import { parseArgs, type ArgSpec } from "./lib/args";
 import { loadIdentity, type Identity } from "./lib/identity";
 import { bandTooWide, drawTake, randInt, repr, takeLimit } from "./lib/math";

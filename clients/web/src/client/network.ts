@@ -1,4 +1,4 @@
-import type { Rpc } from "../book";
+import type { Rpc } from "./rpc";
 
 export const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
 

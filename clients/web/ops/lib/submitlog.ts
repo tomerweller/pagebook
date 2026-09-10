@@ -1,5 +1,6 @@
-import type { Rpc } from "../../src/book";
-import { restoreKeys, type EngineResult } from "../../src/engine/submit";
+import type { Rpc } from "../../src/client/rpc";
+import type { EngineResult } from "../../src/engine/op";
+import { restoreKeys } from "../../src/engine/submit";
 import { repr } from "./math";
 import { outcomeOf, type OutcomeInput } from "./outcomes";
 

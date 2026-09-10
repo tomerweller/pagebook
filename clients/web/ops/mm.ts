@@ -1,16 +1,16 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRpc, fetchLevelCap, type Rpc } from "../src/book";
+import { fetchLevelCap } from "../src/client/protocol";
+import { createRpc, type Rpc } from "../src/client/rpc";
 import { addrToHex } from "../src/engine/clientKeys";
 import { pad } from "../src/engine/pad";
+import { type ClassicToken, type EngineResult } from "../src/engine/op";
 import {
   submitPlace,
   submitPostOnlyPlace,
   submitReplace,
   submitReplaceBatch,
   submitSettle,
-  type ClassicToken,
-  type EngineResult,
 } from "../src/engine/submit";
 import type { ApplyPadSizes } from "../src/engine/txdata";
 import { parseArgs, type ArgSpec } from "./lib/args";
@@ -35,7 +35,9 @@ import {
   type LadderParams,
 } from "./lib/math";
 import { openLog, type OpsLog } from "./lib/opslog";
-import { classicTokens, collectUniverseXdr, feeKeys, orderClientKey, restKeys, sweepPadSizes, tokenHex } from "./lib/padkeys";
+import { collectUniverseXdr, sweepPadSizes } from "../src/engine/liveness";
+import { feeKeys, orderClientKey, restKeys } from "../src/engine/pad";
+import { classicTokens, tokenHex } from "./lib/padkeys";
 import { loadState, saveState, type MmState, type QuoteState } from "./lib/statefile";
 import { type OutcomeInput } from "./lib/outcomes";
 import { runSubmit, sleep, type RestoreBudget, type SubmitPair } from "./lib/submitlog";

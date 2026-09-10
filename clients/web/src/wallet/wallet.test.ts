@@ -1,10 +1,9 @@
 import { expect, test } from "vitest";
-import { spendableXlm, parseAssetFromSacName, BASE_RESERVE_STROOPS } from "./account";
+import { spendableXlm, parseAssetFromSacName, BASE_RESERVE_STROOPS, type CreditAsset } from "../client/account";
+import { isTestnetPassphrase, NETWORK_PASSPHRASE, checkTestnet } from "../client/network";
+import type { Rpc } from "../client/rpc";
 import { Keystore, STORAGE_KEY, deriveFromSeed, SEED_NAME, type StorageLike } from "./keystore";
-import { isTestnetPassphrase, NETWORK_PASSPHRASE, checkTestnet } from "./network";
-import type { Rpc } from "../book";
 import { missingCredits, planProvision } from "./provision";
-import type { CreditAsset } from "./account";
 
 function memStorage(): StorageLike {
   const m = new Map<string, string>();

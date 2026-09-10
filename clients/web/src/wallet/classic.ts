@@ -1,7 +1,7 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
-import type { Rpc } from "../book";
-import { NETWORK_PASSPHRASE } from "./network";
-import { readAccount, type CreditAsset } from "./account";
+import type { Rpc } from "../client/rpc";
+import { readAccount, type CreditAsset } from "../client/account";
+import { NETWORK_PASSPHRASE } from "../client/network";
 
 export type SubmitResult = {
   status: "SUCCESS" | "FAILED" | "ALREADY_FUNDED";

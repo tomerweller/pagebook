@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRpc, type Rpc } from "../src/book";
+import { createRpc, type Rpc } from "../src/client/rpc";
 import { parseArgs, type ArgSpec } from "./lib/args";
 import type { OpsLogRecord } from "./lib/logparse";
 import { mapPool } from "./lib/pool";

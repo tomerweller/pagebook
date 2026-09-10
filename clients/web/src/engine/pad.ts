@@ -1,5 +1,5 @@
+import type { Rpc } from "../client/rpc";
 import { orderKey } from "../keys";
-import type { Rpc } from "../book";
 import { wordOf } from "../decode";
 import { accessOf, addrToHex, keyStr, sameKey, type ClientKey, type Hex32 } from "./clientKeys";
 

@@ -2,7 +2,11 @@
  * @vitest-environment jsdom
  */
 import { expect, test, vi } from "vitest";
-import { mockSnapshot, type BookSnapshot, type Rpc } from "./book";
+import * as StellarSdk from "@stellar/stellar-sdk";
+import type { BookSnapshot } from "./book";
+import { accountLedgerKey } from "./client/account";
+import type { Rpc } from "./client/rpc";
+import { mockSnapshot } from "./demo/mockSnapshot";
 import { MarkupCache } from "./view/stable";
 import { createOrders, type OpenOrder } from "./wallet/orders";
 import { createTicket, type TicketEngine } from "./wallet/ticket";
@@ -12,11 +16,27 @@ import { emptyBookDomain, registerMarketView, type AppState } from "./view/marke
 import { emptyWalletDomain, mountWallet } from "./wallet/pane";
 import { emptyOrdersDomain } from "./wallet/orders";
 import { emptyTicketDomain } from "./wallet/ticket";
-import { accountLedgerKey } from "./wallet/account";
 import { deriveFromSeed } from "./wallet/keystore";
 import { assertInSheetViewport, stubRect } from "./view/viewport";
 
 const emptyOv: UrlOverrides = { baseSym: null, quoteSym: null, baseDec: null, quoteDec: null };
+
+function accountDataXdr(pubkey: string, seq = "10"): string {
+  const kp = StellarSdk.Keypair.fromPublicKey(pubkey);
+  const acc = new StellarSdk.xdr.AccountEntry({
+    accountId: kp.xdrAccountId(),
+    balance: new StellarSdk.xdr.Int64(10_000_000_000),
+    seqNum: new StellarSdk.xdr.Int64(Number(seq)) as never,
+    numSubEntries: 0,
+    inflationDest: null,
+    flags: 0,
+    homeDomain: "",
+    thresholds: Uint8Array.from([1, 0, 0, 0]) as never,
+    signers: [],
+    ext: new StellarSdk.xdr.AccountEntryExt(0),
+  });
+  return StellarSdk.xdr.LedgerEntryData.account(acc).toXDR("base64");
+}
 
 function stubRpc(sims: { n: number }): Rpc {
   return {
@@ -1173,14 +1193,8 @@ test("waitAccountExists drops a stale identity's account after a switch", async 
     return {
       entries: [
         {
-          val: {
-            switch: () => ({ name: "account" }),
-            account: () => ({
-              balance: () => 10n ** 10n,
-              seqNum: () => staleSeq,
-              numSubEntries: () => 0,
-            }),
-          },
+          key: want,
+          xdr: accountDataXdr(testId.publicKey, staleSeq.toString()),
         },
       ],
     };

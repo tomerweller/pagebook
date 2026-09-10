@@ -1,8 +1,9 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRpc, type Rpc } from "../src/book";
+import { createRpc, type Rpc } from "../src/client/rpc";
 import type { ClientKey, Hex32 } from "../src/engine/clientKeys";
-import { submitPostOnlyPlace, submitReplaceBatch, type ClassicToken } from "../src/engine/submit";
+import { type ClassicToken } from "../src/engine/op";
+import { submitPostOnlyPlace, submitReplaceBatch } from "../src/engine/submit";
 import { parseArgs, type ArgSpec } from "./lib/args";
 import { loadIdentity, type Identity } from "./lib/identity";
 import { latestLedger, waitLedgers } from "./lib/ledger";

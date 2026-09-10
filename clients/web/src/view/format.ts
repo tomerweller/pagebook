@@ -1,5 +1,6 @@
 import { formatInt, formatRatio, ticksToPrice, formatAtoms } from "../decode";
-import type { BookSnapshot, TokenMeta } from "../book";
+import type { BookSnapshot } from "../book";
+import type { TokenMeta } from "../client/protocol";
 
 export type UrlOverrides = {
   baseSym: string | null;

@@ -1,6 +1,6 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { beforeEach, expect, test } from "vitest";
-import type { Rpc } from "../book";
+import type { Rpc } from "../client/rpc";
 import { orderKey } from "../keys";
 import {
   classifyOrderEntry,

@@ -1,13 +1,13 @@
 import { expect, test } from "vitest";
 import * as StellarSdk from "@stellar/stellar-sdk";
-import type { Rpc } from "../book";
+import type { Rpc } from "../client/rpc";
 import { accessOf, hexToAccount, sameKey, toLedgerKey, type ClientKey } from "./clientKeys";
 import { ck } from "../keys";
 import { CREATE_SIZES, PAD_SWEEP_CHUNK } from "./liveness";
 import { pad, type Quoted } from "./pad";
 import { prepareInvocation, type Intent, type PrepareRequest } from "./prepare";
 import { DEFAULT_GROWTH, flatWriteBytesPer, WRITE_BYTES_PER } from "./txdata";
-import { accountLedgerKey } from "../wallet/account";
+import { accountLedgerKey } from "../client/account";
 
 const PAGEBOOK = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
 const T1 = "01".repeat(32);
@@ -474,3 +474,24 @@ test("cover flat uses the flat rate; cached sweep skips covered keys", async () 
   expect(fetched).not.toContain(keyB64(cachedKey));
   expect(fetched.length).toBeGreaterThan(0);
 });
+
+test("prepareInvocation maps a malformed account entry to kind rpc", async () => {
+  const kp = StellarSdk.Keypair.random();
+  const accKey = accountLedgerKey(kp.publicKey()).toXDR("base64");
+  const rpc: Rpc = {
+    getLatestLedger: async () => ({ sequence: 1 }),
+    getLedgerEntries: async () => ({ entries: [{ key: accKey, xdr: "!!!!" }], latestLedger: 1 }),
+    getEvents: async () => ({ events: [] }),
+    getNetwork: async () => ({ passphrase: "Test SDF Network ; September 2015" }),
+    sendTransaction: async () => ({ status: "PENDING" }),
+    getTransaction: async () => ({ status: "SUCCESS" }),
+    simulateTransaction: async () => {
+      throw new Error("simulate should not run");
+    },
+  };
+  const got = await prepareInvocation(rpc, reqFor(kp, placeIntent(placeQuoted(), 12)));
+  expect(got.kind).toBe("rpc");
+  if (got.kind !== "rpc") return;
+  expect(got.message).toMatch(accKey);
+});
+
