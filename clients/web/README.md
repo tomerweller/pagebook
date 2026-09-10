@@ -41,7 +41,7 @@ on a stored secret.
 
 | param | default | what it does |
 |---|---|---|
-| `contract` | `CAMH…56F4` | PageBook contract id |
+| `contract` | `CAYP…H2JA` | PageBook contract id |
 | `market` | XLM/USDC if present, else `0` | market id (XLM/USDC is market 0); the header selector changes it |
 | `rpc` | `https://soroban-testnet.stellar.org` | Soroban RPC URL |
 | `depth` | `12` | levels kept per side after empty levels are dropped |

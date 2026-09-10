@@ -95,4 +95,19 @@ A call that refunded after hitting the scan cap now consumes more liquidity.
 
 ## Cutover record
 
-Not yet. Procedure as in ADR-036 and ADR-037. Appended when it happens.
+- 2026-09-10. Same admin and identities as ADR-036 and ADR-037:
+  `pagebook-builder-2` (`GB2JQQZB…5SLK`) deploys and administers; `pb-mm-fly`
+  and `pb-trader-fly` run the bots; `pb-fly-funder-1` / `-2` are the smoke
+  identities.
+- Wasm hash `79ed1eeff844ac8779e6f3da5df1f720e7489b2bbc2c7aebfa613c46f3184af6`
+  (29,566 B, 293 B under ADR-037's build), built from `main` at `0dfb8e6`
+  (PR #36; 149 contract tests and 313 web tests passing locally). Upload tx
+  `212e6c…8356`, deploy tx `57d450…aa58`.
+- Contract `CAYPAQDKNWMHRATKU5DQ327VDHVRSIVK7UGVWT2A5SUZCUFTLUHXH2JA`.
+- Market 0 (tx `5157c1…560a`): the ADR-026 geometry (native XLM SAC
+  `CDLZ…CYSC`, USDC SAC `CBIE…DAMA`, lot 100,000,000 stroops, tick 1,000, band
+  [1, 4,194,304), fee 5 bps, 1 to 1,000,000 lots); `level_cap` at its default
+  of 64. The `level` view reads back `depth` 0 on an empty tick. The decoded
+  `Market(0)` entry has `level_cap` 64 and no `max_slots_scanned` field; it is
+  480 B on the ledger, 36 B under the old contract's 516 B.
+- Smoke, wind-down of `CAMH…56F4` and the fly cutover: below.
