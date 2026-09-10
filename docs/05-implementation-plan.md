@@ -48,7 +48,7 @@ pub trait PageBook {
     /// LEVEL_CAP_MAX (128); quantization is not a parameter: it is frozen for the
     /// market's lifetime.
     fn set_market_caps(e: Env, market: MarketId, max_levels_crossed: u32,
-                       max_slots_scanned: u32, taker_fee_bps: u32,
+                       taker_fee_bps: u32,
                        min_order_lots: u64, max_order_lots: u64, level_cap: u32);
 
     /// Admin-gated in v1. Enforces base ≠ quote, 1 ≤ tick_min < tick_max ≤ 2^22,
@@ -72,7 +72,7 @@ pub trait PageBook {
         -> (bool, u64, i128);
 
     /// Multi-leg atomic route; legs.len() ≤ MAX_ROUTE_LEGS and ONE shared
-    /// MAX_LEVELS_CROSSED / MAX_SLOTS_SCANNED budget across all legs (architecture
+    /// MAX_LEVELS_CROSSED budget across all legs (architecture
     /// §8) — a route's resource ceiling equals one maximal place + per-leg constants.
     fn route(e: Env, taker: Address, legs: Vec<PlaceLeg>) -> Vec<LegResult>;
 
@@ -287,7 +287,7 @@ default that a decision note may change once measured.
   fills, payouts, refunds, price-time priority scoped by `start_tick`, `replace ≡
   settle+place`, not bitmaps, generations, or tombstones; those are checked
   against the real book by the invariant assertions below. Property runs use
-  **non-binding caps** (`MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED` set above any
+  **non-binding caps** (`MAX_LEVELS_CROSSED` set above any
   sequence's needs) and queues well under `level_cap` by default, so the reference
   never has to predict truncation; cap and depth truncation is covered by the targeted
   adversarial shapes, not by proptest. Assert: identical takes, conservation, settlement
@@ -300,8 +300,8 @@ default that a decision note may change once measured.
   assert Σ payouts + fees == Σ deposits exactly (fee dust included — the ceil is the
   only rounding; any other discrepancy is a bug).
 - **Adversarial shapes:** max-depth single level (`level_cap`), 32-level worst-dispersal
-  sweeps, tombstone-poisoned head (K dust rests, cancel 2..K−1, assert scan cap +
-  persisted progress), **cancel-to-empty storms → LevelFull → reset → reuse**,
+  sweeps, tombstone-poisoned head (K dust rests, cancel 2..K−1, assert the next
+  take skips the whole run), **cancel-to-empty storms → LevelFull → reset → reuse**,
   stale-bit storms, cap-terminated places with crossing remainders, generation
   reset at sweep **and at depth**, seq monotonicity, nonce collision/reuse,
   bound-saturating amounts on every public path.
@@ -321,14 +321,13 @@ default that a decision note may change once measured.
 
 ## Open questions for the implementer to resolve (with decision notes)
 
-1. Level capacity `level_cap`, `MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED`: final
+1. Level capacity `level_cap`, `MAX_LEVELS_CROSSED`: final
    values tuned from measured entry sizes/fees in M4. **Starting values (ADR-014,
-   ADR-037):** `level_cap = 64` by default with `LEVEL_CAP_MAX = 128` (the 40-item
+   ADR-037, ADR-044):** `level_cap = 64` by default with `LEVEL_CAP_MAX = 128` (the 40-item
    batch onto levels at cap is what binds the ceiling, 70% of the per-tx write-byte
    cap at 128), `MAX_LEVELS_CROSSED = 32` (§17's worst-case rows assume it),
-   `MAX_SLOTS_SCANNED = 64` (one full level at the default cap, enough to clear any
-   single-generation tombstone run in one take; a market raised to 128 clears a long
-   run over two takes), `MAX_ROUTE_LEGS = 4`, `MAX_REPLACE_BATCH = 40` (§0.3; ADR-024 lowered it from 64: the event budget binds).
+   slots scanned per transaction ≤ `MAX_ROUTE_LEGS × LEVEL_CAP_MAX` = 512,
+   `MAX_ROUTE_LEGS = 4`, `MAX_REPLACE_BATCH = 40` (§0.3; ADR-024 lowered it from 64: the event budget binds).
 2. Whether rest should offer the optional `extend_ttl`-to-180-d flag for `Order`
    in v1 (TTL targets themselves are resolved: protocol minimum ~120 d covers every
    entry class; see architecture §18 / ADR-004).
@@ -341,8 +340,8 @@ default that a decision note may change once measured.
    §1, §4, §12); Deepstate's dual-fee model remains a reasonable template for the split (both
    capped, both on taker output).
 6. ~~Whether settle-at-head should also advance past tombstones~~:
-   resolved: it advances through consecutive zero slots up to `MAX_SLOTS_SCANNED`
-   and may leave the head on a tombstone (architecture §7 "stranded head"; ADR-012,
-   ADR-037).
+   resolved: it advances through consecutive zero slots up to the tail
+   (architecture §7 "stranded head"; ADR-012, ADR-037, ADR-044). The head may still
+   stand on a zero slot when a take's demand ran out.
 7. Nonce policy in the client SDK (random u64 vs per-owner counter) — the contract only
    requires "not currently live for this owner".

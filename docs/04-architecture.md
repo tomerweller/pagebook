@@ -137,12 +137,12 @@ admin-governed, exact at all times.
 | Entry | Durability | Key | Contents | Target size |
 |---|---|---|---|---|
 | `Config` | instance | `Config` | admin `Address`, fee recipient `Address`, paused flag, market counter | ~190 B (named struct; ADR-022) |
-| `Market` | persistent | `Market(market_id)` | base/quote SAC addrs, lot_size, tick_size, tick band, fee bps, min/max order lots, `MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED`, `level_cap` | ~430 B (named struct; written at creation and retune only; ADR-022, ADR-037) |
+| `Market` | persistent | `Market(market_id)` | base/quote SAC addrs, lot_size, tick_size, tick band, fee bps, min/max order lots, `MAX_LEVELS_CROSSED`, `level_cap` | ~430 B (named struct; written at creation and retune only; ADR-022, ADR-037) |
 
 **Mutability classes.** Market variables split by what may ever change (full analysis
 in `06-slp-sensitivity.md`). Frozen forever: quantization (`lot_size`, `tick_size`,
 tick band), price is a pure function of it, so changing it corrupts live state.
-Retunable via `set_market_caps` (§12): `MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED`,
+Retunable via `set_market_caps` (§12): `MAX_LEVELS_CROSSED`,
 `taker_fee_bps` (≤ `FEE_BPS_MAX`), `min_order_lots`/`max_order_lots`, and `level_cap`
 (raise-only, existing seqs may live beyond a lowered value; starts at the contract
 default of 64, ceiling `LEVEL_CAP_MAX` = 128; every raise re-runs the §0.3 proof).
@@ -203,8 +203,8 @@ mid-queue cancel zeroed it (a **tombstone**) or consumption ran it down. Slots b
 - `head_seq`, first seq not yet fully filled (within current generation).
 - the head slot, `slots[head_seq]`, the head order's open lots. **Convention (eager
   advance):** a partial take decrements the head slot in place; the moment it reaches
-  zero, `head_seq` advances, skipping consecutive zero slots up to `MAX_SLOTS_SCANNED`
-  (a longer run leaves the head on a zero slot for the next take to clear, §7).
+  zero, `head_seq` advances, skipping consecutive zero slots up to the tail
+  (the head may still stand on a zero slot when a take's demand ran out, §7).
 
 The counters and the head slot decide, at settle, whether any order at this level is
 filled, partial, or open (§7). `open_lots` tracks live lots for aggregate-consumption
@@ -408,13 +408,12 @@ that stayed in `open_lots` would be paid out a second time from other makers' es
 `NotOwner` if the authenticated address is not the key's owner. There is no footprint
 edge to hit: the machine touches `Order` and one `Level`.
 
-**Stranded head (bounded advance).** The `s == H` row advances `H` through consecutive
-zero slots up to `MAX_SLOTS_SCANNED`. If a tombstone run continues past that, `H` is
-left *on a tombstone*. This is safe and intended: every order behind it is `s > H` and
-settles as open (correct, nothing behind a tombstone run has been consumed), the
-tombstone's own `Order` is already deleted so nothing settles *at* `H`, and the next
-take skips the run (bounded by the same cap) and moves `H` on. Settle MUST NOT scan
-further.
+**Stranded head.** The `s == H` row advances `H` through consecutive zero slots up
+to the tail. The head may still stand on a zero slot when a take's demand ran out:
+every order behind it is `s > H` and settles as open (correct, nothing behind a
+tombstone run has been consumed), the tombstone's own `Order` is already deleted so
+nothing settles *at* `H`, and the next take skips the run (bounded by `level_cap`)
+and moves `H` on.
 
 **Owned invariant (§19): 4**, settlement is exact and path-independent: any
 interleaving of takes and settles ending in the same counters pays the same amounts
@@ -440,8 +439,7 @@ place(taker, market, side, limit_tick, qty_lots, start_tick, nonce, flags):
   # flags = post_only | fill_or_kill | no_rest
   best = worse_of(BestTick(opposite), start_tick)   # bitmap walk from start_tick if needed
   while qty_lots > 0 and best crosses limit_tick
-        and levels_crossed < MAX_LEVELS_CROSSED
-        and slots_scanned < MAX_SLOTS_SCANNED:
+        and levels_crossed < MAX_LEVELS_CROSSED:
     lvl = Level(opposite, best)
     if lvl.open_lots == 0:                     # stale bit (lazy clear, §19 inv. 3)
       clear bit in TickWord/TickSummary; best = next_set_tick(); continue   # counts as a crossed level
@@ -455,8 +453,8 @@ place(taker, market, side, limit_tick, qty_lots, start_tick, nonce, flags):
       if qty_lots == 0 or none: break
     else:                                       # partial: consume from the head
       consume from head (decrement head slots in place; skip zero slots;
-                         bounded by MAX_SLOTS_SCANNED)
-      update head_seq/open_lots                 # progress persists even if cap hit
+                         bounded by level_cap)
+      update head_seq/open_lots
       quote += consumed * best * tick_size      # ONE Level write; loop ends
   if qty_lots > 0:
     fill_or_kill ⇒ fail Unfilled; post_only + crossed ⇒ fail Crossed
@@ -524,19 +522,19 @@ price better than `start_tick` is invisible to the walk (invariant 5) but did mo
 rested, and the book stays uncrossed (invariant 8).
 
 **Degradation: the bounded tombstone scan.** Tombstones (§2) are skipped when the head
-advances, but the scan is bounded: a place scans at most `MAX_SLOTS_SCANNED` slots
-total, and head advancement is **always persisted** in a transaction that succeeds,
-even when the cap ends the loop early, cleanup cost amortizes across takers instead
-of repeating for each one. Without this bound, an attacker rests K dust orders, cancels the middle, and poisons
-the best price with a scan bounded only by history. (`min_order_lots` raises the cost
-of that attack; the scan cap removes the damage.) The other degradations are in the
+advances. The bound is `level_cap`: the queue is one `Level` entry of at most
+`level_cap` slots, decoded in full on load regardless of how many the walk reads.
+Measured cost is ~3k WASM instructions per slot. Head advancement is **always
+persisted** in a transaction that succeeds, so cleanup cost amortizes across takers
+instead of repeating for each one. `min_order_lots` raises the cost of a dust rest.
+The other degradations are in the
 pseudocode: `MAX_LEVELS_CROSSED` and a stale bit each end or skip a step with progress
 persisted; a remainder that still crosses is refunded, never rested.
 
 **Multi-leg composition: `route(legs[])`.** Sequential walks across markets, deltas
 netted in invocation memory, one SAC transfer per token at the end. **Route caps are
 per-transaction, not per-leg:** `legs.len() ≤ MAX_ROUTE_LEGS`, and one shared
-`MAX_LEVELS_CROSSED` / `MAX_SLOTS_SCANNED` budget spans all legs, so a route's
+`MAX_LEVELS_CROSSED` budget spans all legs, so a route's
 worst-case writes, events, and footprint are the same as a single maximal place plus
 per-leg constants, and the §0.3 creation bound already reserves `MAX_ROUTE_LEGS`
 headroom for the netted transfers. Legs are placed in order; a leg's failure fails the
@@ -546,9 +544,9 @@ route.
 consume strictly best-tick-first among ticks at-or-worse than `start_tick`, FIFO
 within level (tombstones skipped); orders rested at better ticks after simulation keep
 their place, they are not consumed and not harmed. **7**, every loop is bounded by a
-config constant (`MAX_LEVELS_CROSSED`, `MAX_SLOTS_SCANNED`, `MAX_ROUTE_LEGS`,
-`MAX_REPLACE_BATCH`, `level_cap`), route caps shared across legs, not multiplied by
-them. **8** (shared with §9), the book is never crossed after any operation completes:
+config constant (`MAX_LEVELS_CROSSED`, `MAX_ROUTE_LEGS × level_cap` slots, `MAX_ROUTE_LEGS`,
+`MAX_REPLACE_BATCH`, `level_cap`), the crossed-level budget is shared across legs, not
+multiplied by them; slot reads are per leg, bounded by `level_cap` each. **8** (shared with §9), the book is never crossed after any operation completes:
 a matching loop terminated by a cap refunds its remainder.
 
 **Budget** (§17): take-only, 8 levels swept ≈ 22 touched (band padding on top) /
@@ -724,7 +722,7 @@ Views (§11) authenticate nothing and write nothing.
   work**, funds exit is never gated, under any admin state. (`replace` contains a
   rest, so it pauses with the entry side of the book; the exit half stays available
   through `settle`.)
-- **Cap retuning: `set_market_caps(market, max_levels_crossed, max_slots_scanned,
+- **Cap retuning: `set_market_caps(market, max_levels_crossed,
   taker_fee_bps, min_order_lots, max_order_lots, level_cap)`.** Retunes the mutable
   class of §1 per market; every call re-runs the §0.3 overflow proof and rejects values
   that break it; `level_cap` is raise-only and capped at `LEVEL_CAP_MAX` (§2). The
@@ -845,8 +843,8 @@ client-side before submission (Part I); every loop is capped (invariant 7); ever
 race degrades gracefully except one. Concretely:
 
 **Failure modes, exhaustively.** A place **traps** (footprint violation) only if the
-walk must pass `pad_end`. Every other race **degrades gracefully**: the scan cap and
-the level cap end the loop with progress persisted and the remainder refunded; a
+walk must pass `pad_end`. Every other race **degrades gracefully**: `MAX_LEVELS_CROSSED`
+ends the loop with progress persisted and the remainder refunded; a
 same-level rest race lands in the `Level` the rest already declares and can only fail
 as the typed error `LevelFull`. On sparse books a
 band deep enough to be safe may not fit in the 400-entry footprint; clients trade
@@ -980,7 +978,7 @@ Readings, in design terms:
   spread (§9), a re-filled dust level, K times per transaction for ~0.03 XLM,
   indefinitely, provided the target ticks already have a `Level` (a fresh tick costs
   the `Level` rent). None of it reaches funds, and every instance is bounded by a cap
-  and healed by the next taker (`MAX_SLOTS_SCANNED`, `MAX_LEVELS_CROSSED`,
+  and healed by the next taker (`level_cap`, `MAX_LEVELS_CROSSED`,
   sweep-resets, the one-restore-per-stale-bit bound of §5); but the per-instance cost
   figures in §5/§9/§14 are *rent* figures and overstate the churn case by ~30×. The
   churn deterrent is **`min_order_lots × price`**: dust rested inside the spread to
@@ -1063,8 +1061,9 @@ owns it; property tests cite these numbers.
 6. No operation touches entries outside its declared key family; cap edges degrade
    gracefully (refund), and only walking past `pad_end` traps. *(§15)*
 7. Every loop is bounded by a config constant (`MAX_LEVELS_CROSSED`,
-   `MAX_SLOTS_SCANNED`, `MAX_ROUTE_LEGS`, `MAX_REPLACE_BATCH`, `level_cap`), route
-   caps shared across legs, not multiplied by them. *(§8)*
+   `MAX_ROUTE_LEGS × level_cap` slots, `MAX_ROUTE_LEGS`, `MAX_REPLACE_BATCH`, `level_cap`), the
+   crossed-level budget is shared across legs, not multiplied by them; slot reads are per
+   leg, bounded by `level_cap` each. *(§8)*
 8. The book is never crossed after any operation completes: a matching loop terminated
    by a cap refunds its remainder; post-only compares against recorded `BestTick` and
    fails closed. *(§8, §9)*

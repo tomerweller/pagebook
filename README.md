@@ -118,8 +118,9 @@ These are the main limits and behaviors behind the design:
 
 - A transaction has a bounded footprint. The client declares a contiguous tick
   band of `Level` keys; a level's queue depth never adds a key.
-- Default matching caps are 32 crossed levels and 64 scanned slots. A route can
-  contain at most four legs, with the matching budget shared across the legs.
+- Default matching cap is 32 crossed levels; a partial level is walked to
+  its own depth (`level_cap`). A route can contain at most four legs, with
+  the level budget shared across the legs.
 - A level holds up to 64 orders per generation by default (`level_cap`). A
   market can raise that, up to the contract's hard ceiling of 128.
 - Persistent entries have a minimum TTL of about 120 days on mainnet (about 7

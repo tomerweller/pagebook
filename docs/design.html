@@ -739,7 +739,7 @@
         </g>
       </svg>
     </div>
-    <figcaption><b>Two sweeps and one partial take cost three Level writes.</b> The walk is bounded by two caps: at most <code>MAX_LEVELS_CROSSED</code> levels, and at most <code>MAX_SLOTS_SCANNED</code> slots while skipping tombstones at the head. Hitting either ends the loop with progress kept and the remainder refunded, never rested crossing. <code>route</code> runs this once per leg with the caps shared across legs.</figcaption>
+    <figcaption><b>Two sweeps and one partial take cost three Level writes.</b> The walk is bounded by <code>MAX_LEVELS_CROSSED</code> levels and, at the one partial level, by the level's own depth. Hitting the crossed-level bound ends the loop with progress kept and the remainder refunded, never rested crossing. <code>route</code> runs this once per leg with the level budget shared across legs.</figcaption>
   </figure>
 </section>
 

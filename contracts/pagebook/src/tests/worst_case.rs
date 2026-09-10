@@ -14,7 +14,7 @@ extern crate std;
 use super::footprint::footprint_of;
 use super::harness::{flags, mint, no_rest, setup, Harness, TX_WRITE_BYTES_CAP};
 use crate::DataKey;
-use pagebook_types::{LEVEL_CAP, WORD_TICKS};
+use pagebook_types::{LEVEL_CAP, LEVEL_CAP_MAX, WORD_TICKS};
 use soroban_sdk::{testutils::Address as _, Address};
 
 const WORDS: u32 = 32;
@@ -46,7 +46,7 @@ fn book_32x32(h: &Harness) -> u32 {
         &h.base, &h.quote, &1, &1, &1, &TICK_MAX, &10, &1, &1_000_000,
     );
     h.client()
-        .set_market_caps(&market, &WORDS, &64, &10, &1, &1_000_000, &64);
+        .set_market_caps(&market, &WORDS, &10, &1, &1_000_000, &64);
     let maker = Address::generate(&h.env);
     for w in 0..WORDS {
         rest_ask_on(h, market, &maker, ask_tick(w), 1, u64::from(w) + 1);
@@ -342,5 +342,66 @@ fn bound_replace_batch_forty_same_tick_refresh() {
         fp.write_bytes <= max_bytes,
         "replace_batch 40 refresh: write_bytes {} > gate {max_bytes}",
         fp.write_bytes
+    );
+}
+
+/// Four markets at `LEVEL_CAP_MAX`, each with a 128-deep level of 2-lot asks;
+/// a 4-leg route taking 255 on each leg. Writes match the uncapped measurement
+/// (13 entries / 8,776 bytes); instructions are printed, not gated.
+#[test]
+fn bound_route_four_full_partials() {
+    let h = setup();
+    let maker = Address::generate(&h.env);
+    let mut markets = [h.market, 0, 0, 0];
+    for m in markets.iter_mut().skip(1) {
+        *m = h
+            .client()
+            .create_market(&h.base, &h.quote, &1, &1, &1, &1000, &10, &1, &1_000_000);
+    }
+    for (i, market) in markets.iter().enumerate() {
+        h.client()
+            .set_market_caps(market, &32, &10, &1, &1_000_000, &LEVEL_CAP_MAX);
+        let tick = 10 + i as u32;
+        for n in 1..=u64::from(LEVEL_CAP_MAX) {
+            rest_ask_on(&h, *market, &maker, tick, 2, (i as u64) * 1_000 + n);
+        }
+    }
+    let taker = Address::generate(&h.env);
+    mint(&h, &h.quote, &taker, 10_000_000);
+    let mut legs = soroban_sdk::Vec::new(&h.env);
+    for (i, market) in markets.iter().enumerate() {
+        legs.push_back(crate::PlaceLeg {
+            market: *market,
+            is_bid: true,
+            limit_tick: 10 + i as u32,
+            qty_lots: 255,
+            start_tick: 10 + i as u32,
+            nonce: i as u64 + 1,
+            flags: no_rest(),
+        });
+    }
+    h.env.cost_estimate().budget().reset_unlimited();
+    let out = h.client().route(&taker, &legs);
+    let res = h.env.cost_estimate().resources();
+    for i in 0..4u32 {
+        assert_eq!(out.get(i).unwrap().1, 255);
+    }
+    std::println!(
+        "footprint[route 4 × 128-slot partial]: write_entries={} write_bytes={} instructions={}",
+        res.write_entries,
+        res.write_bytes,
+        res.instructions
+    );
+    assert!(
+        res.write_entries <= 13 + SLACK_WRITES,
+        "route 4 full partials: write_entries {} > {}",
+        res.write_entries,
+        13 + SLACK_WRITES
+    );
+    assert!(
+        res.write_bytes <= 8_776 + SLACK_BYTES,
+        "route 4 full partials: write_bytes {} > {}",
+        res.write_bytes,
+        8_776 + SLACK_BYTES
     );
 }

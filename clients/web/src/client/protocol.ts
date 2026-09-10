@@ -19,7 +19,6 @@ export type MarketInfo = {
   min_order_lots: bigint;
   max_order_lots: bigint;
   max_levels_crossed: number;
-  max_slots_scanned: number;
   level_cap: number;
 };
 
@@ -68,7 +67,6 @@ export function parseMarket(native: unknown): MarketInfo | null {
     min_order_lots: asBig(rec.min_order_lots),
     max_order_lots: asBig(rec.max_order_lots),
     max_levels_crossed: Number(rec.max_levels_crossed),
-    max_slots_scanned: Number(rec.max_slots_scanned),
     level_cap: Number(rec.level_cap),
   };
 }

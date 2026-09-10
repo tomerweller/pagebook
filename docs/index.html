@@ -452,7 +452,7 @@
   <h3>Implementation</h3>
   <p>The FIFO never moves data. It appends quantities to a vector and advances a head coordinate through it. Each queue is one <code>Level</code> entry: the generation and head counters, total open lots, and the quantity slots, a vector as long as the queue has reached (124 bytes empty, 12 more per resting order, 892 bytes at 64). A level holds up to 64 resting orders per generation by default; a rest against a full level fails with a typed error. The whole queue sits under one key, so a deep queue adds bytes to that entry rather than entries to the footprint.</p>
   <p>Each slot holds one order's open lots. A partial take decrements the head slot in place; filled slots remain as history; cancelled slots become tombstones. Nothing is moved or compacted.</p>
-  <p><code>open_lots</code> tracks aggregate supply at the level. A taker that consumes the whole level can price and sweep it with one <code>Level</code> write, without reading each maker slot. Partial consumption walks slots from the head under a fixed scan limit.</p>
+  <p><code>open_lots</code> tracks aggregate supply at the level. A taker that consumes the whole level can price and sweep it with one <code>Level</code> write, without reading each maker slot. Partial consumption walks slots from the head, bounded by the level's own depth.</p>
   <p><code>Level</code> entries are never deleted; the entry is reused across generations. When a taker sweeps the level, or when the first rest arrives at a level that cancels emptied, the generation increments, the vector empties, and sequence numbers restart. The generation preserves settlement correctness for makers from the previous queue.</p>
 
   <figure>
