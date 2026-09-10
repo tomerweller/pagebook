@@ -32,7 +32,9 @@ notify.
 
 The ticket mounts its `<section>` once while the wallet is enabled with an
 active identity and patches slots in place. Price and quantity inputs keep
-node identity. `writeValue` writes only when the state string differs from
+node identity. The CTA slot keeps the place button while phase is idle and
+the status strip otherwise; it swaps markup only when the phase crosses
+that boundary. `writeValue` writes only when the state string differs from
 the last string written for that field, skips the DOM write when the input
 already holds it, and defers while the field is composing.
 `compositionstart` / `compositionend` listeners sit next to the existing

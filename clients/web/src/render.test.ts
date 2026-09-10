@@ -672,6 +672,34 @@ test("price and qty inputs keep node identity across book and stepper updates", 
   root.remove();
 });
 
+test("place button keeps node identity across a book update", async () => {
+  const { root, store, book } = liveTicket({ n: 0 });
+  await flush();
+  const place = root.querySelector("[data-act=place]");
+  expect(place).toBeTruthy();
+  store.update((s) => {
+    s.book.snapshot = { ...book, latestLedger: book.latestLedger + 1 };
+  });
+  await flush();
+  expect(root.querySelector("[data-act=place]")).toBe(place);
+  root.remove();
+});
+
+test("focused place button stays focused across a book update", async () => {
+  const { root, store, book } = liveTicket({ n: 0 });
+  await flush();
+  const place = root.querySelector<HTMLButtonElement>("[data-act=place]")!;
+  place.focus();
+  expect(document.activeElement).toBe(place);
+  store.update((s) => {
+    s.book.snapshot = { ...book, latestLedger: book.latestLedger + 1 };
+  });
+  await flush();
+  expect(document.activeElement).toBe(place);
+  expect(root.querySelector("[data-act=place]")).toBe(place);
+  root.remove();
+});
+
 test("book update leaves focused qty selection and value", async () => {
   const { root, store, book } = liveTicket({ n: 0 });
   await flush();

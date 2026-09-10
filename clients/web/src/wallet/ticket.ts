@@ -825,15 +825,38 @@ export function createTicket(opts: {
     </section>`;
   }
 
-  function ctaHtml(): string {
+  function placeDisabled(): boolean {
     const v = validation();
     const t = tkt();
-    const sym = balances().baseSymbol;
     const busy = t.submitting || t.phase === "simulating" || t.phase === "signing" || t.phase === "sending";
+    return !v.ok || busy || (t.preview.kind === "typed" && t.preview.name === "Crossed");
+  }
+
+  function patchCta(): void {
+    const slot = rootEl?.querySelector("[data-role=cta]");
+    if (!slot) return;
+    const t = tkt();
     if (t.phase === "idle") {
-      return `<button type="button" data-act="place" class="ticket-cta ${t.isBid ? "bid" : "ask"}" ${!v.ok || busy || (t.preview.kind === "typed" && t.preview.name === "Crossed") ? "disabled" : ""}>${t.isBid ? "BUY" : "SELL"} ${esc(sym)}</button>`;
+      let place = slot.querySelector<HTMLButtonElement>("[data-act=place]");
+      if (!place) {
+        setHtml(slot, `<button type="button" data-act="place" class="ticket-cta"></button>`);
+        place = slot.querySelector<HTMLButtonElement>("[data-act=place]");
+      }
+      if (!place) return;
+      setAttr(place, "class", `ticket-cta ${t.isBid ? "bid" : "ask"}`);
+      const disabled = placeDisabled();
+      if (place.disabled !== disabled) place.disabled = disabled;
+      setText(place, `${t.isBid ? "BUY" : "SELL"} ${balances().baseSymbol}`);
+      return;
     }
-    return `<div class="ticket-cta ticket-status ${t.isBid ? "bid" : "ask"} ${esc(t.phase)}" data-act="status-ack" data-role="strip">${stripInner()}</div>`;
+    let strip = slot.querySelector("[data-role=strip]");
+    if (!strip) {
+      setHtml(slot, `<div class="ticket-cta ticket-status" data-act="status-ack" data-role="strip"></div>`);
+      strip = slot.querySelector("[data-role=strip]");
+    }
+    if (!strip) return;
+    setAttr(strip, "class", `ticket-cta ticket-status ${t.isBid ? "bid" : "ask"} ${t.phase}`);
+    setHtml(strip, stripInner());
   }
 
   function writeValue(field: string, str: string): void {
@@ -882,7 +905,7 @@ export function createTicket(opts: {
     const check = validation();
     setText(rootEl.querySelector("[data-role=why]"), check.ok ? "" : check.reason);
     setHtml(rootEl.querySelector("[data-role=preview]"), previewHtml());
-    setHtml(rootEl.querySelector("[data-role=cta]"), ctaHtml());
+    patchCta();
   }
 
   function bind(root: HTMLElement): void {
