@@ -12,7 +12,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("wallet strip is sticky at cold load and through scroll", async ({ page }) => {
-  await page.goto("/pagebook/client/?mock=1");
+  await page.goto("/pagebook/?mock=1");
   await expect(page.locator("#wallet")).toBeVisible();
   const iw = await page.evaluate(() => window.innerWidth);
   expect(iw).toBe(375);
@@ -63,7 +63,7 @@ test("wallet strip is sticky at cold load and through scroll", async ({ page }) 
 });
 
 test("no-identity ladder tap brings generate into view", async ({ page }) => {
-  await page.goto("/pagebook/client/?mock=1");
+  await page.goto("/pagebook/?mock=1");
   const row = page.locator(".row[data-tick]").filter({ visible: true }).first();
   await expect(row).toBeVisible();
   await row.evaluate((el) => (el as HTMLElement).click());

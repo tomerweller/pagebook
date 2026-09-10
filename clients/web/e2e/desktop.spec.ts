@@ -4,7 +4,7 @@ test.use({ viewport: { width: 1440, height: 900 } });
 
 test("desktop rail keeps the brand and has no instrument strip", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto("/pagebook/client/?mock=1");
+  await page.goto("/pagebook/?mock=1");
   await expect(page.locator("#wallet")).toBeVisible();
   await expect(page.locator("header.top .brand")).toBeVisible();
   await expect(page.locator(".wallet-instrument")).toBeHidden();

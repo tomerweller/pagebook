@@ -17,7 +17,7 @@ test("fund, trustline, take, rest, settle on XLM/USDC", async ({ page }) => {
   });
   page.on("pageerror", (err) => errs.push(err.message));
 
-  await page.goto(`/pagebook/client/?seed=${seed()}`);
+  await page.goto(`/pagebook/?seed=${seed()}`);
   await expect(page.getByRole("heading", { name: "XLM / USDC" })).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText("add trustline")).toHaveCount(0, { timeout: 90_000 });
   await expect(page.locator(".wallet-assets")).toContainText("USDC");

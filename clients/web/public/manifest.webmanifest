@@ -1,8 +1,8 @@
 {
   "name": "PageBook",
   "short_name": "PageBook",
-  "start_url": "/pagebook/client/",
-  "scope": "/pagebook/client/",
+  "start_url": "/pagebook/",
+  "scope": "/pagebook/",
   "display": "standalone",
   "background_color": "#0E1013",
   "theme_color": "#0E1013",
