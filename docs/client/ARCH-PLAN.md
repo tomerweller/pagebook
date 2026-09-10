@@ -26,7 +26,7 @@ mutation and DOM mutation interleaved in handlers with no single "state changed
 
 What is sound and preserved untouched: the engine (pure, Rust↔TS
 golden-fixture-locked — non-negotiable), BigInt/exact-rational math, the
-`book.ts` data layer with its injectable RPC, keystore/provision/network
+`src/client/` data layer (transport, entry decoding, codecs) and the `book.ts` depth walk, market listing, and event polling on top of it, keystore/provision/network
 modules, all pure html generators, the terminal design, static Pages hosting.
 
 ## Decision

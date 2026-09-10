@@ -1,6 +1,6 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { entryDataSize } from "../client/entries";
-import type { Rpc } from "../client/rpc";
+import { entryKeyB64, type Rpc } from "../client/rpc";
 import { scValKeyName, toLedgerKey, type ClientKey } from "./clientKeys";
 import { tokenExtraKeys, type ClassicToken } from "./op";
 import { DEFAULT_GROWTH, type ApplyPadSizes, type KeyLiveness, type PadKeySize } from "./txdata";
@@ -58,7 +58,7 @@ export async function sweepPadSizes(
     latestLedger = res.latestLedger ?? latestLedger;
     const seen = new Set<string>();
     for (const e of res.entries ?? []) {
-      const k = typeof e.key === "string" ? e.key : e.key && "toXDR" in e.key ? e.key.toXDR("base64") : null;
+      const k = entryKeyB64(e);
       if (!k) continue;
       seen.add(k);
       byKey.set(k, {

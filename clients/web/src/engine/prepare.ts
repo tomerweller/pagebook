@@ -363,16 +363,21 @@ export async function prepareInvocation(rpc: Rpc, req: PrepareRequest): Promise<
 
   let sizes: ApplyPadSizes;
   if (uncovered.length) {
-    const fresh = await sweepPadSizes(rpc, uncovered, {
-      growth,
-      chunk: 100,
-      coverBytes: cover === "sized",
-      stopWhen: (byKey) =>
-        overflowOf(
-          wouldAdd((k) => byKey.get(keyB64(k)) ?? policy.sweep?.sizeOf(k)),
-          limits,
-        ) != null,
-    });
+    let fresh;
+    try {
+      fresh = await sweepPadSizes(rpc, uncovered, {
+        growth,
+        chunk: 100,
+        coverBytes: cover === "sized",
+        stopWhen: (byKey) =>
+          overflowOf(
+            wouldAdd((k) => byKey.get(keyB64(k)) ?? policy.sweep?.sizeOf(k)),
+            limits,
+          ) != null,
+      });
+    } catch (e) {
+      return { kind: "rpc", message: e instanceof Error ? e.message : String(e) };
+    }
     if (fresh.stoppedEarly) {
       const over = overflowOf(
         wouldAdd((k) => fresh.sizeOf(k) ?? policy.sweep?.sizeOf(k)),

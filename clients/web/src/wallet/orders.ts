@@ -1,7 +1,8 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
 import type { BookEvent, BookSnapshot } from "../book";
+import { indexByKey } from "../client/entries";
 import type { MarketInfo } from "../client/protocol";
-import { entryKeyB64, type Rpc, type RpcLedgerEntry } from "../client/rpc";
+import type { Rpc, RpcLedgerEntry } from "../client/rpc";
 import { formatAtoms, formatInt } from "../decode";
 import { accessOf, addrToHex } from "../engine/clientKeys";
 import { keysForReplace, MAX_REPLACE_BATCH } from "../engine/pad";
@@ -206,11 +207,7 @@ export async function readOrderEntries(
     const keys = chunk.map((n) => orderKey(contract, market, owner, n));
     try {
       const res = await rpc.getLedgerEntries(...keys);
-      const byKey = new Map<string, RpcLedgerEntry>();
-      for (const e of res.entries ?? []) {
-        const k = entryKeyB64(e);
-        if (k) byKey.set(k, e);
-      }
+      const byKey = indexByKey(res.entries ?? []);
       const latest = res.latestLedger ?? 0;
       for (let j = 0; j < chunk.length; j++) {
         out.set(chunk[j].toString(), { kind: "ok", status: classifyOrderEntry(byKey.get(keys[j].base64), latest) });

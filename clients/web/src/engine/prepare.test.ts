@@ -475,6 +475,25 @@ test("cover flat uses the flat rate; cached sweep skips covered keys", async () 
   expect(fetched.length).toBeGreaterThan(0);
 });
 
+test("prepareInvocation maps a malformed pad-sweep entry to kind rpc", async () => {
+  const kp = StellarSdk.Keypair.random();
+  const ctx = { contract: PAGEBOOK, caller: kp.publicKey() };
+  const quoted = placeQuoted({ startTick: 10, limitTick: 10, crossed: [] });
+  const padEnd = 10;
+  const planned = pad(quoted, padEnd);
+  const paddedKey = toLedgerKey(ctx, planned[0]).xdr;
+  const paddedB64 = keyB64(paddedKey);
+  const rpc = fakeRpc({
+    kp,
+    simData: emptyData([], []),
+    entries: new Map([[paddedB64, { xdr: "!!!!", liveUntil: 500 }]]),
+  });
+  const got = await prepareInvocation(rpc, reqFor(kp, placeIntent(quoted, padEnd)));
+  expect(got.kind).toBe("rpc");
+  if (got.kind !== "rpc") return;
+  expect(got.message).toMatch(paddedB64);
+});
+
 test("prepareInvocation maps a malformed account entry to kind rpc", async () => {
   const kp = StellarSdk.Keypair.random();
   const accKey = accountLedgerKey(kp.publicKey()).toXDR("base64");

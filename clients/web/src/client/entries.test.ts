@@ -46,7 +46,8 @@ test("garbage xdr throws RpcShapeError naming the key", () => {
 
 test("indexByKey keys by base64", () => {
   const { xdr, key } = contractEntryXdr();
-  const map = indexByKey([{ key, xdr }, { xdr }]);
-  expect(map.get(key)?.xdr).toBe(xdr);
+  const withKey = { key, xdr };
+  const map = indexByKey([withKey, { xdr }]);
+  expect(map.get(key)).toBe(withKey);
   expect(map.size).toBe(1);
 });
