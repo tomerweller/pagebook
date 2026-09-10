@@ -334,7 +334,7 @@ async function fetchEntries(rpc: Rpc, keys: LedgerKeyWrap[]): Promise<{ entries:
   return { entries: all, latestLedger };
 }
 
-function entryKeyB64(entry: RpcLedgerEntry): string | null {
+export function entryKeyB64(entry: RpcLedgerEntry): string | null {
   if (typeof entry.key === "string") return entry.key;
   if (entry.key && typeof entry.key.toXDR === "function") return entry.key.toXDR("base64");
   return null;

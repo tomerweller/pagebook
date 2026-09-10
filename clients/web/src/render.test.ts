@@ -173,6 +173,23 @@ function mountOrders(store: ReturnType<typeof createStore<AppState>>) {
   return root;
 }
 
+test("unavailable order row shows last-known-state marker", async () => {
+  const store = createStore<AppState>(emptyApp());
+  const root = mountOrders(store);
+  store.update((s) => {
+    s.book.snapshot = mockSnapshot();
+    s.wallet.openOrders = [{ ...sampleOrder(1n), unavailable: true }];
+  });
+  await flush();
+  expect(root.textContent ?? "").toMatch(/read failed, showing last known state/);
+  store.update((s) => {
+    s.wallet.openOrders = [sampleOrder(1n)];
+  });
+  await flush();
+  expect(root.textContent ?? "").not.toMatch(/read failed, showing last known state/);
+  root.remove();
+});
+
 test("orders panel picks up late token symbols", async () => {
   const store = createStore<AppState>(emptyApp());
   const root = mountOrders(store);
