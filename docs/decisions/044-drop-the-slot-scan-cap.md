@@ -68,10 +68,10 @@ protocol field.
 
 A call that refunded after hitting the scan cap now consumes more liquidity.
 
-- A 100-lot take on a 128-deep level of 1-lot asks fills 100 in one call
-  (it filled 64 and refunded 36).
+- A 100-lot take on a 128-deep level of 1-lot asks takes 100 in one call
+  (it took 64 and refunded 36).
 - A route with a partial level on every leg no longer starves later legs:
-  two 64-deep 2-lot levels, 127 lots each, both fill (the second leg
+  two 64-deep 2-lot levels, 127 lots each, both take 127 (the second leg
   refunded after the shared 64-slot budget ran out).
 - Settling the head of a tombstone run longer than 64 advances past the
   whole run in one call (it left the head stranded).
@@ -87,6 +87,11 @@ A call that refunded after hitting the scan cap now consumes more liquidity.
   `MarketInfo` drops the field.
 - Architecture §1, §2, §7, §8, §12, §19; 05, 06, 07, 08; two explainer
   sentences.
+- Tests: `raised_level_cap_allows_a_deeper_queue` flipped;
+  `settle_head_advances_past_the_whole_tombstone_run`,
+  `taker_skips_a_long_tombstone_run_in_one_call`,
+  `route_partial_levels_on_each_leg_take`,
+  `bound_route_four_full_partials`.
 
 ## Cutover record
 

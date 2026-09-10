@@ -1,6 +1,6 @@
 use super::harness::{flags, mint, rest_ask, rest_bid, setup};
 use crate::{Error, PlaceFlags};
-use soroban_sdk::{testutils::Address as _, Address};
+use soroban_sdk::{testutils::Address as _, token::TokenClient, Address};
 
 #[test]
 fn multi_level_take_sweeps_in_price_order() {
@@ -364,6 +364,12 @@ fn route_shared_levels_budget_caps_second_leg() {
         !out.get(1).unwrap().0,
         "MAX_LEVELS_CROSSED remainder refunds; resting would cross"
     );
+    assert_eq!(
+        TokenClient::new(&h.env, &h.quote).balance(&taker),
+        1_000_000 - 21
+    );
+    assert_eq!(h.client().best(&h.market, &true), None);
+    assert!(super::harness::raw_level(&h, true, 13).is_none());
 }
 
 #[test]

@@ -545,8 +545,8 @@ consume strictly best-tick-first among ticks at-or-worse than `start_tick`, FIFO
 within level (tombstones skipped); orders rested at better ticks after simulation keep
 their place, they are not consumed and not harmed. **7**, every loop is bounded by a
 config constant (`MAX_LEVELS_CROSSED`, `MAX_ROUTE_LEGS × level_cap` slots, `MAX_ROUTE_LEGS`,
-`MAX_REPLACE_BATCH`, `level_cap`), route caps shared across legs, not multiplied by
-them. **8** (shared with §9), the book is never crossed after any operation completes:
+`MAX_REPLACE_BATCH`, `level_cap`), the crossed-level budget is shared across legs, not
+multiplied by them; slot reads are per leg, bounded by `level_cap` each. **8** (shared with §9), the book is never crossed after any operation completes:
 a matching loop terminated by a cap refunds its remainder.
 
 **Budget** (§17): take-only, 8 levels swept ≈ 22 touched (band padding on top) /
@@ -1061,8 +1061,9 @@ owns it; property tests cite these numbers.
 6. No operation touches entries outside its declared key family; cap edges degrade
    gracefully (refund), and only walking past `pad_end` traps. *(§15)*
 7. Every loop is bounded by a config constant (`MAX_LEVELS_CROSSED`,
-   `MAX_ROUTE_LEGS × level_cap` slots, `MAX_ROUTE_LEGS`, `MAX_REPLACE_BATCH`, `level_cap`), route
-   caps shared across legs, not multiplied by them. *(§8)*
+   `MAX_ROUTE_LEGS × level_cap` slots, `MAX_ROUTE_LEGS`, `MAX_REPLACE_BATCH`, `level_cap`), the
+   crossed-level budget is shared across legs, not multiplied by them; slot reads are per
+   leg, bounded by `level_cap` each. *(§8)*
 8. The book is never crossed after any operation completes: a matching loop terminated
    by a cap refunds its remainder; post-only compares against recorded `BestTick` and
    fails closed. *(§8, §9)*

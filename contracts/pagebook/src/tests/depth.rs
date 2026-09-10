@@ -121,7 +121,7 @@ fn raised_level_cap_allows_a_deeper_queue() {
     assert_eq!(lvl.depth, LEVEL_CAP_MAX);
     assert_eq!(lvl.open_lots, u64::from(LEVEL_CAP_MAX));
     // The deep queue is still FIFO end to end; a 100-lot take on a 128-deep
-    // level fills in one call.
+    // level takes 100 in one call.
     let taker = Address::generate(&h.env);
     assert_eq!(take_bid(&h, &taker, 20, 100, 1), 100);
     assert_eq!(h.client().level(&h.market, &false, &20).head_seq, 100);
@@ -306,7 +306,7 @@ fn settle_head_advances_past_the_whole_tombstone_run() {
 }
 
 /// A taker at a level whose head sits on a long tombstone run (longer than 64)
-/// reaches the live order and fills in one call.
+/// reaches the live order and takes it in one call.
 #[test]
 fn taker_skips_a_long_tombstone_run_in_one_call() {
     let h = setup();

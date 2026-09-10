@@ -262,9 +262,9 @@ fn replace_batch_duplicate_nonce_is_rejected() {
 }
 
 /// A shared slot-scan budget used to starve later partial legs. Each market
-/// now scans its own level to completion: both 127-lot legs fill.
+/// now scans its own level to completion: both legs take 127.
 #[test]
-fn route_partial_levels_on_each_leg_fill() {
+fn route_partial_levels_on_each_leg_take() {
     let h = setup();
     let m2 = second_market(&h);
     let maker = Address::generate(&h.env);

@@ -1,7 +1,7 @@
 //! Property tests (05 "Testing strategy"): random rest/take/settle/replace
 //! sequences over 1–2 makers against a naive reference book (price priority,
 //! FIFO within a level) that predicts fills and payouts. Caps are non-binding
-//! (32 levels / 64 slots scanned, `level_cap` 64; ≤ 30 appends per run), so
+//! (32 levels, `level_cap` 64; ≤ 30 appends per run), so
 //! the reference never has to model a cap.
 //!
 //! Asserted after every op: identical fills / rests / payouts. After the
