@@ -1,12 +1,12 @@
 import type { BookSnapshot, MarketInfo, Rpc } from "../book";
 import { formatAtoms, formatInt, formatRatio } from "../decode";
 import { accessOf } from "../engine/clientKeys";
-import { pad } from "../engine/pad";
+import { allocNonce, pad } from "../engine/pad";
 import { simulatePlace } from "../engine/quote";
 import { submitPlace, type ClassicToken, type EngineResult, type PlaceFlags } from "../engine/submit";
+import { createRequestGate, scopeOf } from "../request";
 import { estimatePaddedFee } from "../engine/txdata";
 import { errorMessageByName, errorName, errorTitleByName, parseContractError } from "../engine/errors";
-import { allocNonce } from "../engine/pad";
 import { countLabel, esc, txLink } from "../view/format";
 import { tokenDecimals, tokenLabel, type UrlOverrides } from "../view/format";
 import { parseAssetFromSacName, type AccountState, type TrustlineState } from "./account";
@@ -136,6 +136,62 @@ export function typedErrorHtml(name: string): string {
 export type TicketHandle = {
   attach(root: HTMLElement): void;
   prefill(side: "bid" | "ask", tick: number): void;
+  preview(): Promise<void>;
+  submit(): Promise<void>;
+};
+
+export type TradeIntent = Readonly<{
+  contract: string;
+  market: number;
+  taker: string;
+  sequence: string;
+  isBid: boolean;
+  tick: number;
+  lots: bigint;
+  flags: Readonly<PlaceFlags>;
+  base: string;
+  quote: string;
+  tokens: readonly ClassicToken[];
+  levelCap: number | undefined;
+  version: number;
+}>;
+
+export function buildTradeIntent(fields: {
+  contract: string;
+  market: number;
+  taker: string;
+  sequence: string;
+  isBid: boolean;
+  tick: number;
+  lots: bigint;
+  flags: PlaceFlags;
+  base: string;
+  quote: string;
+  tokens: ClassicToken[];
+  levelCap: number | undefined;
+  version: number;
+}): TradeIntent {
+  return Object.freeze({
+    contract: fields.contract,
+    market: fields.market,
+    taker: fields.taker,
+    sequence: fields.sequence,
+    isBid: fields.isBid,
+    tick: fields.tick,
+    lots: fields.lots,
+    flags: Object.freeze({ ...fields.flags }),
+    base: fields.base,
+    quote: fields.quote,
+    tokens: Object.freeze(fields.tokens.slice()),
+    levelCap: fields.levelCap,
+    version: fields.version,
+  });
+}
+
+export type TicketEngine = {
+  simulatePlace: typeof simulatePlace;
+  allocNonce: typeof allocNonce;
+  submitPlace: typeof submitPlace;
 };
 
 type PreviewOk = {
@@ -169,7 +225,6 @@ export type TicketDomain = {
   lastHash: string;
   lastNonce: bigint | null;
   focusQty: boolean;
-  previewGen: number;
   previewQuoteKey: string;
   submitting: boolean;
   sideLocked: boolean;
@@ -190,7 +245,6 @@ export function emptyTicketDomain(): TicketDomain {
     lastHash: "",
     lastNonce: null,
     focusQty: false,
-    previewGen: 0,
     previewQuoteKey: "",
     submitting: false,
     sideLocked: false,
@@ -218,12 +272,15 @@ export function createTicket(opts: {
   contract: string;
   getSecret: () => string | null;
   getPublic: () => string | null;
-  getMarket: () => number;
   onRefresh: () => void;
-  onRested: (nonce: bigint) => void;
-  onLog: (text: string, hash?: string) => void;
+  onRested: (nonce: bigint, intent: TradeIntent) => void;
+  onLog: (text: string, hash?: string, taker?: string) => void;
+  engine?: TicketEngine;
 }): TicketHandle {
   const app = opts.store;
+  const engine = opts.engine ?? { simulatePlace, allocNonce, submitPlace };
+  const previewGate = createRequestGate<TicketFields>();
+  let submitVersion = 0;
   let previewTimer: ReturnType<typeof setTimeout> | null = null;
   let rootEl: HTMLElement | null = null;
   let bound = false;
@@ -435,7 +492,7 @@ export function createTicket(opts: {
       t.flags.post_only,
       t.flags.fill_or_kill,
       t.flags.no_rest,
-      opts.getMarket(),
+      scopeOf(app.read()).market,
     ].join("|");
   }
 
@@ -447,66 +504,77 @@ export function createTicket(opts: {
     const acc = account();
     const t = tkt();
     if (!pub || !m || !book?.base || !book.quote || !v.ok || !acc?.exists) {
+      previewGate.invalidate();
       app.update((s) => {
         s.ticket.preview = { kind: "idle" };
         s.ticket.previewQuoteKey = quoteKey();
       });
       return;
     }
-    let gen = 0;
+    const fields: TicketFields = {
+      isBid: t.isBid,
+      tick: t.tick,
+      lots: t.lots,
+      flags: { ...t.flags },
+    };
+    const token = previewGate.begin(scopeOf(app.read()), fields);
+    const key = quoteKey();
+    const nonce = t.lastNonce ?? 1n;
+    const lotSize = m.lot_size;
+    const feeBps = m.taker_fee_bps;
+    const levelCap = m.level_cap;
+    const baseMeta = book.tokens.base;
+    const quoteMeta = book.tokens.quote;
     app.update((s) => {
-      s.ticket.previewGen += 1;
-      gen = s.ticket.previewGen;
       if (s.ticket.preview.kind === "idle") s.ticket.preview = { kind: "loading" };
-      s.ticket.previewQuoteKey = quoteKey();
+      s.ticket.previewQuoteKey = key;
     });
     try {
-      const q = await simulatePlace(opts.rpc, {
+      const q = await engine.simulatePlace(opts.rpc, {
         contract: opts.contract,
         source: pub,
         sequence: acc.sequence.toString(),
-        market: opts.getMarket(),
-        isBid: t.isBid,
-        limitTick: t.tick,
-        qty: t.lots,
+        market: token.market,
+        isBid: token.input.isBid,
+        limitTick: token.input.tick,
+        qty: token.input.lots,
         taker: pub,
-        nonce: t.lastNonce ?? 1n,
+        nonce,
         base: book.base,
         quote: book.quote,
       });
-      if (gen !== app.read().ticket.previewGen) return;
-      const cur = tkt();
-      const disp = remainderDisposition(q.filledLots, cur.lots, cur.flags);
+      if (!previewGate.accepts(token, scopeOf(app.read()))) return;
+      const disp = remainderDisposition(q.filledLots, token.input.lots, token.input.flags);
       if (disp === "crossed") {
         app.update((s) => {
           s.ticket.preview = { kind: "typed", name: "Crossed" };
-          s.ticket.previewQuoteKey = quoteKey();
+          s.ticket.previewQuoteKey = key;
         });
         return;
       }
       if (disp === "unfilled") {
         app.update((s) => {
           s.ticket.preview = { kind: "typed", name: "Unfilled" };
-          s.ticket.previewQuoteKey = quoteKey();
+          s.ticket.previewQuoteKey = key;
         });
         return;
       }
-      const feeIsQuote = !cur.isBid;
-      const output = cur.isBid ? q.filledLots * m.lot_size : q.quoteAtoms;
-      const feeAtoms = takerFeeAtoms(output, m.taker_fee_bps);
-      const padded = pad(q.quoted, cur.tick);
+      const feeIsQuote = !token.input.isBid;
+      const output = token.input.isBid ? q.filledLots * lotSize : q.quoteAtoms;
+      const feeAtoms = takerFeeAtoms(output, feeBps);
+      const padded = pad(q.quoted, token.input.tick);
       let rw = 0;
       let ro = 0;
       for (const k of padded) {
         if (accessOf(k) === "rw") rw += 1;
         else ro += 1;
       }
-      const padFee = estimatePaddedFee({ rw, ro }, 0n, m.level_cap);
-      const rem = cur.lots - q.filledLots;
+      const padFee = estimatePaddedFee({ rw, ro }, 0n, levelCap);
+      const rem = token.input.lots - q.filledLots;
       const ov = overrides();
       const avg =
         q.filledLots > 0n
-          ? formatRatio(q.quoteAtoms * 10n ** BigInt(tokenDecimals(book.tokens.base, ov.baseDec)), q.filledLots * m.lot_size * 10n ** BigInt(tokenDecimals(book.tokens.quote, ov.quoteDec)))
+          ? formatRatio(q.quoteAtoms * 10n ** BigInt(tokenDecimals(baseMeta, ov.baseDec)), q.filledLots * lotSize * 10n ** BigInt(tokenDecimals(quoteMeta, ov.quoteDec)))
           : "—";
       app.update((s) => {
         s.ticket.preview = {
@@ -521,15 +589,15 @@ export function createTicket(opts: {
           padFee,
           avg,
         };
-        s.ticket.previewQuoteKey = quoteKey();
+        s.ticket.previewQuoteKey = key;
       });
     } catch (e) {
-      if (gen !== app.read().ticket.previewGen) return;
+      if (!previewGate.accepts(token, scopeOf(app.read()))) return;
       const msg = e instanceof Error ? e.message : String(e);
       const code = parseContractError(msg);
       app.update((s) => {
         s.ticket.preview = code != null ? { kind: "typed", name: errorName(code) } : { kind: "err", message: msg };
-        s.ticket.previewQuoteKey = s.ticket.preview.kind === "err" ? "" : quoteKey();
+        s.ticket.previewQuoteKey = s.ticket.preview.kind === "err" ? "" : key;
       });
     }
   }
@@ -545,6 +613,22 @@ export function createTicket(opts: {
     if (!secret || !pub || !m || !book?.base || !book.quote || !v.ok || !acc?.exists) return;
     if (t.preview.kind === "typed" && t.preview.name === "Crossed") return;
     if (t.submitting) return;
+    submitVersion += 1;
+    const intent = buildTradeIntent({
+      contract: opts.contract,
+      market: scopeOf(app.read()).market,
+      taker: pub,
+      sequence: acc.sequence.toString(),
+      isBid: t.isBid,
+      tick: t.tick,
+      lots: t.lots,
+      flags: t.flags,
+      base: book.base,
+      quote: book.quote,
+      tokens: padTokens(),
+      levelCap: m.level_cap,
+      version: submitVersion,
+    });
     app.update((s) => {
       s.ticket.submitting = true;
       s.ticket.phase = "simulating";
@@ -553,26 +637,24 @@ export function createTicket(opts: {
     });
     try {
       const hint = BigInt(Date.now()) * 1000n + BigInt(Math.floor(Math.random() * 1000));
-      const cur = tkt();
-      const nonce = await allocNonce(opts.rpc, opts.contract, opts.getMarket(), pub, hint);
+      const nonce = await engine.allocNonce(opts.rpc, intent.contract, intent.market, intent.taker, hint);
       app.update((s) => {
         s.ticket.lastNonce = nonce;
       });
-      const q = await simulatePlace(opts.rpc, {
-        contract: opts.contract,
-        source: pub,
-        sequence: acc.sequence.toString(),
-        market: opts.getMarket(),
-        isBid: cur.isBid,
-        limitTick: cur.tick,
-        qty: cur.lots,
-        taker: pub,
+      const q = await engine.simulatePlace(opts.rpc, {
+        contract: intent.contract,
+        source: intent.taker,
+        sequence: intent.sequence,
+        market: intent.market,
+        isBid: intent.isBid,
+        limitTick: intent.tick,
+        qty: intent.lots,
+        taker: intent.taker,
         nonce,
-        base: book.base,
-        quote: book.quote,
+        base: intent.base,
+        quote: intent.quote,
       });
-      const now = tkt();
-      const disp = remainderDisposition(q.filledLots, now.lots, now.flags);
+      const disp = remainderDisposition(q.filledLots, intent.lots, intent.flags);
       if (disp === "crossed") {
         app.update((s) => {
           s.ticket.phase = "failed";
@@ -586,23 +668,23 @@ export function createTicket(opts: {
       app.update((s) => {
         s.ticket.phase = "sending";
       });
-      const res = await submitPlace(opts.rpc, {
-        contract: opts.contract,
+      const res = await engine.submitPlace(opts.rpc, {
+        contract: intent.contract,
         secret,
-        taker: pub,
-        market: opts.getMarket(),
-        isBid: now.isBid,
-        limitTick: now.tick,
-        qtyLots: now.lots,
+        taker: intent.taker,
+        market: intent.market,
+        isBid: intent.isBid,
+        limitTick: intent.tick,
+        qtyLots: intent.lots,
         startTick: q.quoted.startTick,
         nonce,
-        flags: now.flags,
+        flags: intent.flags,
         quoted: q.quoted,
-        tokens: padTokens(),
-        padEnd: now.tick,
-        levelCap: market()?.level_cap,
+        tokens: [...intent.tokens],
+        padEnd: intent.tick,
+        levelCap: intent.levelCap,
       });
-      applyResult(res, q.filledLots, q.quoteAtoms, disp === "rests", nonce);
+      applyResult(res, intent, q.filledLots, q.quoteAtoms, disp === "rests", nonce);
     } catch (e) {
       app.update((s) => {
         s.ticket.phase = "failed";
@@ -615,8 +697,14 @@ export function createTicket(opts: {
     }
   }
 
-  function applyResult(res: EngineResult, filledLots: bigint, quoteAtoms: bigint, rested: boolean, nonce: bigint): void {
-    const t = tkt();
+  function applyResult(
+    res: EngineResult,
+    intent: TradeIntent,
+    filledLots: bigint,
+    quoteAtoms: bigint,
+    rested: boolean,
+    nonce: bigint,
+  ): void {
     if (res.kind === "ok") {
       const fee = res.fee ? ` · fee ${res.fee} stroops charged` : "";
       app.update((s) => {
@@ -625,8 +713,8 @@ export function createTicket(opts: {
         s.ticket.phaseDetail = `took ${filledLots.toString()} lots · ${quoteAtoms.toString()} quote atoms${rested ? " · rests" : ""}${fee}`;
         s.ticket.lastNonce = null;
       });
-      opts.onLog(`place ${t.isBid ? "bid" : "ask"} ${t.tick}`, res.hash);
-      if (rested) opts.onRested(nonce);
+      opts.onLog(`place ${intent.isBid ? "bid" : "ask"} ${intent.tick}`, res.hash, intent.taker);
+      if (rested) opts.onRested(nonce, intent);
       opts.onRefresh();
     } else if (res.kind === "typed") {
       app.update((s) => {
@@ -634,28 +722,28 @@ export function createTicket(opts: {
         s.ticket.phaseDetail = plainError(res.errorName);
         s.ticket.lastHash = res.hash ?? "";
       });
-      opts.onLog(`place ${res.errorName}`, res.hash);
+      opts.onLog(`place ${res.errorName}`, res.hash, intent.taker);
     } else if (res.kind === "footprint") {
       app.update((s) => {
         s.ticket.phase = "failed";
         s.ticket.phaseDetail = "footprint";
         s.ticket.lastHash = res.hash ?? "";
       });
-      opts.onLog("place footprint", res.hash);
+      opts.onLog("place footprint", res.hash, intent.taker);
     } else if (res.kind === "resourceLimit" && res.at === "prepare") {
       app.update((s) => {
         s.ticket.phase = "failed";
         s.ticket.phaseDetail = res.message;
         s.ticket.lastHash = res.hash ?? "";
       });
-      opts.onLog("place oversized", res.hash);
+      opts.onLog("place oversized", res.hash, intent.taker);
     } else {
       app.update((s) => {
         s.ticket.phase = "failed";
         s.ticket.phaseDetail = "message" in res && res.message ? res.message : res.kind;
         s.ticket.lastHash = res.hash ?? "";
       });
-      opts.onLog("place failed", res.hash);
+      opts.onLog("place failed", res.hash, intent.taker);
     }
   }
 
@@ -915,6 +1003,8 @@ export function createTicket(opts: {
       });
       kickPreview();
     },
+    preview: runPreview,
+    submit,
   };
 }
 

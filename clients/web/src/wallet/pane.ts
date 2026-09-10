@@ -14,13 +14,15 @@ import { addTrustline, fundWithFriendbot, type SubmitResult } from "./classic";
 import { Keystore, type Identity, type StorageLike } from "./keystore";
 import { missingCredits, planProvision, type ProvisionSource } from "./provision";
 import { checkTestnet } from "./network";
-import { createOrders, loadOpenOrders, ownTicksOf, rememberNonce, sessionRestedNonces, type OpenOrder } from "./orders";
-import { instrumentExtra, noteFills } from "./awareness";
-import { createTicket } from "./ticket";
+import { createOrders, loadOpenOrders, rememberNonce, type OpenOrder } from "./orders";
+import { instrumentExtra } from "./awareness";
+import { createTicket, type TicketEngine, type TradeIntent } from "./ticket";
+import { refreshBalances as pullBalances, refreshOrders as pullOrders, type OrderInput } from "./refresh";
 import { priceOf } from "../view/format";
 import type { AppState } from "../view/market";
 import type { Store } from "../store";
 import { MarkupCache } from "../view/stable";
+import { createRequestGate } from "../request";
 
 export type WalletHandle = {
   prefillFromLadder(side: "bid" | "ask", tick: number): void;
@@ -105,6 +107,17 @@ function resetFills(s: AppState): void {
 function resetAwareness(s: AppState): void {
   resetFills(s);
   s.wallet.ownHashes = new Set();
+}
+
+function resetIdentityState(s: AppState): void {
+  s.wallet.account = null;
+  s.wallet.trustlines = [];
+  s.wallet.openOrders = [];
+  s.book.ownTicks = { bid: new Set(), ask: new Set() };
+  s.wallet.provisionStatus = "";
+  s.wallet.busy = false;
+  s.wallet.provisioning = false;
+  resetAwareness(s);
 }
 
 function classicFromMeta(meta: TokenMeta | null | undefined): ClassicAsset | null {
@@ -194,9 +207,9 @@ function accountLink(pubkey: string): string {
   return `<a href="https://stellar.expert/explorer/testnet/account/${encodeURIComponent(pubkey)}" title="${esc(pubkey)}">${short}</a>`;
 }
 
-function pushLogInto(s: AppState, item: LogItem): void {
+function pushLogInto(s: AppState, item: LogItem, own = true): void {
   s.wallet.log.unshift(item);
-  if (item.hash) s.wallet.ownHashes.add(item.hash);
+  if (own && item.hash) s.wallet.ownHashes.add(item.hash);
   if (s.wallet.log.length > LOG_CAP) s.wallet.log.length = LOG_CAP;
 }
 
@@ -227,12 +240,14 @@ export function mountWallet(opts: {
   getMarket: () => number;
   onRefresh: () => void;
   storage?: StorageLike;
+  engine?: TicketEngine;
 }): WalletHandle {
   const app = opts.store;
   const ks = new Keystore(opts.storage ?? defaultStorage());
   const el = opts.el;
-  let balGen = 0;
-  let lastSeenLedger = -1;
+  const balGate = createRequestGate<string>();
+  const orderGate = createRequestGate<OrderInput>();
+  let lastSeenKey = "";
   let shellReady = false;
   let bound = false;
   const cache = new MarkupCache();
@@ -256,18 +271,17 @@ export function mountWallet(opts: {
     contract: app.read().book.contract,
     getSecret: () => app.read().wallet.active?.secret ?? null,
     getPublic: () => app.read().wallet.active?.publicKey ?? null,
-    getMarket: opts.getMarket,
     onRefresh: opts.onRefresh,
-    onRested: (nonce) => {
-      const id = app.read().wallet.active;
-      if (id) rememberNonce(id.publicKey, app.read().book.contract, opts.getMarket(), nonce);
+    onRested: (nonce: bigint, intent: TradeIntent) => {
+      rememberNonce(intent.taker, intent.contract, intent.market, nonce);
       void refreshOrders();
     },
-    onLog: (text, hash) => {
+    onLog: (text, hash, taker) => {
       app.update((s) => {
-        pushLogInto(s, { text, hash });
+        pushLogInto(s, { text, hash }, taker === s.wallet.active?.publicKey);
       });
     },
+    engine: opts.engine,
   });
 
   if (typeof window.matchMedia === "function") {
@@ -283,67 +297,22 @@ export function mountWallet(opts: {
   }
 
   async function refreshOrders(): Promise<void> {
-    const w = app.read().wallet;
-    const id = w.active;
-    if (!w.enabled || !id || !w.account?.exists) {
-      app.update((s) => {
-        s.wallet.openOrders = [];
-        s.book.ownTicks = { bid: new Set(), ask: new Set() };
-      });
-      return;
-    }
-    const events = app.read().book.eventState.events;
-    const extra = sessionRestedNonces(events, id.publicKey);
-    const openOrders = await loadOpenOrders(
-      opts.rpc,
-      app.read().book.contract,
-      id.publicKey,
-      w.account.sequence.toString(),
-      opts.getMarket(),
-      id.publicKey,
-      extra,
-      events,
-    );
-    app.update((s) => {
-      const noted = noteFills(s.wallet.lastFilled, openOrders);
-      s.wallet.lastFilled = noted.next;
-      s.wallet.unseenFills += noted.added;
-      s.wallet.openOrders = openOrders;
-      s.book.ownTicks = ownTicksOf(openOrders);
+    await pullOrders(app, orderGate, {
+      loadOpenOrders: (contract, source, sequence, market, owner, extraNonces, events) =>
+        loadOpenOrders(opts.rpc, contract, source, sequence, market, owner, extraNonces, events),
     });
   }
 
   async function refreshBalances(): Promise<void> {
-    const w = app.read().wallet;
-    const id = w.active;
-    if (!w.enabled || !id) {
-      app.update((s) => {
-        s.wallet.account = null;
-        s.wallet.trustlines = [];
-        s.wallet.openOrders = [];
-      });
-      return;
+    const committed = await pullBalances(app, balGate, {
+      readAccount: (pubkey) => readAccount(opts.rpc, pubkey),
+      readTrustlines: (pubkey, assets) => readTrustlines(opts.rpc, pubkey, assets),
+      credits: () => creditAssets(marketRows(app.read().book.snapshot)),
+    });
+    if (committed) {
+      void refreshOrders();
+      void maybeProvision();
     }
-    const gen = ++balGen;
-    try {
-      const acc = await readAccount(opts.rpc, id.publicKey);
-      if (gen !== balGen) return;
-      const credits = creditAssets(marketRows(app.read().book.snapshot));
-      const trustlines = credits.length ? await readTrustlines(opts.rpc, id.publicKey, credits) : [];
-      if (gen !== balGen) return;
-      app.update((s) => {
-        s.wallet.account = acc;
-        s.wallet.trustlines = trustlines;
-      });
-    } catch (e) {
-      if (gen !== balGen) return;
-      const msg = e instanceof Error ? e.message : String(e);
-      app.update((s) => {
-        s.wallet.status = `RPC: ${msg}`;
-      });
-    }
-    void refreshOrders();
-    void maybeProvision();
   }
 
   function ensureShell(): void {
@@ -629,7 +598,7 @@ export function mountWallet(opts: {
             s.wallet.autoSource = "generate";
             s.wallet.status = "";
             s.ticket.sideLocked = false;
-            resetAwareness(s);
+            resetIdentityState(s);
           });
           void refreshBalances();
         } catch (err) {
@@ -651,7 +620,7 @@ export function mountWallet(opts: {
           s.wallet.autoSource = "seed";
           s.wallet.status = "";
           s.ticket.sideLocked = false;
-          resetAwareness(s);
+          resetIdentityState(s);
         });
         void refreshBalances();
       } else if (act === "save-seed") {
@@ -697,11 +666,9 @@ export function mountWallet(opts: {
           s.wallet.confirmDelete = false;
           s.wallet.reveal = false;
           s.wallet.justCreated = false;
-          s.wallet.account = null;
-          s.wallet.trustlines = [];
           s.wallet.status = "";
           s.ticket.sideLocked = false;
-          resetAwareness(s);
+          resetIdentityState(s);
         });
         void refreshBalances();
       } else if (act === "friendbot") {
@@ -735,7 +702,7 @@ export function mountWallet(opts: {
           s.wallet.autoSource = null;
           s.wallet.status = "";
           s.ticket.sideLocked = false;
-          resetAwareness(s);
+          resetIdentityState(s);
         });
         void refreshBalances();
       } catch (err) {
@@ -759,7 +726,7 @@ export function mountWallet(opts: {
           s.wallet.autoSource = "import";
           s.wallet.status = "";
           s.ticket.sideLocked = false;
-          resetAwareness(s);
+          resetIdentityState(s);
         });
         void refreshBalances();
       } catch (err) {
@@ -783,12 +750,15 @@ export function mountWallet(opts: {
 
   async function waitAccountExists(pub: string): Promise<boolean> {
     for (let i = 0; i < 16; i++) {
+      if (app.read().wallet.active?.publicKey !== pub) return false;
       const acc = await readAccount(opts.rpc, pub);
+      if (app.read().wallet.active?.publicKey !== pub) return false;
       if (acc.exists) {
         app.update((s) => {
+          if (s.wallet.active?.publicKey !== pub) return;
           s.wallet.account = acc;
         });
-        return true;
+        return app.read().wallet.active?.publicKey === pub;
       }
       await new Promise((r) => setTimeout(r, 400));
     }
@@ -810,6 +780,7 @@ export function mountWallet(opts: {
     const id = w.active;
     if (!w.enabled || !id || !w.autoSource || w.autoSource === "import" || !w.account) return;
     if (w.provisioning || w.busy || w.provisionedKeys.has(id.publicKey)) return;
+    const pub = id.publicKey;
     const credits = creditsReady(book.snapshot);
     if (credits == null && w.account.exists) return;
     const missing = missingCredits(credits ?? [], w.trustlines);
@@ -830,11 +801,12 @@ export function mountWallet(opts: {
     for (const step of plan) {
       if (step.op === "fund") {
         app.update((s) => {
+          if (s.wallet.active?.publicKey !== pub) return;
           s.wallet.provisionStatus = "funding…";
           s.wallet.status = "";
         });
         const res = await fundWithFriendbot(id.publicKey);
-        noteResult("funded", res);
+        noteResult("funded", res, pub);
         if (res.status === "FAILED") {
           failed = true;
           break;
@@ -842,17 +814,19 @@ export function mountWallet(opts: {
         if (!(await waitAccountExists(id.publicKey))) {
           failed = true;
           app.update((s) => {
+            if (s.wallet.active?.publicKey !== pub) return;
             s.wallet.status = "account not funded";
           });
           break;
         }
       } else {
         app.update((s) => {
+          if (s.wallet.active?.publicKey !== pub) return;
           s.wallet.provisionStatus = `adding ${step.asset.code} trustline…`;
           s.wallet.status = "";
         });
         const res = await addTrustlineRetry(id.secret, step.asset);
-        noteResult(`trustline ${step.asset.code} · 0.5 XLM reserve (5,000,000 stroops)`, res);
+        noteResult(`trustline ${step.asset.code} · 0.5 XLM reserve (5,000,000 stroops)`, res, pub);
         if (res.status === "FAILED") {
           failed = true;
           break;
@@ -861,6 +835,7 @@ export function mountWallet(opts: {
     }
     app.update((s) => {
       if (failed || credits != null) s.wallet.provisionedKeys.add(id.publicKey);
+      if (s.wallet.active?.publicKey !== pub) return;
       s.wallet.provisioning = false;
       s.wallet.busy = false;
       s.wallet.provisionStatus = "";
@@ -872,15 +847,17 @@ export function mountWallet(opts: {
     const w = app.read().wallet;
     const id = w.active;
     if (!w.enabled || !id || w.busy) return;
+    const pub = id.publicKey;
     app.update((s) => {
       s.wallet.busy = true;
       s.wallet.status = "funding…";
     });
     const res = await fundWithFriendbot(id.publicKey);
     app.update((s) => {
+      if (s.wallet.active?.publicKey !== pub) return;
       s.wallet.busy = false;
     });
-    noteResult("funded", res);
+    noteResult("funded", res, pub);
     await refreshBalances();
   }
 
@@ -889,21 +866,24 @@ export function mountWallet(opts: {
     const id = w.active;
     const asset = w.confirmTrust;
     if (!w.enabled || !id || !asset || w.busy) return;
+    const pub = id.publicKey;
     app.update((s) => {
       s.wallet.busy = true;
       s.wallet.status = "submitting trustline…";
     });
     const res = await addTrustline(opts.rpc, id.secret, asset);
     app.update((s) => {
+      if (s.wallet.active?.publicKey !== pub) return;
       s.wallet.busy = false;
       s.wallet.confirmTrust = null;
     });
-    noteResult(`trustline ${asset.code}`, res);
+    noteResult(`trustline ${asset.code}`, res, pub);
     await refreshBalances();
   }
 
-  function noteResult(label: string, res: SubmitResult): void {
+  function noteResult(label: string, res: SubmitResult, pub: string): void {
     app.update((s) => {
+      if (s.wallet.active?.publicKey !== pub) return;
       if (res.status === "SUCCESS") {
         s.wallet.status = "";
         pushLogInto(s, { text: label, hash: res.hash });
@@ -918,11 +898,13 @@ export function mountWallet(opts: {
   }
 
   function maybeRefreshOnLedger(): void {
-    const snap = app.read().book.snapshot;
-    const w = app.read().wallet;
-    if (!snap || snap.latestLedger === lastSeenLedger) return;
-    lastSeenLedger = snap.latestLedger;
-    if (w.enabled && w.active) void refreshBalances();
+    const { book, wallet } = app.read();
+    const snap = book.snapshot;
+    if (!snap) return;
+    const key = `${book.market ?? 0}|${snap.latestLedger}`;
+    if (key === lastSeenKey) return;
+    lastSeenKey = key;
+    if (wallet.enabled && wallet.active) void refreshBalances();
   }
 
   async function boot(): Promise<void> {

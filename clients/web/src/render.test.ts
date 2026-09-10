@@ -5,13 +5,15 @@ import { expect, test } from "vitest";
 import { mockSnapshot, type BookSnapshot, type Rpc } from "./book";
 import { MarkupCache } from "./view/stable";
 import { createOrders, type OpenOrder } from "./wallet/orders";
-import { createTicket } from "./wallet/ticket";
+import { createTicket, type TicketEngine } from "./wallet/ticket";
 import type { UrlOverrides } from "./view/format";
 import { createStore } from "./store";
 import { emptyBookDomain, registerMarketView, type AppState } from "./view/market";
 import { emptyWalletDomain, mountWallet } from "./wallet/pane";
 import { emptyOrdersDomain } from "./wallet/orders";
 import { emptyTicketDomain } from "./wallet/ticket";
+import { accountLedgerKey } from "./wallet/account";
+import { deriveFromSeed } from "./wallet/keystore";
 import { assertInSheetViewport, stubRect } from "./view/viewport";
 
 const emptyOv: UrlOverrides = { baseSym: null, quoteSym: null, baseDec: null, quoteDec: null };
@@ -37,6 +39,8 @@ const testId = {
   secret: "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHW4",
 };
 
+const otherId = { ...deriveFromSeed("x"), name: "u" };
+
 function ticketOpts(rpc: Rpc, store: ReturnType<typeof createStore<AppState>>) {
   return {
     store,
@@ -44,7 +48,6 @@ function ticketOpts(rpc: Rpc, store: ReturnType<typeof createStore<AppState>>) {
     contract: "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO",
     getSecret: () => null,
     getPublic: () => testId.publicKey,
-    getMarket: () => 1,
     onRefresh: () => {},
     onRested: () => {},
     onLog: () => {},
@@ -152,6 +155,14 @@ function sampleOrder(nonce = 1n): OpenOrder {
 
 async function flush(n = 8): Promise<void> {
   for (let i = 0; i < n; i++) await Promise.resolve();
+}
+
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
 }
 
 function mountOrders(store: ReturnType<typeof createStore<AppState>>) {
@@ -824,3 +835,313 @@ test("persisted identity restores on boot without a seed param", async () => {
   expect(store.read().wallet.active?.name).toBe("key 1");
   expect(document.getElementById("wallet")!.textContent).not.toMatch(/generate/i);
 });
+
+test("identity switch drops the previous identity's ticket preview", async () => {
+  const mem = new Map<string, string>();
+  mem.set(
+    "pagebook.wallet.v1",
+    JSON.stringify({ identities: [testId, otherId], active: testId.name }),
+  );
+  const storage = {
+    getItem: (k: string) => mem.get(k) ?? null,
+    setItem: (k: string, v: string) => void mem.set(k, v),
+    removeItem: (k: string) => void mem.delete(k),
+  };
+  const rpc = stubRpc({ n: 0 });
+  rpc.getLedgerEntries = async () => {
+    throw new Error("rpc down");
+  };
+  document.body.innerHTML = `<aside id="wallet"></aside>`;
+  const store = createStore<AppState>(emptyApp());
+  mountWallet({
+    store,
+    el: document.getElementById("wallet")!,
+    rpc,
+    getMarket: () => 0,
+    onRefresh: () => {},
+    storage,
+  });
+  await flush(20);
+  store.update((s) => {
+    s.wallet.account = { exists: true, balance: 10n ** 10n, spendable: 10n ** 10n, sequence: 1n, numSubEntries: 0 };
+    s.wallet.trustlines = [
+      {
+        asset: { type: "credit", code: "USDC", issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5" },
+        exists: true,
+        balance: 10n ** 12n,
+      },
+    ];
+    s.book.snapshot = namedBook();
+    s.ticket.tick = 50;
+    s.ticket.lots = 4n;
+    s.ticket.sideLocked = true;
+    s.wallet.openOrders = [sampleOrder(7n)];
+    s.book.ownTicks = { bid: new Set([99]), ask: new Set() };
+  });
+  await new Promise((r) => setTimeout(r, 500));
+  expect(store.read().ticket.preview.kind).not.toBe("idle");
+
+  const sel = document.querySelector<HTMLSelectElement>("[data-act=switch]");
+  expect(sel).toBeTruthy();
+  sel!.value = otherId.name;
+  sel!.dispatchEvent(new Event("change", { bubbles: true }));
+  await flush();
+  expect(store.read().wallet.active?.name).toBe(otherId.name);
+  expect(store.read().wallet.account).toBeNull();
+  expect(store.read().wallet.trustlines).toEqual([]);
+  expect(store.read().wallet.openOrders).toEqual([]);
+  expect([...store.read().book.ownTicks.bid]).toEqual([]);
+
+  await new Promise((r) => setTimeout(r, 500));
+  expect(store.read().ticket.preview.kind).toBe("idle");
+});
+
+async function startPlaceSubmit(): Promise<{
+  store: ReturnType<typeof createStore<AppState>>;
+  placeD: ReturnType<typeof deferred<{ kind: "ok"; hash: string }>>;
+}> {
+  const placeD = deferred<{ kind: "ok"; hash: string }>();
+  let placeCalled = false;
+  const engine: TicketEngine = {
+    allocNonce: async () => 1n,
+    simulatePlace: async (_rpc, opts) => ({
+      quoted: {
+        market: opts.market,
+        ownSide: opts.isBid,
+        limitTick: opts.limitTick,
+        startTick: opts.limitTick,
+        crossed: [],
+        taker: "00",
+        nonce: opts.nonce,
+        base: "00",
+        quote: "00",
+      },
+      sim: { raw: {} },
+      filledLots: 0n,
+      quoteAtoms: 0n,
+    }),
+    submitPlace: async () => {
+      placeCalled = true;
+      return placeD.promise;
+    },
+  };
+  const rpc = stubRpc({ n: 0 });
+  rpc.getLedgerEntries = () => new Promise(() => {});
+  document.body.innerHTML = `<aside id="wallet"></aside>`;
+  const store = createStore<AppState>(emptyApp());
+  mountWallet({
+    store,
+    el: document.getElementById("wallet")!,
+    rpc,
+    getMarket: () => 0,
+    onRefresh: () => {},
+    storage: memoryStorage(JSON.stringify({ identities: [testId, otherId], active: testId.name })),
+    engine,
+  });
+  await flush(20);
+  store.update((s) => {
+    s.wallet.account = { exists: true, balance: 10n ** 10n, spendable: 10n ** 10n, sequence: 1n, numSubEntries: 0 };
+    s.wallet.trustlines = [
+      {
+        asset: { type: "credit", code: "USDC", issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5" },
+        exists: true,
+        balance: 10n ** 12n,
+      },
+    ];
+    s.book.snapshot = namedBook();
+    s.ticket.tick = 50;
+    s.ticket.lots = 4n;
+    s.ticket.priceStr = "50";
+    s.ticket.qtyStr = "4";
+    s.ticket.sideLocked = true;
+    s.ticket.isBid = true;
+  });
+  await flush();
+  const place = document.querySelector<HTMLButtonElement>("[data-act=place]");
+  expect(place).toBeTruthy();
+  place!.click();
+  for (let i = 0; i < 20 && !placeCalled; i++) await Promise.resolve();
+  expect(placeCalled).toBe(true);
+  return { store, placeD };
+}
+
+test("place log stays on the ticket after an identity switch while ownHashes does not take the hash", async () => {
+  const { store, placeD } = await startPlaceSubmit();
+  const sel = document.querySelector<HTMLSelectElement>("[data-act=switch]");
+  expect(sel).toBeTruthy();
+  sel!.value = otherId.name;
+  sel!.dispatchEvent(new Event("change", { bubbles: true }));
+  await flush();
+  expect(store.read().wallet.active?.publicKey).toBe(otherId.publicKey);
+  placeD.resolve({ kind: "ok", hash: "deadbeef" });
+  for (let i = 0; i < 20 && store.read().wallet.log.length === 0; i++) await Promise.resolve();
+  expect(store.read().wallet.log.some((e) => e.text === "place bid 50")).toBe(true);
+  expect(store.read().wallet.ownHashes.has("deadbeef")).toBe(false);
+});
+
+test("place hash enters ownHashes when the taker is still the active identity", async () => {
+  const { store, placeD } = await startPlaceSubmit();
+  placeD.resolve({ kind: "ok", hash: "cafebabe" });
+  for (let i = 0; i < 20 && store.read().wallet.log.length === 0; i++) await Promise.resolve();
+  expect(store.read().wallet.log.some((e) => e.text === "place bid 50")).toBe(true);
+  expect(store.read().wallet.ownHashes.has("cafebabe")).toBe(true);
+});
+
+function memoryStorage(raw?: string) {
+  const mem = new Map<string, string>();
+  if (raw) mem.set("pagebook.wallet.v1", raw);
+  return {
+    getItem: (k: string) => mem.get(k) ?? null,
+    setItem: (k: string, v: string) => void mem.set(k, v),
+    removeItem: (k: string) => void mem.delete(k),
+  };
+}
+
+function staleIdentityHoldings(store: ReturnType<typeof createStore<AppState>>): void {
+  store.update((s) => {
+    s.wallet.account = { exists: true, balance: 10n ** 10n, spendable: 10n ** 10n, sequence: 1n, numSubEntries: 0 };
+    s.wallet.openOrders = [sampleOrder(7n)];
+    s.book.ownTicks = { bid: new Set([99]), ask: new Set() };
+  });
+}
+
+test("generate clears previous identity account and orders", async () => {
+  const rpc = stubRpc({ n: 0 });
+  rpc.getLedgerEntries = () => new Promise(() => {});
+  document.body.innerHTML = `<aside id="wallet"></aside>`;
+  const store = createStore<AppState>(emptyApp());
+  mountWallet({
+    store,
+    el: document.getElementById("wallet")!,
+    rpc,
+    getMarket: () => 0,
+    onRefresh: () => {},
+    storage: memoryStorage(),
+  });
+  await flush(20);
+  staleIdentityHoldings(store);
+  document.querySelector<HTMLButtonElement>("[data-act=generate]")!.click();
+  await flush();
+  expect(store.read().wallet.account).toBeNull();
+  expect(store.read().wallet.openOrders).toEqual([]);
+  expect([...store.read().book.ownTicks.bid]).toEqual([]);
+});
+
+test("import-submit clears previous identity account and orders", async () => {
+  const rpc = stubRpc({ n: 0 });
+  rpc.getLedgerEntries = () => new Promise(() => {});
+  document.body.innerHTML = `<aside id="wallet"></aside>`;
+  const store = createStore<AppState>(emptyApp());
+  mountWallet({
+    store,
+    el: document.getElementById("wallet")!,
+    rpc,
+    getMarket: () => 0,
+    onRefresh: () => {},
+    storage: memoryStorage(),
+  });
+  await flush(20);
+  staleIdentityHoldings(store);
+  document.querySelector<HTMLButtonElement>("[data-act=import-open]")!.click();
+  await flush();
+  const form = document.querySelector<HTMLFormElement>("form[data-act=import-submit]");
+  expect(form).toBeTruthy();
+  form!.querySelector<HTMLInputElement>("input[name=secret]")!.value = deriveFromSeed("m2-smoke-1").secret;
+  form!.querySelector<HTMLButtonElement>("button[type=submit]")!.click();
+  await flush();
+  expect(store.read().wallet.account).toBeNull();
+  expect(store.read().wallet.openOrders).toEqual([]);
+  expect([...store.read().book.ownTicks.bid]).toEqual([]);
+});
+
+test("waitAccountExists drops a stale identity's account after a switch", async () => {
+  const staleSeq = 4242n;
+  let allowStale = false;
+  const rpc = stubRpc({ n: 0 });
+  rpc.getLedgerEntries = (async (...keys: unknown[]) => {
+    if (!allowStale) return { entries: [] };
+    const want = accountLedgerKey(testId.publicKey).toXDR("base64");
+    const hit = keys.some((k) => {
+      if (k && typeof k === "object" && typeof (k as { toXDR?: unknown }).toXDR === "function") {
+        return (k as { toXDR: (fmt: string) => string }).toXDR("base64") === want;
+      }
+      return false;
+    });
+    if (!hit) return { entries: [] };
+    return {
+      entries: [
+        {
+          val: {
+            switch: () => ({ name: "account" }),
+            account: () => ({
+              balance: () => 10n ** 10n,
+              seqNum: () => staleSeq,
+              numSubEntries: () => 0,
+            }),
+          },
+        },
+      ],
+    };
+  }) as unknown as Rpc["getLedgerEntries"];
+  const origFetch = globalThis.fetch;
+  const fetchD = deferred<{ ok: boolean; status: number; json: () => Promise<{ hash: string }> }>();
+  globalThis.fetch = (() => fetchD.promise) as unknown as typeof fetch;
+  try {
+    document.body.innerHTML = `<aside id="wallet"></aside>`;
+    const store = createStore<AppState>(emptyApp());
+    const sequences: Array<bigint | undefined> = [];
+    const origUpdate = store.update.bind(store);
+    store.update = (fn) => {
+      origUpdate(fn);
+      sequences.push(store.read().wallet.account?.sequence);
+    };
+    mountWallet({
+      store,
+      el: document.getElementById("wallet")!,
+      rpc,
+      getMarket: () => 0,
+      onRefresh: () => {},
+      storage: memoryStorage(
+        JSON.stringify({ identities: [testId, otherId], active: testId.name }),
+      ),
+    });
+    await flush(20);
+    store.update((s) => {
+      s.wallet.autoSource = "generate";
+      s.book.snapshot = mockSnapshot();
+    });
+    const started = Date.now();
+    while (store.read().wallet.provisionStatus !== "funding…") {
+      if (Date.now() - started > 2000) throw new Error("provision did not start");
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const sel = document.querySelector<HTMLSelectElement>("[data-act=switch]");
+    expect(sel).toBeTruthy();
+    sel!.value = otherId.name;
+    sel!.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(store.read().wallet.active?.publicKey).toBe(otherId.publicKey);
+    fetchD.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({ hash: "h" }),
+    });
+    await fetchD.promise;
+    await flush(20);
+    expect(store.read().wallet.status).toBe("");
+    expect(store.read().wallet.log.some((e) => e.text === "funded")).toBe(false);
+    allowStale = true;
+    const waitUntil = Date.now() + 500;
+    while (Date.now() < waitUntil) {
+      if (store.read().wallet.account?.sequence === staleSeq) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(store.read().wallet.active?.publicKey).toBe(otherId.publicKey);
+    expect(sequences).not.toContain(staleSeq);
+    expect(store.read().wallet.status).toBe("");
+    expect(store.read().wallet.provisionStatus).toBe("");
+    expect(store.read().wallet.busy).toBe(false);
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+}, 10000);

@@ -47,5 +47,5 @@ Store finally-guard on throw-mid-update, IME composition guard in the focus
 swap, the events seen-set mutation outside update(), and — engine-layer,
 not render — the deep-crossing pad key-count cliff (a padded band past
 ~200 read-write keys exceeds the per-transaction cap and fails cleanly).
-The plan's "explicitly not solved" list (async races, RPC economy, the
-polling scheduler, e2e breadth) also stands.
+The plan's "explicitly not solved" list (async races (pane and ticket:
+see 040), RPC economy, the polling scheduler, e2e breadth) also stands.

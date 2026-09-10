@@ -4,5 +4,6 @@ export default defineConfig(({ command }) => ({
   base: command === "build" ? "/pagebook/client/" : "/",
   test: {
     include: ["src/**/*.test.ts", "ops/**/*.test.ts"],
+    setupFiles: ["./test/setup.ts"],
   },
 }));
