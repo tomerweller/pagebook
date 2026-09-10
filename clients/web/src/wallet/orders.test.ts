@@ -9,6 +9,7 @@ import {
   replaceNet,
   settleAtoms,
   sumDeltas,
+  validateReplace,
   type OpenOrder,
 } from "./orders";
 
@@ -95,4 +96,53 @@ test("replace fee estimate counts 11 rw and 2 ro with distinct tokens", () => {
     else ro += 1;
   }
   expect({ rw, ro }).toEqual({ rw: 11, ro: 2 });
+});
+
+const bal = {
+  funded: true,
+  xlmSpendable: 100_000_000n,
+  baseAtoms: 0n,
+  quoteAtoms: 2_000_000n,
+  baseIsNative: true,
+  quoteIsNative: false,
+  quoteSymbol: "USDC",
+  baseSymbol: "XLM",
+  baseDec: 7,
+  quoteDec: 7,
+};
+
+test("validateReplace blocks a requote the wallet cannot escrow", () => {
+  // 10 lots at tick 17000 escrows 17 USDC against a 0.2 USDC balance.
+  const net = { base: 10n * lot, quote: -17_000_000n };
+  const check = validateReplace(net, bal);
+  expect(check.ok).toBe(false);
+  if (!check.ok) {
+    expect(check.reason).toBe("need 1.7 USDC for this replace");
+    expect(check.title).toBe("17000000 atoms");
+  }
+  expect(validateReplace(net, { ...bal, quoteAtoms: 17_000_000n }).ok).toBe(true);
+});
+
+test("validateReplace names the missing trustline and the unfunded account", () => {
+  const net = { base: 0n, quote: -1n };
+  expect(validateReplace(net, { ...bal, quoteAtoms: null })).toEqual({
+    ok: false,
+    reason: "no USDC trustline",
+  });
+  expect(validateReplace(net, { ...bal, funded: false })).toEqual({ ok: false, reason: "account not funded" });
+  expect(validateReplace(net, { ...bal, xlmSpendable: 1_000n })).toEqual({
+    ok: false,
+    reason: "need at least 0.2 XLM for the padded fee",
+  });
+});
+
+test("validateReplace keeps the fee headroom out of a native base escrow", () => {
+  const net = { base: -99_000_000n, quote: 0n };
+  const check = validateReplace(net, { ...bal, xlmSpendable: 100_000_000n });
+  expect(check.ok).toBe(false);
+  expect(validateReplace(net, { ...bal, xlmSpendable: 101_000_000n }).ok).toBe(true);
+});
+
+test("a replace that only refunds needs no balance", () => {
+  expect(validateReplace({ base: 5n * lot, quote: 1_000n }, { ...bal, quoteAtoms: 0n }).ok).toBe(true);
 });

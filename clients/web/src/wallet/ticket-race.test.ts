@@ -355,3 +355,40 @@ test("submit log callback carries the captured taker after an identity switch", 
   await done;
   expect(logs).toContainEqual({ text: "place bid 50", hash: "abc", taker: testId.publicKey });
 });
+
+test("the confirmation reads in tokens, not atoms, and counts one lot as a lot", async () => {
+  const store = liveStore();
+  store.update((s) => {
+    s.ticket.lots = 1n;
+    s.ticket.qtyStr = "1";
+  });
+  const t = makeTicket(store, {
+    simulatePlace: async (_rpc, opts) => quoteResult(opts, 1n),
+    allocNonce: async () => 1n,
+    submitPlace: async () => ({ kind: "ok", hash: "h", fee: "103624" }),
+  });
+  await t.submit();
+  const detail = store.read().ticket.phaseDetail;
+  expect(store.read().ticket.phase).toBe("confirmed");
+  expect(detail).toBe("took 1 lot · 0.000001 USDC · fee 0.0103624 XLM");
+  expect(detail).not.toMatch(/atoms|stroops|1 lots/);
+});
+
+test("a SAC failure explains itself instead of naming an enum", async () => {
+  const store = liveStore();
+  const t = makeTicket(store, {
+    simulatePlace: async (_rpc, opts) => quoteResult(opts, 1n),
+    allocNonce: async () => 1n,
+    submitPlace: async () => ({
+      kind: "typed",
+      errorCode: 10,
+      errorName: "BalanceError",
+      at: "apply",
+      hash: "h",
+      foreign: true,
+    }),
+  });
+  await t.submit();
+  expect(store.read().ticket.phase).toBe("failed");
+  expect(store.read().ticket.phaseDetail).toBe("not enough token balance for this order");
+});

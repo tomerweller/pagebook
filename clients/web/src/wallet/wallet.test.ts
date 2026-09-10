@@ -152,3 +152,9 @@ test("checkTestnet accepts the testnet passphrase", async () => {
   const res = await checkTestnet(rpc);
   expect(res.ok).toBe(true);
 });
+
+test("a secret that is not a secret says so in words", () => {
+  const ks = new Keystore(memStorage());
+  expect(() => ks.importSecret("SNOTAVALIDSECRET")).toThrow(/56-character S/);
+  expect(() => ks.importSecret("")).toThrow(/56-character S/);
+});

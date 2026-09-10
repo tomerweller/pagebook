@@ -12,7 +12,14 @@ import {
   type MarketInfo,
   type TokenMeta,
 } from "./client/protocol";
-import { entryKeyB64, fetchEntries, type GetEventsResult, type Rpc, type RpcEvent } from "./client/rpc";
+import {
+  entryKeyB64,
+  fetchEntries,
+  type GetEventsResult,
+  type Rpc,
+  type RpcEvent,
+  type RpcLedgerEntry,
+} from "./client/rpc";
 import { parseLevel, decodeBitmap, wordOf, type Bitmap } from "./decode";
 import { ck, instanceKey, sacBalanceKey, scValU32Base64, type LedgerKeyWrap } from "./keys";
 
@@ -20,6 +27,16 @@ const WORDS_PER_SIDE = 4;
 const EVENT_LOOKBACK = 2000;
 const EVENT_PAGE = 1000;
 const MAX_MARKETS_LISTED = 64;
+
+// A re-quoting maker leaves a long trail of stale-set bits behind it: bits
+// stay set on levels that emptied, and only a sweep clears them. Measured on
+// testnet, one word carried 569 set bits above the best ask with a single live
+// level among them, at candidate 137. So candidates are read in rounds and the
+// scan stops as soon as a side has `depth` live levels: one round covers a
+// healthy book, and a phantom trail costs extra rounds instead of hiding the
+// levels behind it (ADR-046).
+const LEVEL_SCAN_CHUNK = 96;
+const LEVEL_SCAN_ROUNDS = 5;
 
 export type LevelRow = {
   tick: number;
@@ -220,6 +237,76 @@ function asRecord(v: unknown): Record<string, unknown> | null {
   return null;
 }
 
+type SideScan = {
+  isBid: boolean;
+  cands: number[];
+  best: { empty: boolean; tick: number };
+};
+
+export type SideRows = {
+  rows: LevelRow[];
+  staleBest: boolean;
+  // Candidates whose Level entry was read. A side that stopped short of its
+  // own candidate list has levels the window never looked at.
+  scanned: number;
+};
+
+function readLevelEntry(map: Map<string, RpcLedgerEntry>, keyObj: LedgerKeyWrap) {
+  const e = map.get(keyObj.base64);
+  if (!e) return null;
+  const scv = contractScVal(e);
+  if (!scv) return null;
+  try {
+    return parseLevel(scValToNative(scv));
+  } catch {
+    return null;
+  }
+}
+
+export async function scanLevels(
+  rpc: Rpc,
+  opts: { contract: string; market: number; depth: number; sides: SideScan[] },
+): Promise<{ sides: SideRows[]; latestLedger: number; ledgers: number[] }> {
+  const out: SideRows[] = opts.sides.map(() => ({ rows: [], staleBest: false, scanned: 0 }));
+  const ledgers: number[] = [];
+  for (let round = 0; round < LEVEL_SCAN_ROUNDS; round++) {
+    const keys: LedgerKeyWrap[] = [];
+    const plan: { at: number; tick: number; key: LedgerKeyWrap }[] = [];
+    opts.sides.forEach((side, at) => {
+      if (out[at].rows.length >= opts.depth) return;
+      const from = out[at].scanned;
+      const to = Math.min(side.cands.length, from + LEVEL_SCAN_CHUNK);
+      for (let c = from; c < to; c++) {
+        const key = ck(opts.contract, "Level", opts.market, side.isBid, side.cands[c]);
+        keys.push(key);
+        plan.push({ at, tick: side.cands[c], key });
+      }
+      out[at].scanned = to;
+    });
+    if (!keys.length) break;
+    const res = await fetchEntries(rpc, keys);
+    if (res.latestLedger) ledgers.push(res.latestLedger);
+    const map = indexByKey(res.entries);
+    for (const p of plan) {
+      const side = opts.sides[p.at];
+      const dst = out[p.at];
+      const lvl = readLevelEntry(map, p.key);
+      const empty = !lvl || lvl.open_lots === 0n;
+      if (!side.best.empty && p.tick === side.best.tick && empty) dst.staleBest = true;
+      if (empty || !lvl || dst.rows.length >= opts.depth) continue;
+      dst.rows.push({
+        tick: p.tick,
+        open_lots: lvl.open_lots,
+        queue: lvl.slots.length - lvl.head_seq,
+        generation: lvl.generation,
+        head_seq: lvl.head_seq,
+        depth: lvl.slots.length,
+      });
+    }
+  }
+  return { sides: out, latestLedger: ledgers.length ? Math.max(...ledgers) : 0, ledgers };
+}
+
 async function walkDepthOnce(rpc: Rpc, opts: WalkOpts): Promise<BookSnapshot> {
   const contract = opts.contract;
   const market = Number(opts.market ?? 0);
@@ -307,11 +394,7 @@ async function walkDepthOnce(rpc: Rpc, opts: WalkOpts): Promise<BookSnapshot> {
     else wordMapAsk.set(wordMeta[i].word, bm);
   }
 
-  // Candidates are bitmap bits, and a re-quoting maker leaves trails of
-  // stale-set bits (emptied levels) right next to the best; with too few
-  // candidates the phantoms crowd out the live levels and a side renders
-  // empty. Bits are cheap to check (one batched entry fetch), so over-fetch.
-  const candLimit = Math.max(6 * depth, depth + 64);
+  const candLimit = LEVEL_SCAN_CHUNK * LEVEL_SCAN_ROUNDS;
   const candBid = ensureBest(
     bestBid.empty ? [] : ticksFromWords(wordMapBid, bestBid.tick, true, candLimit),
     bestBid,
@@ -321,49 +404,16 @@ async function walkDepthOnce(rpc: Rpc, opts: WalkOpts): Promise<BookSnapshot> {
     bestAsk,
   );
 
-  const levelKeys: LedgerKeyWrap[] = [];
-  for (const t of candBid) levelKeys.push(ck(contract, "Level", market, true, t));
-  for (const t of candAsk) levelKeys.push(ck(contract, "Level", market, false, t));
-
-  const r3 = await fetchEntries(rpc, levelKeys);
-  const map3 = indexByKey(r3.entries);
-
-  function readLvl(keyObj: LedgerKeyWrap) {
-    const e = map3.get(keyObj.base64);
-    if (!e) return null;
-    const scv = contractScVal(e);
-    if (!scv) return null;
-    try {
-      return parseLevel(scValToNative(scv));
-    } catch {
-      return null;
-    }
-  }
-
-  function collect(cands: number[], keyOffset: number, best: { empty: boolean; tick: number }) {
-    const rows: LevelRow[] = [];
-    let staleBest = false;
-    if (!best.empty) {
-      const bestLvl = readLvl(levelKeys[keyOffset + cands.indexOf(best.tick)]);
-      if (!bestLvl || bestLvl.open_lots === 0n) staleBest = true;
-    }
-    for (let i = 0; i < cands.length && rows.length < depth; i++) {
-      const lvl = readLvl(levelKeys[keyOffset + i]);
-      if (!lvl || lvl.open_lots === 0n) continue;
-      rows.push({
-        tick: cands[i],
-        open_lots: lvl.open_lots,
-        queue: lvl.slots.length - lvl.head_seq,
-        generation: lvl.generation,
-        head_seq: lvl.head_seq,
-        depth: lvl.slots.length,
-      });
-    }
-    return { rows, staleBest };
-  }
-
-  const bids = collect(candBid, 0, bestBid);
-  const asks = collect(candAsk, candBid.length, bestAsk);
+  const scan = await scanLevels(rpc, {
+    contract,
+    market,
+    depth,
+    sides: [
+      { isBid: true, cands: candBid, best: bestBid },
+      { isBid: false, cands: candAsk, best: bestAsk },
+    ],
+  });
+  const [bids, asks] = scan.sides;
 
   let vaultBase: bigint | null = null;
   let vaultQuote: bigint | null = null;
@@ -393,7 +443,7 @@ async function walkDepthOnce(rpc: Rpc, opts: WalkOpts): Promise<BookSnapshot> {
     if (qe) quoteMeta = parseTokenMeta(instanceStorage(qe));
   }
 
-  const ledgers = [r1.latestLedger, r2.latestLedger, r3.latestLedger].filter(Boolean);
+  const ledgers = [r1.latestLedger, r2.latestLedger, ...scan.ledgers].filter(Boolean);
   const latestLedger = ledgers.length ? Math.max(...ledgers) : 0;
   const mismatched = new Set(ledgers).size > 1;
 
@@ -411,8 +461,12 @@ async function walkDepthOnce(rpc: Rpc, opts: WalkOpts): Promise<BookSnapshot> {
     tokens: { base: baseMeta, quote: quoteMeta },
     base,
     quote,
-    moreBids: bids.rows.length < depth && unreadSetWords(summaryBid, wordsBid, bestBid, true),
-    moreAsks: asks.rows.length < depth && unreadSetWords(summaryAsk, wordsAsk, bestAsk, false),
+    moreBids:
+      bids.rows.length < depth &&
+      (bids.scanned < candBid.length || unreadSetWords(summaryBid, wordsBid, bestBid, true)),
+    moreAsks:
+      asks.rows.length < depth &&
+      (asks.scanned < candAsk.length || unreadSetWords(summaryAsk, wordsAsk, bestAsk, false)),
   };
 }
 

@@ -496,6 +496,27 @@ test("batch-cap rejection unchecks the box even when html is unchanged", async (
   expect(extra.checked).toBe(false);
 });
 
+test("a settled order stops counting toward the batch panel", async () => {
+  const store = createStore<AppState>(emptyApp());
+  const root = mountOrders(store);
+  const two = [sampleOrder(1n), sampleOrder(2n)];
+  store.update((s) => {
+    s.book.snapshot = mockSnapshot();
+    s.wallet.openOrders = two;
+    s.orders.selected = ["1", "2"];
+  });
+  await flush();
+  expect(root.querySelector("[data-act=batch]")).toBeTruthy();
+  // One settles: its nonce lingers in the selection, but one live order is
+  // not a batch, and the button used to stay enabled and submit nothing.
+  store.update((s) => {
+    s.wallet.openOrders = [sampleOrder(1n)];
+  });
+  await flush();
+  expect(root.querySelector("[data-act=batch]")).toBeNull();
+  expect(root.textContent ?? "").toMatch(/select 2 or more to batch/);
+});
+
 function mockSheet(matches: boolean): void {
   window.matchMedia = ((q: string) =>
     ({
@@ -955,7 +976,11 @@ test("persisted identity restores on boot without a seed param", async () => {
   });
   await flush(20);
   expect(store.read().wallet.active?.name).toBe("key 1");
-  expect(document.getElementById("wallet")!.textContent).not.toMatch(/generate/i);
+  // The intro pane, not the word "generate": the keys panel offers generate to
+  // an identity that already exists, so only the intro copy tells them apart.
+  const text = document.getElementById("wallet")!.textContent ?? "";
+  expect(text).not.toMatch(/Keys stay in this browser/i);
+  expect(text).toMatch(/key 1/);
 });
 
 test("identity switch drops the previous identity's ticket preview", async () => {

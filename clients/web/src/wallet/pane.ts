@@ -560,6 +560,7 @@ export function mountWallet(opts: {
         <summary>keys</summary>
         <div class="wallet-actions">
           ${saveSeed}
+          <button type="button" data-act="generate">generate</button>
           <button type="button" data-act="import-open">import</button>
           ${secretBlock}
           ${deleteBlock}

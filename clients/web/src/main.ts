@@ -7,6 +7,7 @@ import { emptyWalletDomain, mountWallet, type WalletHandle } from "./wallet/pane
 import { emptyOrdersDomain } from "./wallet/orders";
 import { emptyTicketDomain } from "./wallet/ticket";
 import { createStore } from "./store";
+import { decimalsParam, depthParam, marketParam } from "./params";
 import { refreshBookAndEvents } from "./sync";
 import "./style.css";
 
@@ -18,13 +19,13 @@ const MARKETS_TTL_MS = 120000;
 const q = new URLSearchParams(location.search);
 const contract = q.get("contract") || DEFAULT_CONTRACT;
 const rpcUrl = q.get("rpc") || DEFAULT_RPC;
-const depth = Number(q.get("depth") ?? 12);
+const depth = depthParam(q.get("depth"));
 const mock = q.get("mock") === "1";
 const overrides: UrlOverrides = {
   baseSym: q.get("base_sym"),
   quoteSym: q.get("quote_sym"),
-  baseDec: q.get("base_dec") != null ? Number(q.get("base_dec")) : null,
-  quoteDec: q.get("quote_dec") != null ? Number(q.get("quote_dec")) : null,
+  baseDec: decimalsParam(q.get("base_dec")),
+  quoteDec: decimalsParam(q.get("quote_dec")),
 };
 
 function $(id: string): HTMLElement {
@@ -64,7 +65,7 @@ function defaultCollapsed(): boolean {
 
 const store = createStore<AppState>({
   book: emptyBookDomain({
-    market: q.get("market") != null ? Number(q.get("market")) : null,
+    market: marketParam(q.get("market")),
     overrides,
     contract,
     isTestnet: isTestnetRpc(),
