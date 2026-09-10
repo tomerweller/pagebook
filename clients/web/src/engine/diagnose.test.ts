@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { classifyFailedTx } from "./diagnose";
+import { errorMessageByName, errorTitleByName } from "./errors";
 
 const PAGEBOOK = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
 const SAC = "CB64D3G7SM2RTH6JSGG34DDTFTQ5CFDKVDZJZSODMCX4NJ2HV2KN7OHT";
@@ -42,4 +43,15 @@ test("classifyFailedTx uses the PageBook table when raisedBy is the invoked cont
     foreign: false,
     raisedBy: PAGEBOOK,
   });
+});
+
+test("a SAC error name reads as a sentence instead of an enum", () => {
+  expect(errorMessageByName("BalanceError")).toBe("not enough token balance for this order");
+  expect(errorTitleByName("BalanceError")).toBe("Token contract error (BalanceError)");
+  expect(errorMessageByName("TrustlineMissingError")).toBe("no trustline for that token");
+  // PageBook's own table still wins on a name it owns.
+  expect(errorMessageByName("Crossed")).toBe("crossed the book: a post-only order would have taken");
+  expect(errorTitleByName("Crossed")).toBe("Error 9 (Crossed)");
+  // Anything unmapped falls through unchanged rather than inventing a message.
+  expect(errorMessageByName("WhoKnows")).toBe("WhoKnows");
 });

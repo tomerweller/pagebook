@@ -44,13 +44,16 @@ on a stored secret.
 | `contract` | `CAMH…56F4` | PageBook contract id |
 | `market` | XLM/USDC if present, else `0` | market id (XLM/USDC is market 0); the header selector changes it |
 | `rpc` | `https://soroban-testnet.stellar.org` | Soroban RPC URL |
-| `depth` | `12` | levels kept per side after empty levels are dropped |
+| `depth` | `12` | levels kept per side after empty levels are dropped (1–64) |
 | `mock` | off | `?mock=1` renders a canned book and does not walk the chain |
 | `seed` | off | derive and activate a disposable identity |
 | `base_sym`, `quote_sym` | from SAC `METADATA`, else a short address | token labels |
 | `base_dec`, `quote_dec` | from SAC `METADATA`, else `7` | decimal places for amounts |
 
 Example: `/?market=1&seed=demo`.
+
+A numeric parameter that is not a plain integer in range reads as absent, so
+`?depth=abc` walks with 12 rather than NaN.
 
 ## How a write is built
 
@@ -59,6 +62,12 @@ returns the levels the walk touched. The pad adds the opposite-side band of
 levels and bitmap words, the taker's own rest level, both tokens, and promotes
 read-only keys the book might write in flight. A level's whole queue is one
 entry, so there are no page keys or slot windows. Architecture §14 is the spec.
+
+## Scenarios
+
+`docs/client/UI-SCENARIOS.md` catalogues what the client is supposed to do,
+scenario by scenario, and says whether each one is pinned down by a unit test,
+by Playwright, or by a browser and a testnet identity.
 
 ## Wallet caveats
 

@@ -14,7 +14,14 @@ import { orderKey } from "../keys";
 import { countLabel, esc, priceOf, tokenDecimals, tokenLabel, txLink, type UrlOverrides } from "../view/format";
 import { parseAssetFromSacName } from "../client/account";
 import { NETWORK_PASSPHRASE } from "../client/network";
-import { plainError, typedErrorHtml } from "./ticket";
+import {
+  plainError,
+  typedErrorHtml,
+  XLM_FEE_HEADROOM,
+  type TicketBalances,
+  type TicketCheck,
+} from "./ticket";
+import { walletBalances } from "./balances";
 import { MarkupCache } from "../view/stable";
 import type { Store } from "../store";
 import type { AppState } from "../view/market";
@@ -249,6 +256,38 @@ export function replaceNet(
   const escrowBase = newIsBid ? 0n : newLots * lotSize;
   const escrowQuote = newIsBid ? newLots * BigInt(newTick) * tickSize : 0n;
   return { base: s.base - escrowBase, quote: s.quote - escrowQuote };
+}
+
+/// A replace refunds the old order and escrows the new one in the same call,
+/// so what the wallet has to cover is the net outflow. The place ticket has
+/// always checked this; the replace form did not, and an unaffordable requote
+/// reached the chain and came back as a bare SAC "BalanceError".
+export function validateReplace(net: TokenDelta, bal: TicketBalances): TicketCheck {
+  if (!bal.funded) return { ok: false, reason: "account not funded" };
+  if (bal.xlmSpendable < XLM_FEE_HEADROOM) return { ok: false, reason: "need at least 0.2 XLM for the padded fee" };
+  const needQuote = net.quote < 0n ? -net.quote : 0n;
+  if (needQuote > 0n) {
+    if (bal.quoteAtoms == null) return { ok: false, reason: `no ${bal.quoteSymbol} trustline` };
+    if (bal.quoteAtoms < needQuote) {
+      return {
+        ok: false,
+        reason: `need ${formatAtoms(needQuote, bal.quoteDec)} ${bal.quoteSymbol} for this replace`,
+        title: `${needQuote.toString()} atoms`,
+      };
+    }
+  }
+  const needBase = net.base < 0n ? -net.base : 0n;
+  if (needBase > 0n) {
+    const avail = bal.baseIsNative ? bal.xlmSpendable - XLM_FEE_HEADROOM : bal.baseAtoms;
+    if (avail < needBase) {
+      return {
+        ok: false,
+        reason: `need ${formatAtoms(needBase, bal.baseDec)} ${bal.baseSymbol} for this replace`,
+        title: `${needBase.toString()} atoms`,
+      };
+    }
+  }
+  return { ok: true };
 }
 
 export function sumDeltas(parts: TokenDelta[]): TokenDelta {
@@ -595,13 +634,16 @@ export function createOrders(opts: {
         </li>`;
       })
       .join("");
-    const nsel = o.selected.length;
+    const nsel = liveSelected().length;
+    const plan = nsel >= 2 ? batchPlan() : null;
+    const batchFunds = plan ? validateReplace(plan.net, walletBalances(app.read())) : { ok: true as const };
     const batch =
-      nsel >= 2
+      plan && nsel >= 2
         ? `<div class="order-batch">
             <label>± ticks <input class="wallet-input" data-field="offset" inputmode="numeric" value="${o.batchOffset}" /></label>
-            <p class="wallet-muted">${batchPreview()}</p>
-            <button type="button" data-act="batch" ${nsel > MAX_REPLACE_BATCH ? "disabled" : ""}>replace selected</button>
+            <p class="wallet-muted">${esc(plan.text)}</p>
+            ${!batchFunds.ok ? `<p class="wallet-status">${esc(batchFunds.reason)}</p>` : ""}
+            <button type="button" data-act="batch" ${nsel > MAX_REPLACE_BATCH || !batchFunds.ok ? "disabled" : ""}>replace selected</button>
           </div>`
         : nsel === 1
           ? `<p class="wallet-muted">select 2 or more to batch</p>`
@@ -636,6 +678,7 @@ export function createOrders(opts: {
     const st = ui();
     const net = m ? replaceNet(order, st.replaceBid, st.replaceTick, st.replaceLots, m.lot_size, m.tick_size) : { base: 0n, quote: 0n };
     const crossed = st.replacePostOnly && wouldCross(book, st.replaceBid, st.replaceTick);
+    const funds = validateReplace(net, walletBalances(app.read()));
     const planned =
       book?.base && book.quote
         ? keysForReplace(opts.getMarket(), "00".repeat(32), order.nonce, order.isBid, order.tick, st.replaceBid, st.replaceTick, addrToHex(book.base), addrToHex(book.quote))
@@ -658,12 +701,12 @@ export function createOrders(opts: {
     const bsym = tokenLabel(book?.tokens.base, overrides.baseSym, book?.base ?? null);
     const qsym = tokenLabel(book?.tokens.quote, overrides.quoteSym, book?.quote ?? null);
     const line = qn
-      ? `= tick ${st.replaceTick} · ${st.replaceLots.toString()} lots (${lotsToQty(st.replaceLots, qn)} ${bsym})`
+      ? `= tick ${st.replaceTick} · ${countLabel(st.replaceLots, "lot")} (${lotsToQty(st.replaceLots, qn)} ${bsym})`
       : "";
     const actions = ordersBusy(st.phase)
       ? phaseStrip(st)
       : `<div class="wallet-actions">
-        <button type="button" data-act="replace-go" data-nonce="${order.nonce.toString()}" ${crossed ? "disabled" : ""}>replace</button>
+        <button type="button" data-act="replace-go" data-nonce="${order.nonce.toString()}" ${crossed || !funds.ok ? "disabled" : ""}>replace</button>
         <button type="button" data-act="replace-cancel">cancel</button>
       </div>`;
     return `<div class="wallet-confirm">
@@ -686,19 +729,28 @@ export function createOrders(opts: {
       <label class="ticket-flag"><input type="checkbox" data-field="rpo" ${st.replacePostOnly ? "checked" : ""} /> post-only</label>
       <p class="wallet-muted">net ${esc(deltaText(net))} · padded fee ~ ${esc(formatInt(fee))} stroops (${esc(formatAtoms(fee, 7))} XLM)${rent ? ` · ${esc(rent)} (1,100,000 stroops)` : ""}</p>
       ${crossed ? `<p class="wallet-status">${typedErrorHtml("Crossed")}</p>` : ""}
+      ${!funds.ok ? `<p class="wallet-status"${funds.title ? ` title="${esc(funds.title)}"` : ""}>${esc(funds.reason)}</p>` : ""}
       ${actions}
     </div>`;
   }
 
-  function batchPreview(): string {
+  function batchPlan(): { text: string; net: TokenDelta } {
     const m = market();
-    if (!m) return "";
     const st = ui();
-    const chosen = rows().filter((r) => st.selected.includes(r.nonce.toString()));
+    if (!m) return { text: "", net: { base: 0n, quote: 0n } };
+    const chosen = liveSelected();
     const mid = midTick(snap());
     const planned = batchRequoteTicks(chosen, mid, st.batchOffset);
     const net = sumDeltas(planned.map((p) => replaceNet(p.order, p.order.isBid, p.newTick, p.order.qtyLots, m.lot_size, m.tick_size)));
-    return `requote ±${st.batchOffset} around ${mid}: net ${deltaText(net)}`;
+    return { text: `requote ±${st.batchOffset} around ${mid}: net ${deltaText(net)}`, net };
+  }
+
+  // A settled order keeps its nonce in `selected` until the trader unticks it,
+  // and the batch panel used to count those: two ticks, one live order, an
+  // enabled button that submitted nothing. Only live rows count.
+  function liveSelected(): OpenOrder[] {
+    const sel = ui().selected;
+    return rows().filter((r) => sel.includes(r.nonce.toString()));
   }
 
   function bind(root: HTMLElement): void {
@@ -889,7 +941,7 @@ export function createOrders(opts: {
     const m = market();
     const book = snap();
     if (!secret || !pub || !m || !book?.base || !book.quote) return;
-    const chosen = rows().filter((r) => ui().selected.includes(r.nonce.toString())).slice(0, MAX_REPLACE_BATCH);
+    const chosen = liveSelected().slice(0, MAX_REPLACE_BATCH);
     if (chosen.length < 2) return;
     const mid = midTick(book);
     const planned = batchRequoteTicks(chosen, mid, ui().batchOffset);

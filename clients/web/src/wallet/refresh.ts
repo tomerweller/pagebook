@@ -64,6 +64,11 @@ export async function refreshOrders(
     s.wallet.unseenFills += noted.added;
     s.wallet.openOrders = openOrders;
     s.book.ownTicks = ownTicksOf(openOrders);
+    // A settled order must not stay ticked for the next batch replace.
+    const live = new Set(openOrders.map((o) => o.nonce.toString()));
+    if (s.orders.selected.some((n) => !live.has(n))) {
+      s.orders.selected = s.orders.selected.filter((n) => live.has(n));
+    }
   });
 }
 

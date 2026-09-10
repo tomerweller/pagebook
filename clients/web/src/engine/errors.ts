@@ -72,6 +72,25 @@ export const SAC_ERROR_NAMES: Record<number, string> = {
   13: "TrustlineMissingError",
 };
 
+// A place, replace or settle moves tokens through the SAC, so a failure can
+// come back as a SAC error name that means nothing to a trader
+// ("BalanceError" on a bid the wallet cannot fund).
+export const SAC_ERROR_MESSAGES: Record<string, string> = {
+  BalanceError: "not enough token balance for this order",
+  TrustlineMissingError: "no trustline for that token",
+  BalanceDeauthorizedError: "the issuer has frozen that token balance",
+  NegativeAmountError: "the token rejected a negative amount",
+  AllowanceError: "the token allowance is too low",
+  AccountMissingError: "that account is not funded",
+  AuthenticationError: "the token refused this signature",
+  UnauthorizedError: "the token refused this transfer",
+  OverflowError: "a token amount overflowed",
+  InternalError: "the token contract failed internally",
+  OperationNotSupportedError: "the token does not support that operation",
+  AlreadyInitializedError: "the token is already initialized",
+  AccountIsNotClassic: "that token is not a classic asset",
+};
+
 export function sacErrorName(code: number): string {
   return SAC_ERROR_NAMES[code] ?? String(code);
 }
@@ -93,7 +112,8 @@ export function errorCodeByName(name: string): number | undefined {
 
 export function errorMessageByName(name: string): string {
   const code = errorCodeByName(name);
-  return code != null ? errorMessage(code) : name;
+  if (code != null) return errorMessage(code);
+  return SAC_ERROR_MESSAGES[name] ?? name;
 }
 
 export function errorTitle(code: number): string {
@@ -102,7 +122,8 @@ export function errorTitle(code: number): string {
 
 export function errorTitleByName(name: string): string {
   const code = errorCodeByName(name);
-  return code != null ? errorTitle(code) : name;
+  if (code != null) return errorTitle(code);
+  return SAC_ERROR_MESSAGES[name] ? `Token contract error (${name})` : name;
 }
 
 export function hostErrorMessage(text: string): string | null {

@@ -11,9 +11,10 @@ import { createRequestGate, scopeOf } from "../request";
 import { estimatePaddedFee } from "../engine/txdata";
 import { errorMessageByName, errorName, errorTitleByName, parseContractError } from "../engine/errors";
 import { countLabel, esc, txLink } from "../view/format";
-import { tokenDecimals, tokenLabel, type UrlOverrides } from "../view/format";
-import { parseAssetFromSacName, type AccountState, type TrustlineState } from "../client/account";
+import { tokenDecimals, type UrlOverrides } from "../view/format";
+import { parseAssetFromSacName, type AccountState } from "../client/account";
 import { setAttr, setHtml, setText } from "../view/stable";
+import { walletBalances } from "./balances";
 import type { Store } from "../store";
 import type { AppState } from "../view/market";
 import {
@@ -300,10 +301,6 @@ export function createTicket(opts: {
     return app.read().wallet.account;
   }
 
-  function trustlines(): TrustlineState[] {
-    return app.read().wallet.trustlines;
-  }
-
   function overrides(): UrlOverrides {
     return app.read().book.overrides;
   }
@@ -317,42 +314,7 @@ export function createTicket(opts: {
   }
 
   function balances(): TicketBalances {
-    const book = snap();
-    const acc = account();
-    const tls = trustlines();
-    const ov = overrides();
-    const baseClassic = book?.tokens.base?.name ? safeAsset(book.tokens.base.name) : null;
-    const quoteClassic = book?.tokens.quote?.name ? safeAsset(book.tokens.quote.name) : null;
-    const quoteTl =
-      quoteClassic && quoteClassic.type === "credit"
-        ? tls.find((t) => t.asset.code === quoteClassic.code && t.asset.issuer === quoteClassic.issuer)
-        : undefined;
-    const baseTl =
-      baseClassic && baseClassic.type === "credit"
-        ? tls.find((t) => t.asset.code === baseClassic.code && t.asset.issuer === baseClassic.issuer)
-        : undefined;
-    const baseIsNative = !baseClassic || baseClassic.type === "native";
-    const quoteIsNative = quoteClassic?.type === "native";
-    return {
-      funded: !!acc?.exists,
-      xlmSpendable: acc?.spendable ?? 0n,
-      baseAtoms: baseIsNative ? (acc?.balance ?? 0n) : baseTl?.exists ? baseTl.balance : 0n,
-      quoteAtoms: quoteIsNative
-        ? (acc?.balance ?? 0n)
-        : quoteTl
-          ? quoteTl.exists
-            ? quoteTl.balance
-            : null
-          : quoteClassic
-            ? null
-            : 0n,
-      baseIsNative,
-      quoteIsNative: !!quoteIsNative,
-      quoteSymbol: tokenLabel(book?.tokens.quote, ov.quoteSym, book?.quote ?? null),
-      baseSymbol: tokenLabel(book?.tokens.base, ov.baseSym, book?.base ?? null),
-      baseDec: tokenDecimals(book?.tokens.base, ov.baseDec),
-      quoteDec: tokenDecimals(book?.tokens.quote, ov.quoteDec),
-    };
+    return walletBalances(app.read());
   }
 
   function quant(): Quant | null {
@@ -409,7 +371,7 @@ export function createTicket(opts: {
     const t = tkt();
     const parts = [`tick ${t.tick}`];
     if (t.priceSnapped) parts.push(`${tickToPrice(t.tick, qn)} ${b.quoteSymbol}`);
-    parts.push(`${t.lots.toString()} lots (${lotsToQty(t.lots, qn)} ${b.baseSymbol})`);
+    parts.push(`${countLabel(t.lots, "lot")} (${lotsToQty(t.lots, qn)} ${b.baseSymbol})`);
     return `= ${parts.join(" · ")}`;
   }
 
@@ -712,11 +674,13 @@ export function createTicket(opts: {
     nonce: bigint,
   ): void {
     if (res.kind === "ok") {
-      const fee = res.fee ? ` · fee ${res.fee} stroops charged` : "";
+      const b = balances();
+      const fee = res.fee ? ` · fee ${formatAtoms(BigInt(res.fee), 7)} XLM` : "";
+      const quote = `${formatAtoms(quoteAtoms, b.quoteDec)} ${b.quoteSymbol}`;
       app.update((s) => {
         s.ticket.phase = "confirmed";
         s.ticket.lastHash = res.hash;
-        s.ticket.phaseDetail = `took ${filledLots.toString()} lots · ${quoteAtoms.toString()} quote atoms${rested ? " · rests" : ""}${fee}`;
+        s.ticket.phaseDetail = `took ${countLabel(filledLots, "lot")} · ${quote}${rested ? " · rests" : ""}${fee}`;
         s.ticket.lastNonce = null;
       });
       opts.onLog(`place ${intent.isBid ? "bid" : "ask"} ${intent.tick}`, res.hash, intent.taker);

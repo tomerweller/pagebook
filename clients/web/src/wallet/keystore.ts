@@ -27,7 +27,14 @@ export function deriveFromSeed(seed: string): Identity {
 }
 
 export function identityFromSecret(secret: string, name: string): Identity {
-  const kp = StellarSdk.Keypair.fromSecret(secret.trim());
+  // The SDK's own failure reads "invalid version byte. expected 144, got 147",
+  // which tells a trader nothing about what to paste.
+  let kp: StellarSdk.Keypair;
+  try {
+    kp = StellarSdk.Keypair.fromSecret(secret.trim());
+  } catch {
+    throw new Error("that is not a secret key — paste the 56-character S… string");
+  }
   return { name, publicKey: kp.publicKey(), secret: kp.secret() };
 }
 
