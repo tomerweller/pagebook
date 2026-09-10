@@ -3,7 +3,7 @@ use crate::math::overflow_bound_ok;
 use crate::store;
 use pagebook_types::{
     Market, FEE_BPS_MAX, LEVEL_CAP, LEVEL_CAP_MAX, MAX_LEVELS_CROSSED, MAX_REPLACE_BATCH,
-    MAX_SLOTS_SCANNED, TICK_INDEX_SPAN,
+    TICK_INDEX_SPAN,
 };
 use soroban_sdk::{token::StellarAssetClient, Address, Env};
 
@@ -66,7 +66,6 @@ pub fn create_market(
         min_order_lots,
         max_order_lots,
         max_levels_crossed: MAX_LEVELS_CROSSED,
-        max_slots_scanned: MAX_SLOTS_SCANNED,
         level_cap: LEVEL_CAP,
     };
     store::save_market(env, id, &market);
@@ -77,7 +76,6 @@ pub fn set_market_caps(
     env: &Env,
     market: u32,
     max_levels_crossed: u32,
-    max_slots_scanned: u32,
     taker_fee_bps: u32,
     min_order_lots: u64,
     max_order_lots: u64,
@@ -95,7 +93,7 @@ pub fn set_market_caps(
     if level_cap < m.level_cap {
         env.panic_with_error(Error::QtyOutOfBounds);
     }
-    require_caps(env, max_levels_crossed, max_slots_scanned, level_cap);
+    require_caps(env, max_levels_crossed, level_cap);
     prove_bounds(
         env,
         level_cap,
@@ -105,7 +103,6 @@ pub fn set_market_caps(
         m.lot_size,
     );
     m.max_levels_crossed = max_levels_crossed;
-    m.max_slots_scanned = max_slots_scanned;
     m.taker_fee_bps = taker_fee_bps;
     m.min_order_lots = min_order_lots;
     m.max_order_lots = max_order_lots;
@@ -113,12 +110,12 @@ pub fn set_market_caps(
     store::save_market(env, market, &m);
 }
 
-/// Loop caps must be usable (a zero cap disables matching or head scans), and
+/// Loop caps must be usable (a zero cap disables matching), and
 /// `level_cap` must hold a whole `replace_batch` (the ADR-021 escrow bound
 /// assumes `level_cap ≥ MAX_REPLACE_BATCH`) and keep a full `Level` rewrite
 /// inside the per-transaction write-byte cap (`LEVEL_CAP_MAX`, ADR-037).
-fn require_caps(env: &Env, max_levels_crossed: u32, max_slots_scanned: u32, level_cap: u32) {
-    if max_levels_crossed == 0 || max_slots_scanned == 0 {
+fn require_caps(env: &Env, max_levels_crossed: u32, level_cap: u32) {
+    if max_levels_crossed == 0 {
         env.panic_with_error(Error::BadQuantization);
     }
     if !(MAX_REPLACE_BATCH..=LEVEL_CAP_MAX).contains(&level_cap) {

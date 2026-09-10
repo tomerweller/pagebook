@@ -133,7 +133,6 @@ fn market_under_budget() {
         min_order_lots: 1,
         max_order_lots: u64::MAX,
         max_levels_crossed: 32,
-        max_slots_scanned: 64,
         level_cap: u32::MAX,
     };
     let n = xdr_len(&env, market);

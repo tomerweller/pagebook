@@ -273,7 +273,7 @@ fn fee_place_max_take_32() {
         &1_000_000,
     );
     h.client()
-        .set_market_caps(&market, &32, &64, &10, &1, &1_000_000, &64);
+        .set_market_caps(&market, &32, &10, &1, &1_000_000, &64);
     let maker = Address::generate(&h.env);
     for w in 0..32u32 {
         mint(&h, &h.base, &maker, 1_000_000_000);

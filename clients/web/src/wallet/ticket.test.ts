@@ -23,7 +23,6 @@ const market: MarketInfo = {
   min_order_lots: 1n,
   max_order_lots: 1_000_000n,
   max_levels_crossed: 32,
-  max_slots_scanned: 64,
   level_cap: 64,
 };
 

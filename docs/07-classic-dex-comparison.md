@@ -30,7 +30,7 @@ M3 branch.
 | Cost to update a quote | modify in place, ~100 stroops | `replace` rewrites the `Order` in place, ~0.002 XLM; a 40-quote same-tick `replace_batch` ~0.031 XLM (ADR-005) |
 | Fill delivery | credited to both sides at apply | taker settled at apply; the maker must call `settle` to receive proceeds or a refund (§7) |
 | Custody while resting | funds stay in the account, reserved as liabilities | funds transferred into the contract's vault (§6) |
-| Depth a taker can cross per op | up to the protocol's per-operation work limit (1,000 offers; `opEXCEEDED_WORK_LIMIT`) | at most `MAX_LEVELS_CROSSED` levels (32) and `MAX_SLOTS_SCANNED` slots (64) per transaction, shared across `route` legs (§8) |
+| Depth a taker can cross per op | up to the protocol's per-operation work limit (1,000 offers; `opEXCEEDED_WORK_LIMIT`) | at most `MAX_LEVELS_CROSSED` levels (32) per transaction, shared across `route` legs; a partial level is bounded by `level_cap` (§8) |
 | Footprint | none for the user; the protocol reads what it needs | client simulates, pads a contiguous tick band, declares every key (§14) |
 | Prices | any rational; no market setup | markets created by the admin with fixed `lot_size`, `tick_size`, band `[tick_min, tick_max)` of at most 2^22 ticks (§0.2, §12) |
 | Multi-hop | path payments through offers and liquidity pools, up to 5 intermediate assets, one operation | `route`: at most `MAX_ROUTE_LEGS` (4) PageBook markets, one shared budget; no AMM, no classic offers |
@@ -96,8 +96,8 @@ One SDEX operation can cross deep into the book (up to the protocol's 1,000-offe
 limit), so a large market order fills in one transaction if the book has the depth.
 
 A PageBook `place` crosses at most `MAX_LEVELS_CROSSED` levels (target 32) and reads at
-most `MAX_SLOTS_SCANNED` slots at the last, partially consumed level (target 64); a
-`route` shares that budget across its legs. Hitting a cap ends the walk with the
+most `level_cap` slots at the last, partially consumed level (default 64, ceiling 128); a
+`route` shares the level budget across its legs. Hitting `MAX_LEVELS_CROSSED` ends the walk with the
 remainder refunded (§8). Sweeping a whole level costs one write regardless of how many
 orders sit in it, so a deep book of few price levels fills fast, but a book spread
 across many ticks needs several transactions for a large order, and every extra
@@ -211,7 +211,7 @@ nothing planned.
 Rent bounds holding K orders, not churning them: `replace` lets an attacker who has
 paid rent on K nonces re-arm tombstones, stale bits, or a phantom best for ~0.001 XLM
 each (§17 "Rent bounds holding, not churn", ADR-013). Every instance is capped
-(`MAX_SLOTS_SCANNED`, `MAX_LEVELS_CROSSED`, one restore per stale bit) and healed by
+(`level_cap`, `MAX_LEVELS_CROSSED`, one restore per stale bit) and healed by
 the next taker, and the real deterrent is `min_order_lots × price`: dust rested to arm
 a phantom gets filled or swept for its notional. SDEX has its own dust and spam
 history, but nothing structurally like "cost one taker their crossing budget."

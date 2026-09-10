@@ -28,7 +28,6 @@ pub struct Market {
     pub min_order_lots: u64,
     pub max_order_lots: u64,
     pub max_levels_crossed: u32,
-    pub max_slots_scanned: u32,
     pub level_cap: u32,
 }
 

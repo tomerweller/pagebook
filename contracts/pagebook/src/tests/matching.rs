@@ -287,7 +287,7 @@ fn remainder_below_min_is_refunded_not_reverted() {
     let maker = Address::generate(&h.env);
     rest_ask(&h, &maker, 10, 15, 1);
     h.client()
-        .set_market_caps(&h.market, &32, &64, &10, &10, &1_000_000, &64);
+        .set_market_caps(&h.market, &32, &10, &10, &1_000_000, &64);
     let taker = Address::generate(&h.env);
     mint(&h, &h.quote, &taker, 1_000_000);
     let (rested, filled, _) =
@@ -334,14 +334,14 @@ fn route_two_legs_shares_budget_and_nets() {
 fn route_shared_levels_budget_caps_second_leg() {
     let h = setup();
     h.client()
-        .set_market_caps(&h.market, &2, &64, &10, &1, &1_000_000, &64);
+        .set_market_caps(&h.market, &2, &10, &1, &1_000_000, &64);
     let maker = Address::generate(&h.env);
     for (i, t) in [10u32, 11, 12, 13].iter().enumerate() {
         rest_ask(&h, &maker, *t, 1, i as u64 + 1);
     }
     let taker = Address::generate(&h.env);
     mint(&h, &h.quote, &taker, 1_000_000);
-    let leg = |limit: u32, qty: u64, nonce: u64| crate::PlaceLeg {
+    let leg = |limit: u32, qty: u64, nonce: u64, no_rest: bool| crate::PlaceLeg {
         market: h.market,
         is_bid: true,
         limit_tick: limit,
@@ -351,15 +351,19 @@ fn route_shared_levels_budget_caps_second_leg() {
         flags: PlaceFlags {
             post_only: false,
             fill_or_kill: false,
-            no_rest: true,
+            no_rest,
         },
     };
     let mut legs = soroban_sdk::Vec::new(&h.env);
-    legs.push_back(leg(13, 2, 1)); // uses the whole budget of 2 levels
-    legs.push_back(leg(13, 2, 2)); // no budget left: takes nothing
+    legs.push_back(leg(13, 2, 1, true)); // uses the whole budget of 2 levels
+    legs.push_back(leg(13, 2, 2, false)); // no budget left: takes nothing
     let out = h.client().route(&taker, &legs);
     assert_eq!(out.get(0).unwrap().1, 2);
     assert_eq!(out.get(1).unwrap().1, 0);
+    assert!(
+        !out.get(1).unwrap().0,
+        "MAX_LEVELS_CROSSED remainder refunds; resting would cross"
+    );
 }
 
 #[test]

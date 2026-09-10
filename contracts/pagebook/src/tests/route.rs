@@ -260,3 +260,30 @@ fn replace_batch_duplicate_nonce_is_rejected() {
         Error::OrderExists,
     );
 }
+
+/// A shared slot-scan budget used to starve later partial legs. Each market
+/// now scans its own level to completion: both 127-lot legs fill.
+#[test]
+fn route_partial_levels_on_each_leg_fill() {
+    let h = setup();
+    let m2 = second_market(&h);
+    let maker = Address::generate(&h.env);
+    for n in 1..=64u64 {
+        rest_ask(&h, &maker, 10, 2, n);
+        rest_ask_in(&h, m2, &maker, 12, 2, 100 + n);
+    }
+    let taker = Address::generate(&h.env);
+    mint(&h, &h.quote, &taker, 1_000_000);
+    let mut legs = soroban_sdk::Vec::new(&h.env);
+    legs.push_back(leg(&h, h.market, 10, 127, 1, no_rest()));
+    legs.push_back(leg(&h, m2, 12, 127, 2, no_rest()));
+    let out = h.client().route(&taker, &legs);
+    assert_eq!(out.get(0).unwrap().1, 127);
+    assert_eq!(out.get(1).unwrap().1, 127);
+    let l1 = h.client().level(&h.market, &false, &10);
+    assert_eq!(l1.head_seq, 63);
+    assert_eq!(l1.open_lots, 1);
+    let l2 = h.client().level(&m2, &false, &12);
+    assert_eq!(l2.head_seq, 63);
+    assert_eq!(l2.open_lots, 1);
+}

@@ -204,7 +204,7 @@ impl World {
     fn new() -> Self {
         let h = setup();
         h.client()
-            .set_market_caps(&h.market, &32, &64, &10, &1, &1_000_000, &64);
+            .set_market_caps(&h.market, &32, &10, &1, &1_000_000, &64);
         let makers = std::vec![Address::generate(&h.env), Address::generate(&h.env)];
         let taker = Address::generate(&h.env);
         for who in makers.iter().chain(core::iter::once(&taker)) {
