@@ -148,14 +148,26 @@ With the go-ahead, in this order:
 
 1. Read the machine's current state for the record:
    `fly ssh console -a pagebook-bots -C "sh -c 'tail -c 1500 /data/logs/watchdog.log; ls -la /data/state'"`.
-2. Set the stop file and signal the bots so the runners do not restart them:
-   `fly ssh console -a pagebook-bots -C "sh -c 'touch /data/state/stopping; kill -TERM -- -\$(cat /data/state/trader.pid); kill -TERM -- -\$(cat /data/state/mm.pid)'"`.
-   The trader settles its rests and exits; the maker exits leaving its quotes live with a
-   current state file; the entrypoint's `wait -n` returns and the machine halts on its own.
-   Confirm with `fly status`.
-3. Fetch the state file: `fly machine start <id>` if it is stopped, then
+2. Set the stop file, read the pid files, then signal the bot process groups. The
+   machine's `sh` is dash, whose `kill` rejects `-- -<pgid>`, so go through bash and
+   use the literal pids:
+   `fly ssh console -a pagebook-bots -C "sh -c 'touch /data/state/stopping; cat /data/state/mm.pid /data/state/trader.pid'"`
+   then
+   `fly ssh console -a pagebook-bots -C "bash -c 'kill -TERM -- -<mm pid> -<trader pid>'"`.
+   Expect the machine to exit within seconds, not after a graceful shutdown: the
+   entrypoint's `shutdown` waits on its runner loops, which die on SIGTERM, so `wait`
+   returns at once and the bots are cut off mid-cycle (ADR-044 saw a maker batch land
+   two seconds after the signal and a trader rest left on the book). The state file on
+   the volume is the last cycle's; the chain is the truth, which is why step 5 exists.
+   Confirm `stopped` with `fly status`.
+3. Read the state file without booting the bots. `fly machine start` would run the
+   entrypoint on the old contract, so first replace the command:
+   `fly machine update <id> -a pagebook-bots --command "sleep 7200" --yes`, then
+   `fly machine start <id>`, then
    `fly sftp get /data/state/mm-<old>-m0.json <scratch>/mm-old.json -a pagebook-bots`,
-   then `fly machine stop <id>`. The file on the volume stays as history.
+   then `fly machine stop <id>`. After the later `fly deploy`, check
+   `fly machine status <id>` still shows the image CMD and not `sleep`; if it does not,
+   `fly machine update <id> --command "/bin/bash ops/deploy/fly-entrypoint.sh"`.
 4. Settle the old quotes so escrow returns to `pb-mm-fly`:
    `npx tsx ops/mm.ts --contract <old> --market 0 --identity pb-mm-fly --config-dir ... --base-sac ... --quote-sac ... --usdc-issuer ... --state <scratch>/mm-old.json --log <scratch>/mm-old-cancel.log --cancel-all`.
    The `main` client reads `Market` fields by name, so it usually still parses the old
@@ -163,10 +175,24 @@ With the go-ahead, in this order:
    change broke parsing or the pads, run the cancel from a worktree at the old ADR's
    commit. Record the first and last tx and the `level` view at the recorded bests.
 5. Scan for orders the state file lost. Two makers or two traders running at once (the
-   ADR-037 duplicate-bot incident) leave orders no state file knows about, and a trader
-   killed mid-rest can too. Compare `pb-mm-fly` and `pb-trader-fly` balances before and
-   after; if escrow did not come back in full, rebuild a state file from the identity's
-   nonce range and cancel again.
+   ADR-037 duplicate-bot incident) leave orders no state file knows about, and the
+   hard exit in step 2 does too (ADR-044: one trader rest). `Order` entries exist only
+   while an order is live, and bot nonces are `boot_seconds * 1000 + k`, so a few
+   thousand keys through batched `getLedgerEntries` cover an identity:
+
+   ```bash
+   npx tsx ../../.claude/skills/redeploy-testnet/scripts/scan-orders.mts <old> <G-owner> <base> <base+4000> [--state <scratch>/rebuilt.json]
+   ```
+
+   The maker's base is the state file's `next_nonce` rounded down to a thousand (it
+   persists across restarts, so it dates from the state file's creation). The trader's
+   base is its last boot second; recover it from any trader transaction on Horizon
+   (`/transactions/<hash>/operations`, the `place` parameters carry the nonce as a
+   `U64`). Settle stragglers: a maker's via `--cancel-all` over the `--state` file the
+   scan writes, a trader's with
+   `stellar contract invoke --id <old> --source pb-trader-fly ... -- settle --market 0 --owner <G> --nonce <n>`.
+   Rescan until both read zero, and compare `pb-mm-fly` / `pb-trader-fly` balances
+   before and after so the escrow return is on the record.
 6. `collect_fees` on the old contract for the tokens the user approved. Record amounts.
 
 ### 5. Cut over
@@ -188,10 +214,14 @@ production traffic in every category, so it stays the follow-up unless the user 
 it. Do not edit the explainer pages unless they name the contract; if you must, they go
 through the `humanizer` skill.
 
-Then from `clients/web`: `fly deploy`. On a stopped machine this updates the config and
-the machine has to be started by hand (`fly machine start <id>`). On boot check, over
-`fly ssh console`, that exactly one `mm.ts` and one `trader.ts` process exist, that the
-refill and keepalive logs show a run, and that the maker created a fresh
+Then from `clients/web`: `fly deploy -a pagebook-bots` (a remote image build, a few
+minutes; run it in the background). On a stopped machine this updates the config, resets
+any `--command` override from step 4.3, and leaves the machine stopped. Before starting
+it, confirm the config carries the new id:
+`fly machine status <id> -a pagebook-bots -d | grep CONTRACT`. Then
+`fly machine start <id>`. Within two minutes check, over `fly ssh console`, that exactly
+one `node ... ops/mm.ts` and one `node ... ops/trader.ts` exist under `/proc`, that
+`refill.log` and `keepalive.log` show a run, and that the maker created a fresh
 `/data/state/mm-<new>-m0.json`. The trader should be taking within a couple of minutes.
 Acceptance is two `MM OK` lines 30 minutes apart in `/data/logs/watchdog.log`; the
 entrypoint's watchdog first runs five minutes after boot and then hourly, so run
@@ -228,6 +258,12 @@ characters and a body that says what was deployed and links the contract on
 - The refill crank's floors (maker 30,000 XLM, trader 5,000 USDC) are tuned for the
   production ladder; on a funder identity it will merge four friendbot accounts the first
   time. That is expected and cheap.
+- `fly ssh console -C` passes the command through `sh -c` on the machine (dash): `$(...)`
+  survives, `kill -- -<pgid>` does not. Wrap group kills in `bash -c`. There is no `ps`
+  on the image; walk `/proc/*/cmdline` and `/proc/<pid>/stat` (field 5 is the pgid).
+- `mm.ts --cancel-all` reports `settle other / fetch failed` on an RPC hiccup and keeps
+  the quote in the state file; rerun it. `sim:typed:UnknownOrder` on the rerun means the
+  first attempt had landed.
 - zsh treats a bare `=====` as a command path. Quote separators in shell one-liners.
 - `.claude/launch.json` is tracked. If you point it at your worktree for the dev
   preview, `git checkout -- .claude/launch.json` before committing.
