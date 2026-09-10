@@ -41,7 +41,8 @@ key is still active.
 A place click freezes one `TradeIntent`. Nonce allocation, quoting, and
 `submitPlace` read that object. The ticket phase, the log line, and
 `onRested(nonce, intent)` attach to the intent even if the visible market
-or ticket fields have moved.
+or ticket fields have moved. The tape attribution set is identity-scoped
+and takes the hash only while the intent's taker is still active.
 
 ## ADR-030
 

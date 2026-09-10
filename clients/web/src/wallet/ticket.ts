@@ -274,7 +274,7 @@ export function createTicket(opts: {
   getPublic: () => string | null;
   onRefresh: () => void;
   onRested: (nonce: bigint, intent: TradeIntent) => void;
-  onLog: (text: string, hash?: string) => void;
+  onLog: (text: string, hash?: string, taker?: string) => void;
   engine?: TicketEngine;
 }): TicketHandle {
   const app = opts.store;
@@ -713,7 +713,7 @@ export function createTicket(opts: {
         s.ticket.phaseDetail = `took ${filledLots.toString()} lots · ${quoteAtoms.toString()} quote atoms${rested ? " · rests" : ""}${fee}`;
         s.ticket.lastNonce = null;
       });
-      opts.onLog(`place ${intent.isBid ? "bid" : "ask"} ${intent.tick}`, res.hash);
+      opts.onLog(`place ${intent.isBid ? "bid" : "ask"} ${intent.tick}`, res.hash, intent.taker);
       if (rested) opts.onRested(nonce, intent);
       opts.onRefresh();
     } else if (res.kind === "typed") {
@@ -722,28 +722,28 @@ export function createTicket(opts: {
         s.ticket.phaseDetail = plainError(res.errorName);
         s.ticket.lastHash = res.hash ?? "";
       });
-      opts.onLog(`place ${res.errorName}`, res.hash);
+      opts.onLog(`place ${res.errorName}`, res.hash, intent.taker);
     } else if (res.kind === "footprint") {
       app.update((s) => {
         s.ticket.phase = "failed";
         s.ticket.phaseDetail = "footprint";
         s.ticket.lastHash = res.hash ?? "";
       });
-      opts.onLog("place footprint", res.hash);
+      opts.onLog("place footprint", res.hash, intent.taker);
     } else if (res.kind === "resourceLimit" && res.at === "prepare") {
       app.update((s) => {
         s.ticket.phase = "failed";
         s.ticket.phaseDetail = res.message;
         s.ticket.lastHash = res.hash ?? "";
       });
-      opts.onLog("place oversized", res.hash);
+      opts.onLog("place oversized", res.hash, intent.taker);
     } else {
       app.update((s) => {
         s.ticket.phase = "failed";
         s.ticket.phaseDetail = "message" in res && res.message ? res.message : res.kind;
         s.ticket.lastHash = res.hash ?? "";
       });
-      opts.onLog("place failed", res.hash);
+      opts.onLog("place failed", res.hash, intent.taker);
     }
   }
 

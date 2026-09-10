@@ -16,7 +16,7 @@ import { missingCredits, planProvision, type ProvisionSource } from "./provision
 import { checkTestnet } from "./network";
 import { createOrders, loadOpenOrders, rememberNonce, type OpenOrder } from "./orders";
 import { instrumentExtra } from "./awareness";
-import { createTicket, type TradeIntent } from "./ticket";
+import { createTicket, type TicketEngine, type TradeIntent } from "./ticket";
 import { refreshBalances as pullBalances, refreshOrders as pullOrders, type OrderInput } from "./refresh";
 import { priceOf } from "../view/format";
 import type { AppState } from "../view/market";
@@ -207,9 +207,9 @@ function accountLink(pubkey: string): string {
   return `<a href="https://stellar.expert/explorer/testnet/account/${encodeURIComponent(pubkey)}" title="${esc(pubkey)}">${short}</a>`;
 }
 
-function pushLogInto(s: AppState, item: LogItem): void {
+function pushLogInto(s: AppState, item: LogItem, own = true): void {
   s.wallet.log.unshift(item);
-  if (item.hash) s.wallet.ownHashes.add(item.hash);
+  if (own && item.hash) s.wallet.ownHashes.add(item.hash);
   if (s.wallet.log.length > LOG_CAP) s.wallet.log.length = LOG_CAP;
 }
 
@@ -240,6 +240,7 @@ export function mountWallet(opts: {
   getMarket: () => number;
   onRefresh: () => void;
   storage?: StorageLike;
+  engine?: TicketEngine;
 }): WalletHandle {
   const app = opts.store;
   const ks = new Keystore(opts.storage ?? defaultStorage());
@@ -275,11 +276,12 @@ export function mountWallet(opts: {
       rememberNonce(intent.taker, intent.contract, intent.market, nonce);
       void refreshOrders();
     },
-    onLog: (text, hash) => {
+    onLog: (text, hash, taker) => {
       app.update((s) => {
-        pushLogInto(s, { text, hash });
+        pushLogInto(s, { text, hash }, taker === s.wallet.active?.publicKey);
       });
     },
+    engine: opts.engine,
   });
 
   if (typeof window.matchMedia === "function") {

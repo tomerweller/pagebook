@@ -18,11 +18,6 @@ import {
   type TradeIntent,
 } from "./ticket";
 
-const nodeBuffer = (globalThis as typeof globalThis & { Buffer?: { alloc(n: number): object; prototype: object } }).Buffer;
-if (nodeBuffer && !(nodeBuffer.alloc(1) instanceof Uint8Array)) {
-  Object.setPrototypeOf(nodeBuffer.prototype, Uint8Array.prototype);
-}
-
 const emptyOv: UrlOverrides = { baseSym: null, quoteSym: null, baseDec: null, quoteDec: null };
 
 const testId = {
@@ -114,7 +109,7 @@ function liveStore(): ReturnType<typeof createStore<AppState>> {
 function makeTicket(
   store: ReturnType<typeof createStore<AppState>>,
   engine: TicketEngine,
-  extra?: { onRested?: (nonce: bigint, intent: TradeIntent) => void; onLog?: (text: string, hash?: string) => void },
+  extra?: { onRested?: (nonce: bigint, intent: TradeIntent) => void; onLog?: (text: string, hash?: string, taker?: string) => void },
 ) {
   return createTicket({
     store,
@@ -325,4 +320,37 @@ test("submit threads one intent through nonce, quote, and place", async () => {
   expect(logs.some((l) => l === "place bid 50")).toBe(true);
   expect(store.read().ticket.phase).toBe("confirmed");
   expect(store.read().book.market).toBe(10);
+});
+
+test("submit log callback carries the captured taker after an identity switch", async () => {
+  const store = liveStore();
+  const placeD = deferred<{ kind: "ok"; hash: string }>();
+  let placeCalled = false;
+  const logs: { text: string; hash?: string; taker?: string }[] = [];
+  const t = makeTicket(
+    store,
+    {
+      allocNonce: async () => 1n,
+      simulatePlace: async (_rpc, opts) => quoteResult(opts, 0n),
+      submitPlace: async () => {
+        placeCalled = true;
+        return placeD.promise;
+      },
+    },
+    {
+      onLog: (text, hash, taker) => {
+        logs.push({ text, hash, taker });
+      },
+    },
+  );
+
+  const done = t.submit();
+  for (let i = 0; i < 20 && !placeCalled; i++) await Promise.resolve();
+  expect(placeCalled).toBe(true);
+  store.update((s) => {
+    s.wallet.active = otherId;
+  });
+  placeD.resolve({ kind: "ok", hash: "abc" });
+  await done;
+  expect(logs).toContainEqual({ text: "place bid 50", hash: "abc", taker: testId.publicKey });
 });
