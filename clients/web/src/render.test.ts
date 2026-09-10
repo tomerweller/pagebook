@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { mockSnapshot, type BookSnapshot, type Rpc } from "./book";
 import { MarkupCache } from "./view/stable";
 import { createOrders, type OpenOrder } from "./wallet/orders";
@@ -589,6 +589,7 @@ test("replace form swaps the order row in place", async () => {
 });
 
 test("zero quote defaults the ticket to SELL", async () => {
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
   const store = createStore<AppState>(emptyApp());
   const root = document.createElement("div");
   document.body.appendChild(root);
@@ -608,6 +609,8 @@ test("zero quote defaults the ticket to SELL", async () => {
   await flush();
   expect(store.read().ticket.isBid).toBe(false);
   expect(root.querySelector("[data-act=place]")?.textContent).toMatch(/SELL/);
+  expect(err.mock.calls.some((c) => c.some((a) => String(a).includes("[store] update during view")))).toBe(false);
+  err.mockRestore();
   root.remove();
 });
 
@@ -648,6 +651,88 @@ test("focused qty stepper updates the visible input", async () => {
   });
   await flush();
   expect(root.querySelector<HTMLInputElement>("[data-field=qty]")!.value).toBe("7.5");
+  root.remove();
+});
+
+test("price and qty inputs keep node identity across book and stepper updates", async () => {
+  const { root, store, book } = liveTicket({ n: 0 });
+  await flush();
+  const price = root.querySelector("[data-field=price]");
+  const qty = root.querySelector("[data-field=qty]");
+  store.update((s) => {
+    s.book.snapshot = { ...book, latestLedger: book.latestLedger + 1 };
+  });
+  await flush();
+  expect(root.querySelector("[data-field=price]")).toBe(price);
+  expect(root.querySelector("[data-field=qty]")).toBe(qty);
+  root.querySelector<HTMLButtonElement>("[data-act=price-inc]")!.click();
+  await flush();
+  expect(root.querySelector("[data-field=price]")).toBe(price);
+  expect(root.querySelector("[data-field=qty]")).toBe(qty);
+  root.remove();
+});
+
+test("place button keeps node identity across a book update", async () => {
+  const { root, store, book } = liveTicket({ n: 0 });
+  await flush();
+  const place = root.querySelector("[data-act=place]");
+  expect(place).toBeTruthy();
+  store.update((s) => {
+    s.book.snapshot = { ...book, latestLedger: book.latestLedger + 1 };
+  });
+  await flush();
+  expect(root.querySelector("[data-act=place]")).toBe(place);
+  root.remove();
+});
+
+test("focused place button stays focused across a book update", async () => {
+  const { root, store, book } = liveTicket({ n: 0 });
+  await flush();
+  const place = root.querySelector<HTMLButtonElement>("[data-act=place]")!;
+  place.focus();
+  expect(document.activeElement).toBe(place);
+  store.update((s) => {
+    s.book.snapshot = { ...book, latestLedger: book.latestLedger + 1 };
+  });
+  await flush();
+  expect(document.activeElement).toBe(place);
+  expect(root.querySelector("[data-act=place]")).toBe(place);
+  root.remove();
+});
+
+test("book update leaves focused qty selection and value", async () => {
+  const { root, store, book } = liveTicket({ n: 0 });
+  await flush();
+  const qty = root.querySelector<HTMLInputElement>("[data-field=qty]")!;
+  qty.focus();
+  qty.setSelectionRange(0, qty.value.length);
+  const start = qty.selectionStart;
+  const end = qty.selectionEnd;
+  const value = qty.value;
+  store.update((s) => {
+    s.book.snapshot = { ...book, latestLedger: book.latestLedger + 1 };
+  });
+  await flush();
+  expect(document.activeElement).toBe(qty);
+  expect(qty.selectionStart).toBe(start);
+  expect(qty.selectionEnd).toBe(end);
+  expect(qty.value).toBe(value);
+  root.remove();
+});
+
+test("qty-inc during composition defers the value write", async () => {
+  const { root, store } = liveTicket({ n: 0 });
+  await flush();
+  const qty = root.querySelector<HTMLInputElement>("[data-field=qty]")!;
+  qty.focus();
+  const before = qty.value;
+  qty.dispatchEvent(new Event("compositionstart", { bubbles: true }));
+  root.querySelector<HTMLButtonElement>("[data-act=qty-inc]")!.click();
+  await flush();
+  expect(qty.value).toBe(before);
+  qty.dispatchEvent(new Event("compositionend", { bubbles: true }));
+  await flush();
+  expect(qty.value).toBe(store.read().ticket.qtyStr);
   root.remove();
 });
 
@@ -1162,3 +1247,45 @@ test("waitAccountExists drops a stale identity's account after a switch", async 
     globalThis.fetch = origFetch;
   }
 }, 10000);
+
+test("wallet ledger refresh reads the account once per ledger", async () => {
+  document.body.innerHTML = `<aside id="wallet"></aside>`;
+  const store = createStore<AppState>(emptyApp());
+  let accounts = 0;
+  const rpc = stubRpc({ n: 0 });
+  rpc.getLedgerEntries = (async (...keys: unknown[]) => {
+    const want = accountLedgerKey(testId.publicKey).toXDR("base64");
+    const hit = keys.some((k) => {
+      if (k && typeof k === "object" && typeof (k as { toXDR?: unknown }).toXDR === "function") {
+        return (k as { toXDR: (fmt: string) => string }).toXDR("base64") === want;
+      }
+      return false;
+    });
+    if (hit) accounts += 1;
+    return { entries: [] };
+  }) as unknown as Rpc["getLedgerEntries"];
+  mountWallet({
+    store,
+    el: document.getElementById("wallet")!,
+    rpc,
+    getMarket: () => 0,
+    onRefresh: () => {},
+  });
+  await flush();
+  accounts = 0;
+  const book = namedBook();
+  store.update((s) => {
+    s.wallet.booted = true;
+    s.wallet.enabled = true;
+    s.wallet.active = testId;
+    s.wallet.identities = [testId];
+    s.book.snapshot = { ...book, latestLedger: 10 };
+  });
+  await flush(20);
+  expect(accounts).toBe(1);
+  store.update((s) => {
+    s.book.snapshot = { ...s.book.snapshot!, latestLedger: 10 };
+  });
+  await flush(20);
+  expect(accounts).toBe(1);
+});
