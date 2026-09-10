@@ -4,9 +4,8 @@ import { type LedgerKeyWrap } from "../keys";
 export const MAX_KEYS = 200;
 
 export type RpcLedgerEntry = {
-  key?: string | { toXDR: (fmt: string) => string };
+  key?: string;
   xdr?: string;
-  val?: string | StellarSdk.xdr.LedgerEntryData;
   liveUntilLedgerSeq?: number;
 };
 
@@ -185,7 +184,5 @@ export async function fetchEntries(rpc: Rpc, keys: LedgerKeyWrap[]): Promise<{ e
 }
 
 export function entryKeyB64(entry: RpcLedgerEntry): string | null {
-  if (typeof entry.key === "string") return entry.key;
-  if (entry.key && typeof entry.key.toXDR === "function") return entry.key.toXDR("base64");
-  return null;
+  return entry.key ?? null;
 }

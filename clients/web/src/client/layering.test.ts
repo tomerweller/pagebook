@@ -28,10 +28,11 @@ function resolveRel(fromFile: string, spec: string): string {
   return out.join("/");
 }
 
-function importSpecs(src: string): string[] {
+export function importSpecs(src: string): string[] {
   const specs: string[] = [];
   for (const m of src.matchAll(/\bfrom\s+["']([^"']+)["']/g)) specs.push(m[1]);
   for (const m of src.matchAll(/^import\s+["']([^"']+)["']/gm)) specs.push(m[1]);
+  for (const m of src.matchAll(/\bimport\(\s*["']([^"']+)["']\s*\)/g)) specs.push(m[1]);
   return specs;
 }
 
@@ -49,7 +50,12 @@ function forbiddenHit(resolved: string): string | null {
   return null;
 }
 
+test("importSpecs extracts dynamic import specifiers", () => {
+  expect(importSpecs(`const m = import("../wallet/pane");`)).toContain("../wallet/pane");
+});
+
 test("client and engine do not import browser, demo, book, or ops", () => {
+  expect(Object.keys(scanned).length).toBeGreaterThanOrEqual(10);
   const violations: string[] = [];
   for (const [key, src] of Object.entries(scanned)) {
     if (key.endsWith(".test.ts")) continue;
