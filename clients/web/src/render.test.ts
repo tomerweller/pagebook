@@ -896,7 +896,10 @@ test("identity switch drops the previous identity's ticket preview", async () =>
   expect(store.read().ticket.preview.kind).toBe("idle");
 });
 
-test("place log stays on the ticket after an identity switch while ownHashes does not take the hash", async () => {
+async function startPlaceSubmit(): Promise<{
+  store: ReturnType<typeof createStore<AppState>>;
+  placeD: ReturnType<typeof deferred<{ kind: "ok"; hash: string }>>;
+}> {
   const placeD = deferred<{ kind: "ok"; hash: string }>();
   let placeCalled = false;
   const engine: TicketEngine = {
@@ -959,6 +962,11 @@ test("place log stays on the ticket after an identity switch while ownHashes doe
   place!.click();
   for (let i = 0; i < 20 && !placeCalled; i++) await Promise.resolve();
   expect(placeCalled).toBe(true);
+  return { store, placeD };
+}
+
+test("place log stays on the ticket after an identity switch while ownHashes does not take the hash", async () => {
+  const { store, placeD } = await startPlaceSubmit();
   const sel = document.querySelector<HTMLSelectElement>("[data-act=switch]");
   expect(sel).toBeTruthy();
   sel!.value = otherId.name;
@@ -969,6 +977,14 @@ test("place log stays on the ticket after an identity switch while ownHashes doe
   for (let i = 0; i < 20 && store.read().wallet.log.length === 0; i++) await Promise.resolve();
   expect(store.read().wallet.log.some((e) => e.text === "place bid 50")).toBe(true);
   expect(store.read().wallet.ownHashes.has("deadbeef")).toBe(false);
+});
+
+test("place hash enters ownHashes when the taker is still the active identity", async () => {
+  const { store, placeD } = await startPlaceSubmit();
+  placeD.resolve({ kind: "ok", hash: "cafebabe" });
+  for (let i = 0; i < 20 && store.read().wallet.log.length === 0; i++) await Promise.resolve();
+  expect(store.read().wallet.log.some((e) => e.text === "place bid 50")).toBe(true);
+  expect(store.read().wallet.ownHashes.has("cafebabe")).toBe(true);
 });
 
 function memoryStorage(raw?: string) {
