@@ -6,10 +6,14 @@ export type KeyFn = () => unknown;
 const MAX_PASSES = 10;
 const MUT = new Set(["add", "delete", "clear", "unshift", "push", "pop", "shift", "splice", "sort", "reverse"]);
 
+type Entry = { name: string; fn: RenderFn; keyFn?: KeyFn; lastKey?: unknown; keyed: boolean };
+
 export type Store<S> = {
+  /** Live state. Read-only; do not mutate. Only `update` bumps versions. */
   read(): S;
   update(fn: (s: S) => void): void;
   register(name: string, fn: RenderFn, keyFn?: KeyFn): void;
+  subscribe(name: string, fn: RenderFn, keyFn?: KeyFn): void;
   renderAll(): void;
 };
 
@@ -42,12 +46,14 @@ function wrap(value: unknown, touch: () => void): unknown {
 
 export function createStore<S>(initial: S): Store<S> {
   const state = initial;
-  const views: { name: string; fn: RenderFn; keyFn?: KeyFn; lastKey?: unknown; keyed: boolean }[] = [];
+  const effects: Entry[] = [];
+  const views: Entry[] = [];
   let scheduled = false;
   let pass = 0;
   let drain = 0;
+  let rendering: string | null = null;
 
-  function runView(v: (typeof views)[number]): void {
+  function runEntry(v: Entry): void {
     if (v.keyFn) {
       const key = v.keyFn();
       if (v.keyed && Object.is(key, v.lastKey)) {
@@ -62,17 +68,25 @@ export function createStore<S>(initial: S): Store<S> {
     v.fn();
   }
 
-  function renderAll(): void {
-    pass += 1;
-    if (debugRender()) console.info(`[render] pass ${pass}`);
-    for (const v of views) {
+  function runPhase(entries: Entry[], asView: boolean): void {
+    for (const v of entries) {
       try {
-        runView(v);
+        if (asView) rendering = v.name;
+        runEntry(v);
       } catch (e) {
         if (debugRender()) throw e;
         console.error(`[render] ${v.name}`, e);
+      } finally {
+        if (asView) rendering = null;
       }
     }
+  }
+
+  function renderAll(): void {
+    pass += 1;
+    if (debugRender()) console.info(`[render] pass ${pass}`);
+    runPhase(effects, false);
+    runPhase(views, true);
   }
 
   function schedule(): void {
@@ -96,11 +110,15 @@ export function createStore<S>(initial: S): Store<S> {
   return {
     read: () => state,
     update(fn) {
+      if (rendering) throw new Error(`[store] update during view ${rendering}`);
       const versions = (state as { versions?: Record<string, number> }).versions;
       const touched = new Set<string>();
       if (!versions) {
-        fn(state);
-        schedule();
+        try {
+          fn(state);
+        } finally {
+          schedule();
+        }
         return;
       }
       const proxy = new Proxy(state as object, {
@@ -117,12 +135,18 @@ export function createStore<S>(initial: S): Store<S> {
           return Reflect.set(target, prop, next);
         },
       }) as S;
-      fn(proxy);
-      for (const k of touched) versions[k] = (versions[k] ?? 0) + 1;
-      schedule();
+      try {
+        fn(proxy);
+      } finally {
+        for (const k of touched) versions[k] = (versions[k] ?? 0) + 1;
+        schedule();
+      }
     },
     register(name, fn, keyFn) {
       views.push({ name, fn, keyFn, keyed: false });
+    },
+    subscribe(name, fn, keyFn) {
+      effects.push({ name, fn, keyFn, keyed: false });
     },
     renderAll,
   };
