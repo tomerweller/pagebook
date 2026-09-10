@@ -1,5 +1,5 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
-import type { BookEvent, BookSnapshot, MarketInfo, Rpc } from "../book";
+import { entryKeyB64, type BookEvent, type BookSnapshot, type MarketInfo, type Rpc, type RpcLedgerEntry } from "../book";
 import { formatAtoms, formatInt } from "../decode";
 import { accessOf, addrToHex } from "../engine/clientKeys";
 import { keysForReplace, MAX_REPLACE_BATCH } from "../engine/pad";
@@ -28,7 +28,8 @@ import {
 } from "./units";
 
 const STORAGE_KEY = "pagebook.orders.v1";
-const MAX_ROWS = 20;
+const ORDER_ENTRY_BATCH = 200;
+const ORDER_VIEW_CONCURRENCY = 4;
 export const ARCHIVE_RENT_STROOPS = 1_100_000n;
 
 export type OpenOrder = {
@@ -41,8 +42,19 @@ export type OpenOrder = {
   generation: number;
   seq: number;
   archived: boolean;
+  unavailable?: boolean;
   restedLedger?: number;
 };
+
+export type OrderRead =
+  | { kind: "found"; order: OpenOrder }
+  | { kind: "archived"; order: OpenOrder }
+  | { kind: "absent" }
+  | { kind: "unavailable"; reason: string };
+
+export type EntryStatus = "absent" | "live" | "archived";
+
+export type EntryLookup = { kind: "ok"; status: EntryStatus } | { kind: "unavailable"; reason: string };
 
 export type TokenDelta = { base: bigint; quote: bigint };
 
@@ -152,6 +164,62 @@ export function isArchivedEntry(liveUntil: number | undefined, latestLedger: num
   return liveUntil != null && liveUntil > 0 && liveUntil < latestLedger;
 }
 
+export function classifyOrderEntry(entry: RpcLedgerEntry | undefined, latestLedger: number): EntryStatus {
+  if (!entry) return "absent";
+  return isArchivedEntry(entry.liveUntilLedgerSeq, latestLedger) ? "archived" : "live";
+}
+
+function failReason(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+async function mapBounded<T, U>(items: T[], limit: number, fn: (item: T) => Promise<U>): Promise<U[]> {
+  const out: U[] = new Array(items.length);
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const i = next;
+      next += 1;
+      out[i] = await fn(items[i]);
+    }
+  }
+  const n = Math.min(limit, items.length);
+  const running: Promise<void>[] = [];
+  for (let w = 0; w < n; w++) running.push(worker());
+  await Promise.all(running);
+  return out;
+}
+
+export async function readOrderEntries(
+  rpc: Rpc,
+  contract: string,
+  market: number,
+  owner: string,
+  nonces: bigint[],
+): Promise<Map<string, EntryLookup>> {
+  const out = new Map<string, EntryLookup>();
+  for (let i = 0; i < nonces.length; i += ORDER_ENTRY_BATCH) {
+    const chunk = nonces.slice(i, i + ORDER_ENTRY_BATCH);
+    const keys = chunk.map((n) => orderKey(contract, market, owner, n));
+    try {
+      const res = await rpc.getLedgerEntries(...keys);
+      const byKey = new Map<string, RpcLedgerEntry>();
+      for (const e of res.entries ?? []) {
+        const k = entryKeyB64(e);
+        if (k) byKey.set(k, e);
+      }
+      const latest = res.latestLedger ?? 0;
+      for (let j = 0; j < chunk.length; j++) {
+        out.set(chunk[j].toString(), { kind: "ok", status: classifyOrderEntry(byKey.get(keys[j].base64), latest) });
+      }
+    } catch (e) {
+      const reason = failReason(e);
+      for (const n of chunk) out.set(n.toString(), { kind: "unavailable", reason });
+    }
+  }
+  return out;
+}
+
 export function isStaleGeneration(orderGeneration: number, levelGeneration: number | undefined): boolean {
   return levelGeneration != null && levelGeneration > orderGeneration;
 }
@@ -194,7 +262,7 @@ export function batchRequoteTicks(orders: OpenOrder[], mid: number, offset: numb
   }));
 }
 
-export async function readOrderView(
+export async function simulateOrderView(
   rpc: Rpc,
   contract: string,
   source: string,
@@ -202,11 +270,10 @@ export async function readOrderView(
   market: number,
   owner: string,
   nonce: bigint,
-): Promise<OpenOrder | null> {
-  const live = await rpc.getLedgerEntries(orderKey(contract, market, owner, nonce));
-  const entry = live.entries?.[0];
-  if (!entry) return null;
-  const archived = isArchivedEntry(entry.liveUntilLedgerSeq, live.latestLedger ?? 0);
+  archived: boolean,
+): Promise<OrderRead> {
+  const fail = (reason: string): OrderRead =>
+    archived ? { kind: "archived", order: placeholderArchived(nonce) } : { kind: "unavailable", reason };
   try {
     const c = new StellarSdk.Contract(contract);
     const account = new StellarSdk.Account(source, sequence);
@@ -221,22 +288,41 @@ export async function readOrderView(
       .setTimeout(30)
       .build();
     const sim = await simulate(rpc, tx.toXDR());
-    if (sim.error || !sim.results?.[0]?.xdr) return archived ? placeholderArchived(nonce) : null;
-    const native = StellarSdk.scValToNative(StellarSdk.xdr.ScVal.fromXDR(sim.results[0].xdr, "base64")) as Record<string, unknown>;
-    return {
+    if (sim.error || !sim.results?.[0]?.xdr) return fail(sim.error || "simulation returned no result");
+    const native: unknown = StellarSdk.scValToNative(StellarSdk.xdr.ScVal.fromXDR(sim.results[0].xdr, "base64"));
+    if (!native || typeof native !== "object") return fail("decoded value is not an object");
+    const rec = native as Record<string, unknown>;
+    const order: OpenOrder = {
       nonce,
-      isBid: !!native.is_bid,
-      tick: Number(native.tick),
-      qtyLots: BigInt(String(native.qty_lots ?? 0)),
-      filledLots: BigInt(String(native.filled_lots ?? 0)),
-      refundLots: BigInt(String(native.refund_lots ?? 0)),
-      generation: Number(native.generation ?? 0),
-      seq: Number(native.seq ?? 0),
+      isBid: !!rec.is_bid,
+      tick: Number(rec.tick),
+      qtyLots: BigInt(String(rec.qty_lots ?? 0)),
+      filledLots: BigInt(String(rec.filled_lots ?? 0)),
+      refundLots: BigInt(String(rec.refund_lots ?? 0)),
+      generation: Number(rec.generation ?? 0),
+      seq: Number(rec.seq ?? 0),
       archived,
     };
-  } catch {
-    return archived ? placeholderArchived(nonce) : null;
+    return { kind: archived ? "archived" : "found", order };
+  } catch (e) {
+    return fail(failReason(e));
   }
+}
+
+export async function readOrderView(
+  rpc: Rpc,
+  contract: string,
+  source: string,
+  sequence: string,
+  market: number,
+  owner: string,
+  nonce: bigint,
+): Promise<OrderRead> {
+  const lookups = await readOrderEntries(rpc, contract, market, owner, [nonce]);
+  const lookup = lookups.get(nonce.toString()) ?? { kind: "unavailable" as const, reason: "missing lookup" };
+  if (lookup.kind === "unavailable") return lookup;
+  if (lookup.status === "absent") return { kind: "absent" };
+  return simulateOrderView(rpc, contract, source, sequence, market, owner, nonce, lookup.status === "archived");
 }
 
 function placeholderArchived(nonce: bigint): OpenOrder {
@@ -262,16 +348,54 @@ export async function loadOpenOrders(
   owner: string,
   extraNonces: bigint[],
   events: BookEvent[] = [],
+  previous: OpenOrder[] = [],
 ): Promise<OpenOrder[]> {
-  const set = new Set<string>([...loadNonces(owner, contract, market), ...extraNonces].map((n) => n.toString()));
+  const seen = new Set<string>();
+  const nonces: bigint[] = [];
+  for (const n of [...loadNonces(owner, contract, market), ...extraNonces]) {
+    const k = n.toString();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    nonces.push(n);
+  }
+  const lookups = await readOrderEntries(rpc, contract, market, owner, nonces);
+  const queued: { nonce: bigint; archived: boolean }[] = [];
+  for (const n of nonces) {
+    const lookup = lookups.get(n.toString());
+    if (!lookup || lookup.kind === "unavailable") continue;
+    if (lookup.status === "absent") {
+      dropNonce(owner, contract, market, n);
+      continue;
+    }
+    queued.push({ nonce: n, archived: lookup.status === "archived" });
+  }
+  const views = await mapBounded(queued, ORDER_VIEW_CONCURRENCY, (item) =>
+    simulateOrderView(rpc, contract, source, sequence, market, owner, item.nonce, item.archived),
+  );
+  const viewOf = new Map<string, OrderRead>();
+  for (let i = 0; i < queued.length; i++) viewOf.set(queued[i].nonce.toString(), views[i]);
+  const prevOf = new Map(previous.map((r) => [r.nonce.toString(), r]));
   const rows: OpenOrder[] = [];
-  for (const n of [...set].map((s) => BigInt(s))) {
-    if (rows.length >= MAX_ROWS) break;
-    const info = await readOrderView(rpc, contract, source, sequence, market, owner, n);
-    if (info) {
-      info.restedLedger = restedLedgerOf(events, owner, n);
-      rows.push(info);
-    } else dropNonce(owner, contract, market, n);
+  for (const n of nonces) {
+    const key = n.toString();
+    const lookup = lookups.get(key);
+    if (!lookup || lookup.kind === "unavailable" || lookup.status === "absent") {
+      if (lookup?.kind === "unavailable" || !lookup) {
+        const prev = prevOf.get(key);
+        if (prev) rows.push({ ...prev, unavailable: true });
+      }
+      continue;
+    }
+    const view = viewOf.get(key);
+    if (!view || view.kind === "unavailable") {
+      const prev = prevOf.get(key);
+      if (prev) rows.push({ ...prev, unavailable: true });
+      continue;
+    }
+    if (view.kind === "found" || view.kind === "archived") {
+      view.order.restedLedger = restedLedgerOf(events, owner, n);
+      rows.push(view.order);
+    }
   }
   return rows;
 }
@@ -461,7 +585,7 @@ export function createOrders(opts: {
           <label class="order-check"><input type="checkbox" data-act="sel" data-nonce="${key}" ${checked} /></label>
           <div class="order-main">
             <div>${esc(side)} ${r.tick}${human ? ` · ${esc(human)}` : ""} · ${esc(countLabel(r.qtyLots, "lot"))}</div>
-            <div class="wallet-muted">filled <span data-live="filled">${esc(formatInt(r.filledLots))}</span> · refund <span data-live="refund">${esc(formatInt(r.refundLots))}</span>${age != null ? ` · <span data-live="age">${esc(countLabel(age, "ledger"))}</span>` : ""}${r.archived ? " · archived" : ""}</div>
+            <div class="wallet-muted">filled <span data-live="filled">${esc(formatInt(r.filledLots))}</span> · refund <span data-live="refund">${esc(formatInt(r.refundLots))}</span>${age != null ? ` · <span data-live="age">${esc(countLabel(age, "ledger"))}</span>` : ""}${r.archived ? " · archived" : ""}${r.unavailable ? " · read failed, showing last known state" : ""}</div>
             ${stale ? `<p class="wallet-muted">queue swept since this order rested — settle will return filled + refund</p>` : ""}
             <div class="wallet-actions">
               <button type="button" data-act="settle-ask" data-nonce="${key}">settle</button>

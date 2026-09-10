@@ -218,3 +218,21 @@ test("disabled wallet drops an in-flight balance load for the same identity", as
   expect(store.read().versions.wallet).toBe(afterDisable + 1);
   expect(store.read().wallet.account).toBeNull();
 });
+
+test("refreshOrders passes the store's current openOrders as previous", async () => {
+  const store = createStore<AppState>(emptyApp());
+  liveWallet(store, idA, 0);
+  const existing = [row(5)];
+  store.update((s) => {
+    s.wallet.openOrders = existing;
+  });
+  const gate = createRequestGate<OrderInput>();
+  let seen: OpenOrder[] | undefined;
+  await refreshOrders(store, gate, {
+    loadOpenOrders: async (_c, _s, _seq, _m, _o, _e, _ev, previous) => {
+      seen = previous;
+      return existing;
+    },
+  });
+  expect(seen).toBe(existing);
+});

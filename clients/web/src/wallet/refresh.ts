@@ -17,6 +17,7 @@ export type OrderRefreshDeps = {
     owner: string,
     extraNonces: bigint[],
     events: BookEvent[],
+    previous: OpenOrder[],
   ) => Promise<OpenOrder[]>;
 };
 
@@ -44,6 +45,7 @@ export async function refreshOrders(
   }
   const events = state.book.eventState.events;
   const extra = sessionRestedNonces(events, id.publicKey);
+  const previous = state.wallet.openOrders;
   const token = gate.begin(scopeOf(state), { sequence: w.account.sequence.toString() });
   const openOrders = await deps.loadOpenOrders(
     token.contract,
@@ -53,6 +55,7 @@ export async function refreshOrders(
     id.publicKey,
     extra,
     events,
+    previous,
   );
   if (!gate.accepts(token, scopeOf(store.read()))) return;
   store.update((s) => {

@@ -298,8 +298,8 @@ export function mountWallet(opts: {
 
   async function refreshOrders(): Promise<void> {
     await pullOrders(app, orderGate, {
-      loadOpenOrders: (contract, source, sequence, market, owner, extraNonces, events) =>
-        loadOpenOrders(opts.rpc, contract, source, sequence, market, owner, extraNonces, events),
+      loadOpenOrders: (contract, source, sequence, market, owner, extraNonces, events, previous) =>
+        loadOpenOrders(opts.rpc, contract, source, sequence, market, owner, extraNonces, events, previous),
     });
   }
 
