@@ -14,11 +14,10 @@ experiments. It is not a finished exchange, SDK, indexer, or wallet
 integration.
 
 The quickest way in is the executive explainer at
-[tomerweller.com/pagebook](https://tomerweller.com/pagebook/). The deeper
-visual companion to the specification is at
-[tomerweller.com/pagebook/design.html](https://tomerweller.com/pagebook/design.html):
-the design in pictures and worked numbers, with each section linking to the
-matching part of the architecture document.
+[tomerweller.com/pagebook/explainer](https://tomerweller.com/pagebook/explainer/).
+The web client, a live view of the testnet market with an in-page wallet, is
+the site's front page at [tomerweller.com/pagebook](https://tomerweller.com/pagebook/).
+The full specification is [docs/04-architecture.md](docs/04-architecture.md).
 
 ## The problem
 
@@ -140,7 +139,7 @@ Contract `CAMHFJ32KHIJJIKCE35SRL37JES4QAWLFVLEAYCWVJGP2NZHU47F56F4` is deployed
 on the Stellar testnet (ADR-037). Its one market, market 0, trades native XLM
 against Circle's testnet USDC (10-XLM lots, 0.00001 USDC ticks, 5 bps), with a
 market maker quoting a 20-level ladder per side off the spot XLM-USD price
-([client view](https://tomerweller.com/pagebook/client/), ADR-026). The earlier
+([client view](https://tomerweller.com/pagebook/), ADR-026). The earlier
 deployments `CB6I…DAZB` (ADR-036) and `CDX3…U2RO` (which also carried a
 `PBA`/`PBB` scratch market) are wound down and no longer kept alive.
 
@@ -169,13 +168,12 @@ same ADR).
 | `clients/web/ops/` | Live ops tooling on the web engine: market maker, trader, watchdog, soak, stress, resource sampler (ADR-031) |
 | `tools/soak/`, `tools/stress/` | Frozen import targets for `tools/research/`; superseded by `clients/web/ops/` (ADR-031) |
 | `tools/research/` | Frozen measurement instruments behind ADR-025 to ADR-028 |
-| `clients/web/` | TypeScript trading client (Vite): market view plus in-page testnet wallet, published at [tomerweller.com/pagebook/client](https://tomerweller.com/pagebook/client/) |
+| `clients/web/` | TypeScript trading client (Vite): market view plus in-page testnet wallet, published at [tomerweller.com/pagebook](https://tomerweller.com/pagebook/) |
 | `docs/03-soroban-constraints.md` | Soroban storage, footprint, and resource background |
 | `docs/04-architecture.md` | Full technical specification |
 | `docs/07-classic-dex-comparison.md` | Comparison with the classic Stellar DEX |
 | `docs/09-resource-utilization.md` | Measured declared-vs-metered resource ranges per invocation, from live testnet traffic |
-| `docs/index.html` | Executive explainer, the site's front page, rendered at [tomerweller.com/pagebook](https://tomerweller.com/pagebook/) |
-| `docs/design.html` | Visual companion to the technical specification, rendered at [tomerweller.com/pagebook/design.html](https://tomerweller.com/pagebook/design.html) |
+| `docs/explainer/index.html` | Executive explainer, rendered at [tomerweller.com/pagebook/explainer](https://tomerweller.com/pagebook/explainer/) |
 
 ## Build and test
 
@@ -196,9 +194,8 @@ make lint
 
 - [Architecture](docs/04-architecture.md): storage, matching, settlement,
   events, footprints, fees, and archival behavior
-- [Executive explainer](https://tomerweller.com/pagebook/): the design and its measured costs in brief (source: `docs/index.html`)
-- [Architecture explainer](https://tomerweller.com/pagebook/design.html): diagrams and worked examples (source: `docs/design.html`)
-- [Market client](https://tomerweller.com/pagebook/client/): live book and in-page testnet wallet (source: `clients/web/`)
+- [Executive explainer](https://tomerweller.com/pagebook/explainer/): the design and its measured costs in brief (source: `docs/explainer/index.html`)
+- [Market client](https://tomerweller.com/pagebook/): live book and in-page testnet wallet, the site's front page (source: `clients/web/`)
 - [Web client decision](docs/decisions/029-web-client.md): embedded wallet, fixture ports, Pages workflow, soak tally
 - [Soroban constraints](docs/03-soroban-constraints.md): the runtime limits
   behind the design

@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig(({ command }) => ({
-  base: command === "build" ? "/pagebook/client/" : "/",
+  base: command === "build" ? "/pagebook/" : "/",
   test: {
     include: ["src/**/*.test.ts", "ops/**/*.test.ts"],
     setupFiles: ["./test/setup.ts"],

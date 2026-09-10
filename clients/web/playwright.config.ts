@@ -11,7 +11,7 @@ export default defineConfig({
   },
   webServer: {
     command:
-      "rm -rf /tmp/pbe2e/pagebook/client && mkdir -p /tmp/pbe2e/pagebook && cp -r dist /tmp/pbe2e/pagebook/client && python3 -m http.server 4173 --bind 127.0.0.1 --directory /tmp/pbe2e",
+      "rm -rf /tmp/pbe2e/pagebook && mkdir -p /tmp/pbe2e && cp -r dist /tmp/pbe2e/pagebook && python3 -m http.server 4173 --bind 127.0.0.1 --directory /tmp/pbe2e",
     port: 4173,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,

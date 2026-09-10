@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PageBook</title>
 <meta name="description" content="An executive explainer of PageBook, a Soroban-native order book: the concessions it accepts, the data structures behind it, and measured costs on testnet.">
-<link rel="icon" type="image/png" sizes="192x192" href="client/icon-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="../icon-192.png">
 <style>
   :root {
     --bg: #FAF8F3;
@@ -290,7 +290,7 @@
 <header class="masthead">
   <h1>PageBook</h1>
   <p class="sub">A good-enough order book for Soroban: a contract that stores, matches, and settles limit orders on-chain while keeping every transaction's footprint predictable.</p>
-  <p class="assume">This is a high-level explainer that assumes familiarity with order books, SDEX, and basic Soroban concepts. Examples use the XLM/USDC market, with prices in USDC per XLM. The <a href="client/">web client</a> shows the live testnet book and trades on it with an in-page disposable wallet.</p>
+  <p class="assume">This is a high-level explainer that assumes familiarity with order books, SDEX, and basic Soroban concepts. Examples use the XLM/USDC market, with prices in USDC per XLM. The <a href="../">web client</a> shows the live testnet book and trades on it with an in-page disposable wallet.</p>
   <p class="assume">Little here is novel: the design leans heavily on on-chain CLOBs built elsewhere, including Serum, Phoenix, Manifest, DeepBook, Econia, and the LFJ Liquidity Book, surveyed in the <a href="https://github.com/tomerweller/pagebook/blob/main/docs/01-prior-art.md">prior-art notes</a>.</p>
 </header>
 
@@ -739,7 +739,7 @@
 
 <section id="results">
   <h2>Results</h2>
-  <p>A draft implementation is live on testnet. The <a href="https://tomerweller.com/pagebook/client/">web client</a> reads a PageBook market directly from Soroban RPC — best bid and ask, depth per side, recent trades, the market's vault and fee balances — and trades on it with an in-page disposable testnet wallet.</p>
+  <p>A draft implementation is live on testnet. The <a href="https://tomerweller.com/pagebook/">web client</a> reads a PageBook market directly from Soroban RPC — best bid and ask, depth per side, recent trades, the market's vault and fee balances — and trades on it with an in-page disposable testnet wallet.</p>
   <p>Each row below is a constructed worst-or-typical shape measured by the repository's resource gates: entries and write bytes metered by the SDK host against the mainnet cost snapshot, with the fee estimate from the architecture's per-operation table (execution plus any rent the shape creates). The maximum take crosses the full 32-level limit in one call. Persistent-state rent dominates wherever an entry is created.</p>
   <div class="tablewrap">
     <table class="results">
@@ -817,7 +817,7 @@
 
 <footer>
   <p>PageBook &#183; measured on protocol 27 testnet.</p>
-  <p>Companion to the full <a href="https://tomerweller.com/pagebook/design.html">PageBook design notes</a> and the <a href="https://tomerweller.com/pagebook/client/">web client</a>.</p>
+  <p>Companion to the full <a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md">PageBook architecture document</a> and the <a href="https://tomerweller.com/pagebook/">web client</a>.</p>
 </footer>
 
 </div>
