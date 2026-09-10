@@ -1,4 +1,6 @@
-import { createRpc, walkDepth, pollEvents, listMarkets, mockSnapshot, type ListedMarket } from "./book";
+import { walkDepth, pollEvents, listMarkets, type ListedMarket } from "./book";
+import { createRpc } from "./client/rpc";
+import { mockSnapshot } from "./demo/mockSnapshot";
 import { emptyBookDomain, registerMarketView, type AppState } from "./view/market";
 import type { UrlOverrides } from "./view/format";
 import { emptyWalletDomain, mountWallet, type WalletHandle } from "./wallet/pane";

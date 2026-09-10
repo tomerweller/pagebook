@@ -1,10 +1,10 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
-import type { Rpc } from "../../src/book";
+import type { Rpc } from "../../src/client/rpc";
 import { parseContractError } from "../../src/engine/errors";
 import { simulate, simulateQuotePlace, type SimResult } from "../../src/engine/quote";
 import type { CrossedLevel } from "../../src/engine/pad";
-import { scvAddr, scvBool, scvU32, scvU64 } from "../../src/engine/submit";
-import { NETWORK_PASSPHRASE } from "../../src/wallet/network";
+import { scvAddr, scvBool, scvU32, scvU64 } from "../../src/engine/op";
+import { NETWORK_PASSPHRASE } from "../../src/client/network";
 
 // The `level` view: `depth` is the length of the level's slot vector, which is
 // also the queue's tail (ADR-037).

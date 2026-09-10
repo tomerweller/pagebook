@@ -1,5 +1,5 @@
 import { ERROR_NAMES } from "../../src/engine/errors";
-import type { EngineResult } from "../../src/engine/submit";
+import type { EngineResult } from "../../src/engine/op";
 
 export const ERR_NAMES: Record<number, string> = { ...ERROR_NAMES };
 

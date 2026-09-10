@@ -10,7 +10,7 @@ import {
   validateTicket,
   XLM_FEE_HEADROOM,
 } from "./ticket";
-import type { MarketInfo } from "../book";
+import type { MarketInfo } from "../client/protocol";
 
 const market: MarketInfo = {
   base: "C".padEnd(56, "A"),

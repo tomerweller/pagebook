@@ -1,15 +1,15 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRpc, fetchLevelCap, type Rpc } from "../src/book";
+import { fetchLevelCap } from "../src/client/protocol";
+import { createRpc, type Rpc } from "../src/client/rpc";
 import { addrToHex } from "../src/engine/clientKeys";
+import { type ClassicToken, type PlaceFlags } from "../src/engine/op";
 import {
   submitPlace,
   submitPostOnlyPlace,
   submitReplace,
   submitReplaceBatch,
   submitSettle,
-  type ClassicToken,
-  type PlaceFlags,
 } from "../src/engine/submit";
 import { parseArgs, type ArgSpec } from "./lib/args";
 import { loadIdentity, type Identity } from "./lib/identity";

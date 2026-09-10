@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRpc, type Rpc } from "../src/book";
+import { createRpc, type Rpc } from "../src/client/rpc";
 import { keyStr, toLedgerKey, type ClientKey } from "../src/engine/clientKeys";
 import { extendKeys, restoreKeys, submitInvocation } from "../src/engine/submit";
 import { instanceKey } from "../src/keys";
@@ -10,7 +10,8 @@ import { parseArgs, type ArgSpec } from "./lib/args";
 import { withTimeout } from "./check";
 import { loadIdentity, type Identity } from "./lib/identity";
 import { openLog, type OpsLog } from "./lib/opslog";
-import { classifyLiveness, sweepPadSizes, tokenHex } from "./lib/padkeys";
+import { classifyLiveness, sweepPadSizes } from "../src/engine/liveness";
+import { tokenHex } from "./lib/padkeys";
 import { outcomeOf } from "./lib/outcomes";
 import { createViews, type Views } from "./lib/views";
 

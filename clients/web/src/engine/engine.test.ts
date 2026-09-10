@@ -4,18 +4,16 @@ import padConformance from "../../../../crates/pagebook-client/fixtures/pad-conf
 import { ERROR_CODE_COUNT, ERROR_CODE_MAX, ERROR_MESSAGES, ERROR_NAMES, hostErrorMessage, parseContractError } from "./errors";
 import { keysForReplace, keysForSettle, pad, restoreMarks, type Quoted } from "./pad";
 import { outcomeOf } from "../../ops/lib/outcomes";
+import { accountLedgerKey, trustlineLedgerKey } from "../client/account";
+import type { Rpc } from "../client/rpc";
+import { classifyFailedTx, classifySubmit, decodePlaceResult } from "./diagnose";
 import {
-  classifyFailedTx,
-  classifySubmit,
-  decodePlaceResult,
   ledgerKeyFromKeyXdr,
   restoreKeys,
   submitInvocation,
   submitPlace,
   submitRestorePreamble,
 } from "./submit";
-import { accountLedgerKey, trustlineLedgerKey } from "../wallet/account";
-import type { Rpc } from "../book";
 import { accessOf, addrToHex, scValKeyName, sortedKeyStrs, type ClientKey, type PlannedLedgerKey } from "./clientKeys";
 import { ck, instanceKey, sacBalanceKey } from "../keys";
 import { DEFAULT_GROWTH, DISK_READ_PER, PER_ADDED, WRITE_BYTES_PER, WRITE_ENTRY_FEE, applyPad, flatWriteBytesPer, perAddedFee, perAddedRoFee, type ApplyPadSizes } from "./txdata";

@@ -1,113 +1,14 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
-import { createRpc, type Rpc } from "../book";
-import { readAccount } from "../wallet/account";
-import { NETWORK_PASSPHRASE } from "../wallet/network";
+import { readAccount } from "../client/account";
+import { NETWORK_PASSPHRASE } from "../client/network";
+import { createRpc, type Rpc } from "../client/rpc";
 import { type Hex32 } from "./clientKeys";
-import {
-  classifyFailedTx,
-  classifySubmit,
-  type ClassicToken,
-  type EngineResult,
-  type PlaceArgParams,
-} from "./op";
+import { chargedFee, classifyFailedTx, classifySubmit, sendFailureText } from "./diagnose";
+import { type ClassicToken, type EngineResult, type PlaceArgParams } from "./op";
 import { type Quoted } from "./pad";
 import { prepareInvocation, type Intent, type PadPolicy, type PrepareRequest } from "./prepare";
 import { simulate } from "./quote";
 import { classicFee, type DeclaredResources } from "./txdata";
-
-export type { Intent, PadPolicy, PrepareRequest };
-export type { DeclaredResources };
-export {
-  ARCHIVED_ENTRY_MSG,
-  archivedFromText,
-  buildPlaceArgs,
-  classifyFailedTx,
-  classifySubmit,
-  extractArchivedKey,
-  scPlaceFlags,
-  scReplaceItem,
-  scvAddr,
-  scvBool,
-  scvU32,
-  scvU64,
-  tokenExtraKeys,
-} from "./op";
-export type {
-  ClassicToken,
-  EngineArchived,
-  EngineBadSeq,
-  EngineBody,
-  EngineFootprint,
-  EngineOk,
-  EnginePhase,
-  EngineResourceLimit,
-  EngineResult,
-  EngineRpc,
-  EngineSorobanInvalid,
-  EngineTimeout,
-  EngineTrapped,
-  EngineTyped,
-  PlaceArgParams,
-  PlaceFlags,
-} from "./op";
-
-export type PlaceReturn = {
-  rested: boolean;
-  filledLots: bigint;
-  quoteAtoms: bigint;
-};
-
-export function decodePlaceResult(metaXdrBase64: string): PlaceReturn {
-  const meta = StellarSdk.xdr.TransactionMeta.fromXDR(metaXdrBase64, "base64");
-  const ret = sorobanReturnValue(meta);
-  if (!ret) throw new Error("no soroban return value");
-  const native = StellarSdk.scValToNative(ret) as unknown;
-  if (!Array.isArray(native) || native.length < 3) throw new Error("place return is not a 3-tuple");
-  return {
-    rested: Boolean(native[0]),
-    filledLots: BigInt(String(native[1])),
-    quoteAtoms: BigInt(String(native[2])),
-  };
-}
-
-function sorobanReturnValue(meta: StellarSdk.xdr.TransactionMeta): StellarSdk.xdr.ScVal | null {
-  const sw = Number(meta.switch());
-  if (sw === 3) {
-    const sm = meta.v3().sorobanMeta();
-    return sm ? sm.returnValue() : null;
-  }
-  if (sw === 4) {
-    const sm = meta.v4().sorobanMeta();
-    return sm ? sm.returnValue() : null;
-  }
-  return null;
-}
-
-function sendFailureText(sent: { status: string; message?: string; errorResultXdr?: string }): string {
-  const parts: string[] = [];
-  if (sent.message) parts.push(sent.message);
-  if (sent.status) parts.push(sent.status);
-  if (sent.errorResultXdr) {
-    parts.push(sent.errorResultXdr);
-    try {
-      const tr = StellarSdk.xdr.TransactionResult.fromXDR(sent.errorResultXdr, "base64");
-      parts.push(tr.result().switch().name);
-    } catch {
-      /* keep the raw xdr */
-    }
-  }
-  return parts.join("\n");
-}
-
-function chargedFee(r: { feeCharged?: number | string; resultXdr?: string }): string | undefined {
-  if (r.feeCharged != null && r.feeCharged !== "") return String(r.feeCharged);
-  if (!r.resultXdr) return undefined;
-  try {
-    return StellarSdk.xdr.TransactionResult.fromXDR(r.resultXdr, "base64").feeCharged().toString();
-  } catch {
-    return undefined;
-  }
-}
 
 async function waitTx(rpc: Rpc, hash: string, invokedContract?: string): Promise<EngineResult> {
   let delay = 400;

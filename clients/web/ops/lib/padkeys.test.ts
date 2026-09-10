@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { ck } from "../../src/keys";
-import { classifyLiveness, sweepPadSizes } from "./padkeys";
+import { classifyLiveness, sweepPadSizes } from "../../src/engine/liveness";
 
 test("classifyLiveness splits live, archived, and nonexistent", () => {
   expect(classifyLiveness(undefined, 100, false)).toBe("nonexistent");
@@ -10,6 +10,18 @@ test("classifyLiveness splits live, archived, and nonexistent", () => {
   expect(classifyLiveness(200, 100, true)).toBe("live");
   expect(classifyLiveness(0, 100, true)).toBe("live");
 });
+
+function liveEntryXdr(contract: string, key: StellarSdk.xdr.LedgerKey): string {
+  return StellarSdk.xdr.LedgerEntryData.contractData(
+    new StellarSdk.xdr.ContractDataEntry({
+      ext: new StellarSdk.xdr.ExtensionPoint(0),
+      contract: new StellarSdk.Address(contract).toScAddress(),
+      key: key.contractData().key(),
+      durability: StellarSdk.xdr.ContractDataDurability.persistent(),
+      val: StellarSdk.xdr.ScVal.scvBytes(new Uint8Array(40)),
+    }),
+  ).toXDR("base64");
+}
 
 test("sweepPadSizes records liveUntil and classifies against latestLedger", async () => {
   const contract = "CDX3WVFY6GV53J3XT53MNPE5HVKAGTCH74W3AWGMI43KUFK5TSXOU2RO";
@@ -20,8 +32,8 @@ test("sweepPadSizes records liveUntil and classifies against latestLedger", asyn
     getLedgerEntries: async () => ({
       latestLedger: 200,
       entries: [
-        { key: live.toXDR("base64"), xdr: StellarSdk.xdr.ScVal.scvVoid().toXDR("base64"), liveUntilLedgerSeq: 500 },
-        { key: archived.toXDR("base64"), xdr: StellarSdk.xdr.ScVal.scvVoid().toXDR("base64"), liveUntilLedgerSeq: 150 },
+        { key: live.toXDR("base64"), xdr: liveEntryXdr(contract, live), liveUntilLedgerSeq: 500 },
+        { key: archived.toXDR("base64"), xdr: liveEntryXdr(contract, archived), liveUntilLedgerSeq: 150 },
       ],
     }),
   };

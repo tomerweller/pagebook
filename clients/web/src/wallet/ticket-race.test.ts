@@ -2,9 +2,10 @@
  * @vitest-environment jsdom
  */
 import { expect, test } from "vitest";
-import { mockSnapshot, type Rpc } from "../book";
+import type { Rpc } from "../client/rpc";
+import { mockSnapshot } from "../demo/mockSnapshot";
+import type { PlaceFlags } from "../engine/op";
 import type { QuoteOpts } from "../engine/quote";
-import type { PlaceFlags } from "../engine/submit";
 import { createStore } from "../store";
 import type { UrlOverrides } from "../view/format";
 import { emptyBookDomain, type AppState } from "../view/market";

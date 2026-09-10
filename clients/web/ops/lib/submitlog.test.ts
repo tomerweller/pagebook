@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { MAX_RESTORES_PER_CYCLE, recordSubmit, runSubmit } from "./submitlog";
-import type { EngineResult } from "../../src/engine/submit";
-import type { Rpc } from "../../src/book";
+import type { Rpc } from "../../src/client/rpc";
+import type { EngineResult } from "../../src/engine/op";
 
 test("runSubmit records a thrown build_error once", async () => {
   const lines: { action: string; outcome: string }[] = [];

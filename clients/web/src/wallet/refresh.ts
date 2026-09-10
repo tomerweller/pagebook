@@ -3,7 +3,7 @@ import { scopeOf, type RequestGate } from "../request";
 import type { Store } from "../store";
 import type { AppState } from "../view/market";
 import { noteFills } from "./awareness";
-import type { AccountState, CreditAsset, TrustlineState } from "./account";
+import type { AccountState, CreditAsset, TrustlineState } from "../client/account";
 import { ownTicksOf, sessionRestedNonces, type OpenOrder } from "./orders";
 
 export type OrderInput = { sequence: string };

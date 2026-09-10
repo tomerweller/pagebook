@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { mockSnapshot } from "../book";
+import { mockSnapshot } from "../demo/mockSnapshot";
 import { closestBeyond, instrumentExtra, noteFills, ordersBeyondWindow, tapeIsOwn } from "./awareness";
 import type { OpenOrder } from "./orders";
 

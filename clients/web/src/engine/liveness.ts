@@ -1,5 +1,6 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
-import type { Rpc } from "../book";
+import { entryDataSize } from "../client/entries";
+import type { Rpc } from "../client/rpc";
 import { scValKeyName, toLedgerKey, type ClientKey } from "./clientKeys";
 import { tokenExtraKeys, type ClassicToken } from "./op";
 import { DEFAULT_GROWTH, type ApplyPadSizes, type KeyLiveness, type PadKeySize } from "./txdata";
@@ -14,25 +15,6 @@ export const CREATE_SIZES: Record<string, number> = {
   BestTick: 200,
   FeeAccrual: 200,
 };
-
-function entryDataSize(entry: { xdr?: string; val?: string | StellarSdk.xdr.LedgerEntryData }): number {
-  const raw = entry.xdr || (typeof entry.val === "string" ? entry.val : null);
-  if (raw) {
-    try {
-      return StellarSdk.xdr.LedgerEntryData.fromXDR(raw, "base64").toXDR().length;
-    } catch {
-      try {
-        return StellarSdk.xdr.LedgerEntry.fromXDR(raw, "base64").data().toXDR().length;
-      } catch {
-        return 0;
-      }
-    }
-  }
-  if (entry.val && typeof entry.val === "object" && "toXDR" in entry.val) {
-    return (entry.val as StellarSdk.xdr.LedgerEntryData).toXDR().length;
-  }
-  return 0;
-}
 
 export function classifyLiveness(liveUntil: number | undefined, latestLedger: number, exists: boolean): KeyLiveness {
   if (!exists) return "nonexistent";

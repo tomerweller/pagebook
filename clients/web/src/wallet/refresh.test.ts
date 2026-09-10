@@ -8,7 +8,7 @@ import type { OpenOrder } from "./orders";
 import { emptyWalletDomain } from "./pane";
 import { emptyTicketDomain } from "./ticket";
 import { refreshBalances, refreshOrders, type OrderInput } from "./refresh";
-import type { AccountState } from "./account";
+import type { AccountState } from "../client/account";
 import { deriveFromSeed } from "./keystore";
 
 const emptyOv: UrlOverrides = { baseSym: null, quoteSym: null, baseDec: null, quoteDec: null };
