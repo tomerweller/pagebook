@@ -5,6 +5,10 @@ maker), `trader.ts` (traffic generator), `check.ts` (watchdog), `soak.ts`,
 `stress.ts`, `resources.ts`. Run locally with `npm run ops:<name>` from
 `clients/web`, or in containers with `deploy/`.
 
+The bots depend on two layers inside the web package: `src/client/` (RPC
+transport, ledger-entry decoding, network constants, account reads, protocol
+codecs) and `src/engine/` (key planning, padding, prepare, submit).
+
 ## Identities and secrets
 
 A bot resolves its identity secret from `PB_SECRET_<NAME>` (dashes become
