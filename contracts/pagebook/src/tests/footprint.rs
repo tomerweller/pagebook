@@ -422,7 +422,7 @@ fn bound_set_market_caps() {
     let h = setup();
     let (_, fp) = footprint_of(&h.env, &h.id, || {
         h.client()
-            .set_market_caps(&h.market, &16, &32, &10, &1, &1_000_000, &64)
+            .set_market_caps(&h.market, &16, &10, &1, &1_000_000, &64)
     });
     // calibrated 5 / 2 / 652.
     assert_within("set_market_caps", &fp, 6, 3, 596 + 256);

@@ -1,6 +1,6 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
-import type { Rpc } from "../book";
-import { NETWORK_PASSPHRASE } from "../wallet/network";
+import { NETWORK_PASSPHRASE } from "../client/network";
+import type { Rpc } from "../client/rpc";
 import { addrToHex } from "./clientKeys";
 import type { CrossedLevel, Quoted } from "./pad";
 
@@ -66,11 +66,14 @@ export function parseQuoteResult(native: unknown): {
 } {
   if (!native || typeof native !== "object") throw new Error("empty QuoteResult");
   const r = native as Record<string, unknown>;
+  for (const field of ["start_tick", "crossed", "filled_lots", "quote_atoms"] as const) {
+    if (r[field] === undefined) throw new Error(`malformed QuoteResult: missing ${field}`);
+  }
   return {
-    startTick: Number(r.start_tick ?? r.startTick),
+    startTick: Number(r.start_tick),
     crossed: parseCrossed(r.crossed),
-    filledLots: BigInt(String(r.filled_lots ?? r.filledLots ?? 0)),
-    quoteAtoms: BigInt(String(r.quote_atoms ?? r.quoteAtoms ?? 0)),
+    filledLots: BigInt(String(r.filled_lots)),
+    quoteAtoms: BigInt(String(r.quote_atoms)),
   };
 }
 

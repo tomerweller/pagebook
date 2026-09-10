@@ -11,18 +11,17 @@ use pagebook_types::{word_of, BestTick, Market};
 use soroban_sdk::{Address, Env, Vec};
 
 /// Per-transaction loop budget (architecture §8, invariant 7): one budget spans
-/// every leg of a `route`, so a route's ceiling is one maximal place.
+/// every leg of a `route`, so a route's ceiling is one maximal place. Slot
+/// walks are bounded by each level's `level_cap`, not by this budget.
 #[derive(Clone, Copy)]
 pub struct Budget {
     pub levels: u32,
-    pub slots: u32,
 }
 
 impl Budget {
     pub fn from_market(m: &Market) -> Self {
         Self {
             levels: m.max_levels_crossed,
-            slots: m.max_slots_scanned,
         }
     }
 
@@ -30,7 +29,6 @@ impl Budget {
     /// never exceeds any of its markets' caps).
     pub fn clamp_to(&mut self, m: &Market) {
         self.levels = core::cmp::min(self.levels, m.max_levels_crossed);
-        self.slots = core::cmp::min(self.slots, m.max_slots_scanned);
     }
 }
 
@@ -344,18 +342,16 @@ fn walk(
                 }
             }
         }
-        // Partial: consume from the head within the shared slot budget; the
-        // whole queue is in the loaded entry. Progress persists even if the
-        // cap ends it.
+        // Partial: consume from the head to demand or the tail; the whole
+        // queue is in the loaded entry. A walk consumes partially at most once.
         let head_before = lvl.head_seq;
-        let took = consume_partial(env, &mut lvl, left, budget);
+        let took = consume_partial(env, &mut lvl, left);
         let q = quote_atoms(env, took, cur, m.tick_size);
         filled += took;
         quote = crate::math::chk_add(env, quote, q);
         left -= took;
         // Persist whenever the level changed: a take, or head advancement over
-        // tombstones even if the cap ended the scan before anything was taken
-        // (§8: cleanup cost amortizes across takers).
+        // tombstones (§8: cleanup cost amortizes across takers).
         if apply && (took > 0 || lvl.head_seq != head_before) {
             store::save_level(env, market, opp, cur, &lvl);
         }
@@ -364,7 +360,10 @@ fn walk(
         }
         moved = true;
         if left > 0 {
-            // The scan cap stopped us at a level that still crosses.
+            // Defense in depth: under invariant 2 (`open_lots == Σ slots[head..]`)
+            // and the partial precondition (`open_lots > left`) this cannot fire.
+            // If `open_lots` is corrupted, refund rather than rest a crossing
+            // remainder.
             crossing_remains = true;
         }
         break;
@@ -422,21 +421,16 @@ fn word_frontier(w: u32, ascend: bool) -> u32 {
     }
 }
 
-/// Consume from the head of `lvl` toward `want`, one slot per unit of the shared
-/// slot budget. A zero slot (a tombstone or a consumed head) is skipped; the
-/// head slot holds its open lots and is decremented in place, and the head
-/// advances the moment it reaches zero (§2, eager advance). Returns the lots
+/// Consume from the head of `lvl` toward `want`. A zero slot (a tombstone or a
+/// consumed head) is skipped; the head slot holds its open lots and is
+/// decremented in place, and the head advances the moment it reaches zero
+/// (§2, eager advance). The loop bounds on `tail = slots.len()`, which
+/// `append` keeps at or under `level_cap` (`LevelFull`). Returns the lots
 /// taken.
-fn consume_partial(
-    env: &Env,
-    lvl: &mut pagebook_types::Level,
-    want: u64,
-    budget: &mut Budget,
-) -> u64 {
+fn consume_partial(env: &Env, lvl: &mut pagebook_types::Level, want: u64) -> u64 {
     let tail = lvl.tail();
     let mut left = want;
-    while left > 0 && lvl.head_seq < tail && budget.slots > 0 {
-        budget.slots -= 1;
+    while left > 0 && lvl.head_seq < tail {
         let open = lvl.slot(lvl.head_seq);
         if open == 0 {
             lvl.head_seq += 1;

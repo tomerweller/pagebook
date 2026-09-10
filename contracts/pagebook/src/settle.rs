@@ -32,11 +32,11 @@ pub fn settle_order(
 
     if order.generation == lvl.generation && order.seq == lvl.head_seq && refunded_lots > 0 {
         // The head order leaves: its open lots are refunded, the head moves
-        // on and past any run of zero slots, bounded by the market's scan cap
-        // (§7, stranded head). The whole queue is in the loaded entry.
+        // on and past any run of zero slots up to the tail (§7). The whole
+        // queue is in the loaded entry.
         level::consume_open(env, &mut lvl, refunded_lots);
         lvl.head_seq += 1;
-        level::advance_head(&mut lvl, m.max_slots_scanned);
+        level::advance_head(&mut lvl);
         store::save_level(env, market, order.is_bid, order.tick, &lvl);
     } else if order.generation == lvl.generation && order.seq > lvl.head_seq && refunded_lots > 0 {
         // A mid-queue cancel tombstones its slot in place.

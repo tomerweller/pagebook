@@ -34,7 +34,7 @@ reads each token's SAC instance for `authorized(vault)`. `keepalive` and every
 admin op extend the PageBook instance and code TTLs; a native test contract
 does not model wasm, so those two show up as zero writes in-repo.
 
-`L` is `MAX_LEVELS_CROSSED` (32). `S` is `MAX_SLOTS_SCANNED` (64). `D` is the
+`L` is `MAX_LEVELS_CROSSED` (32). `D` is the
 number of distinct opposite-side `TickWord`s whose bits change.
 
 ## Shared place mechanics
@@ -47,8 +47,8 @@ Every `place` (and every `route` leg) does the same three things.
    the walk loads each opposite `Level` it visits, up to `L`. A sweep writes
    that `Level` (generation bump, counters zeroed, slots emptied: `L(0)`) and
    `clear_tick`s its bit.
-   A partial consumes from the head slot inside the shared slot budget `S`
-   and writes the `Level` only, at its current depth `L(n)`. `clear_tick` /
+    A partial consumes from the head slot, bounded by `level_cap`,
+    and writes the `Level` only, at its current depth `L(n)`. `clear_tick` /
    `set_tick` are idempotent: a
    `TickWord` is written only when a bit changes, and `TickSummary` only when
    a word flips between empty and non-empty. After the last sweep the walk
@@ -204,7 +204,7 @@ host's storage-scaled instruction meter (ADR-036).
 
 ### route
 
-One auth, one pause check, one shared `(L, S)` budget equal to the minimum of
+One auth, one pause check, one shared `L` budget equal to the minimum of
 every leg market's caps, fixed before the first leg. Each leg is `place_body`.
 Transfers flush once. A later leg that would take an earlier leg's rest fails
 `SelfTrade`. The take side of the ceiling is one maximal place (the budget is

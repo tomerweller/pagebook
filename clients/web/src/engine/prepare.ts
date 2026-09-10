@@ -1,13 +1,12 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
-import type { Rpc } from "../book";
-import { readAccount } from "../wallet/account";
-import { NETWORK_PASSPHRASE } from "../wallet/network";
+import { readAccount } from "../client/account";
+import { NETWORK_PASSPHRASE } from "../client/network";
+import type { Rpc } from "../client/rpc";
 import { keyStr, sameKey, toLedgerKey, toPlannedKey, type ClientKey, type Hex32, type PlannedLedgerKey } from "./clientKeys";
+import { classifyFailedTx, classifySubmit } from "./diagnose";
 import { mergeSizes, sweepPadSizes } from "./liveness";
 import {
   buildPlaceArgs,
-  classifyFailedTx,
-  classifySubmit,
   scReplaceItem,
   scvAddr,
   scvU32,
@@ -270,7 +269,12 @@ function overflowOf(
 }
 
 export async function prepareInvocation(rpc: Rpc, req: PrepareRequest): Promise<PrepareResult> {
-  const acc = await readAccount(rpc, req.source);
+  let acc;
+  try {
+    acc = await readAccount(rpc, req.source);
+  } catch (e) {
+    return { kind: "rpc", message: e instanceof Error ? e.message : String(e) };
+  }
   if (!acc.exists) return { kind: "rpc", message: "account not funded" };
   const account = new StellarSdk.Account(req.source, acc.sequence.toString());
   const { fn, args } = operationFor(req.intent);
@@ -359,16 +363,21 @@ export async function prepareInvocation(rpc: Rpc, req: PrepareRequest): Promise<
 
   let sizes: ApplyPadSizes;
   if (uncovered.length) {
-    const fresh = await sweepPadSizes(rpc, uncovered, {
-      growth,
-      chunk: 100,
-      coverBytes: cover === "sized",
-      stopWhen: (byKey) =>
-        overflowOf(
-          wouldAdd((k) => byKey.get(keyB64(k)) ?? policy.sweep?.sizeOf(k)),
-          limits,
-        ) != null,
-    });
+    let fresh;
+    try {
+      fresh = await sweepPadSizes(rpc, uncovered, {
+        growth,
+        chunk: 100,
+        coverBytes: cover === "sized",
+        stopWhen: (byKey) =>
+          overflowOf(
+            wouldAdd((k) => byKey.get(keyB64(k)) ?? policy.sweep?.sizeOf(k)),
+            limits,
+          ) != null,
+      });
+    } catch (e) {
+      return { kind: "rpc", message: e instanceof Error ? e.message : String(e) };
+    }
     if (fresh.stoppedEarly) {
       const over = overflowOf(
         wouldAdd((k) => fresh.sizeOf(k) ?? policy.sweep?.sizeOf(k)),

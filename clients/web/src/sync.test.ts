@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { mockSnapshot } from "./book";
+import { mockSnapshot } from "./demo/mockSnapshot";
 import { createStore } from "./store";
 import { refreshBookAndEvents } from "./sync";
 import { emptyBookDomain, type AppState } from "./view/market";

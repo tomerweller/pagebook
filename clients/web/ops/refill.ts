@@ -5,9 +5,9 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as StellarSdk from "@stellar/stellar-sdk";
-import { createRpc, type Rpc } from "../src/book";
-import { readAccount, type AccountState } from "../src/wallet/account";
-import { NETWORK_PASSPHRASE } from "../src/wallet/network";
+import { readAccount, type AccountState } from "../src/client/account";
+import { NETWORK_PASSPHRASE } from "../src/client/network";
+import { createRpc, type Rpc } from "../src/client/rpc";
 import { parseArgs, type ArgSpec } from "./lib/args";
 import { fetchBalances } from "./lib/horizon";
 import { openLog, type OpsLog } from "./lib/opslog";

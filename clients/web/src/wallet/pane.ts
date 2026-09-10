@@ -1,6 +1,4 @@
-import type { BookSnapshot, Rpc, TokenMeta } from "../book";
-import { formatAtoms, formatInt } from "../decode";
-import { esc, shortAddr } from "../view/format";
+import type { BookSnapshot } from "../book";
 import {
   parseAssetFromSacName,
   readAccount,
@@ -9,11 +7,15 @@ import {
   type ClassicAsset,
   type CreditAsset,
   type TrustlineState,
-} from "./account";
+} from "../client/account";
+import { checkTestnet } from "../client/network";
+import type { TokenMeta } from "../client/protocol";
+import type { Rpc } from "../client/rpc";
+import { formatAtoms, formatInt } from "../decode";
+import { esc, shortAddr } from "../view/format";
 import { addTrustline, fundWithFriendbot, type SubmitResult } from "./classic";
 import { Keystore, type Identity, type StorageLike } from "./keystore";
 import { missingCredits, planProvision, type ProvisionSource } from "./provision";
-import { checkTestnet } from "./network";
 import { createOrders, loadOpenOrders, rememberNonce, type OpenOrder } from "./orders";
 import { instrumentExtra } from "./awareness";
 import { createTicket, type TicketEngine, type TradeIntent } from "./ticket";

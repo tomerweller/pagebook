@@ -98,7 +98,7 @@ fn rest_past_level_cap_is_level_full() {
 fn raised_level_cap_allows_a_deeper_queue() {
     let h = setup();
     h.client()
-        .set_market_caps(&h.market, &32, &64, &10, &1, &1_000_000, &LEVEL_CAP_MAX);
+        .set_market_caps(&h.market, &32, &10, &1, &1_000_000, &LEVEL_CAP_MAX);
     let maker = Address::generate(&h.env);
     for n in 1..=u64::from(LEVEL_CAP_MAX) {
         rest_ask(&h, &maker, 20, 1, n);
@@ -120,16 +120,10 @@ fn raised_level_cap_allows_a_deeper_queue() {
     let lvl = h.client().level(&h.market, &false, &20);
     assert_eq!(lvl.depth, LEVEL_CAP_MAX);
     assert_eq!(lvl.open_lots, u64::from(LEVEL_CAP_MAX));
-    // The deep queue is still FIFO end to end; one take scans at most
-    // `max_slots_scanned` (64) slots, so 100 lots come in two takes.
+    // The deep queue is still FIFO end to end; a 100-lot take on a 128-deep
+    // level takes 100 in one call.
     let taker = Address::generate(&h.env);
-    assert_eq!(
-        take_bid(&h, &taker, 20, 100, 1),
-        64,
-        "scan cap ends the take"
-    );
-    assert_eq!(h.client().level(&h.market, &false, &20).head_seq, 64);
-    assert_eq!(take_bid(&h, &taker, 20, 36, 2), 36);
+    assert_eq!(take_bid(&h, &taker, 20, 100, 1), 100);
     assert_eq!(h.client().level(&h.market, &false, &20).head_seq, 100);
     assert_eq!(h.client().settle(&maker, &h.market, &1), (20, 0));
     assert_eq!(h.client().settle(&maker, &h.market, &101), (0, 1));
@@ -290,81 +284,47 @@ fn replace_into_and_out_of_a_deep_level() {
     assert_eq!(lvl.open_lots, 2);
 }
 
-/// §8: head advancement over tombstones is persisted even when the scan cap
-/// ends the take before anything was consumed, so cleanup amortizes across
-/// takers instead of repeating for each one.
+/// Settling the head advances past the whole tombstone run to the next live
+/// slot in one call.
 #[test]
-fn tombstone_cleanup_persists_when_nothing_was_taken() {
+fn settle_head_advances_past_the_whole_tombstone_run() {
     let h = setup();
-    // 20 tombstones ahead of one live order; scan cap 8 → the first taker only
-    // skips 8 tombstones and takes nothing; its progress must persist.
     h.client()
-        .set_market_caps(&h.market, &32, &8, &10, &1, &1_000_000, &LEVEL_CAP);
+        .set_market_caps(&h.market, &32, &10, &1, &1_000_000, &LEVEL_CAP_MAX);
     let maker = Address::generate(&h.env);
-    for n in 1..=22u64 {
+    for n in 1..=80u64 {
         rest_ask(&h, &maker, 10, 1, n);
     }
-    // tombstone seqs 19..1 (s > H), then settle the head (seq 0): head moves to
-    // 1 and its eager advance skips 8 tombstones (the scan cap), stranding it at
-    // 9. Two live orders remain (seqs 20, 21) so a 1-lot taker is a partial take.
-    for n in (2..=20u64).rev() {
+    // Tombstone seqs 1..=70; head is seq 0. Settling the head skips the whole
+    // run and lands on seq 71 (order 72).
+    for n in (2..=71u64).rev() {
         h.client().settle(&maker, &h.market, &n);
     }
     h.client().settle(&maker, &h.market, &1);
-    assert_eq!(h.client().level(&h.market, &false, &10).head_seq, 9);
-    let taker = Address::generate(&h.env);
-    mint(&h, &h.quote, &taker, 1_000_000);
-    let (_, filled, _) = h
-        .client()
-        .place(&taker, &h.market, &true, &10, &1, &10, &1, &flags());
-    assert_eq!(filled, 0, "8 more tombstones skipped, nothing taken");
-    assert_eq!(
-        h.client().level(&h.market, &false, &10).head_seq,
-        17,
-        "progress persisted although nothing was taken"
-    );
-    let (_, filled, _) = h
-        .client()
-        .place(&taker, &h.market, &true, &10, &1, &10, &2, &flags());
-    assert_eq!(
-        filled, 1,
-        "second taker skips the last 4 and reaches the live order"
-    );
+    assert_eq!(h.client().level(&h.market, &false, &10).head_seq, 71);
+    assert_eq!(h.client().level(&h.market, &false, &10).open_lots, 9);
 }
 
-/// §8: a rest-ALLOWED taker stopped mid-level by the scan cap refunds its
-/// remainder and never rests — resting would cross the level it stopped in.
-/// (The no_rest variants above exercise the same stop; this pins the
-/// `crossing_remains` refund itself.)
+/// A taker at a level whose head sits on a long tombstone run (longer than 64)
+/// reaches the live order and takes it in one call.
 #[test]
-fn scan_cap_stop_with_rest_allowed_refunds_the_remainder() {
+fn taker_skips_a_long_tombstone_run_in_one_call() {
     let h = setup();
-    // Scan cap 8; a 12-deep one-lot ask level at tick 10.
     h.client()
-        .set_market_caps(&h.market, &32, &8, &10, &1, &1_000_000, &LEVEL_CAP);
+        .set_market_caps(&h.market, &32, &10, &1, &1_000_000, &LEVEL_CAP_MAX);
     let maker = Address::generate(&h.env);
-    for n in 1..=12u64 {
+    for n in 1..=80u64 {
         rest_ask(&h, &maker, 10, 1, n);
     }
+    // Tombstone seqs 1..=70. A 1-lot take consumes seq 0 and leaves the head
+    // on seq 1 (a zero); the next take skips 70 zeros and fills seq 71.
+    for n in (2..=71u64).rev() {
+        h.client().settle(&maker, &h.market, &n);
+    }
     let taker = Address::generate(&h.env);
-    mint(&h, &h.quote, &taker, 1_000_000);
-    // 10 of 12: less than the level, so the walk consumes partially (a
-    // whole-level take would sweep and read no slots), and the scan cap
-    // stops it at 8.
-    let (rested, filled, _) =
-        h.client()
-            .place(&taker, &h.market, &true, &10, &10, &10, &1, &flags());
-    assert_eq!(filled, 8, "the scan cap ends the take");
-    assert!(
-        !rested,
-        "the remainder refunds; resting would cross the book"
-    );
-    // The level still asks at 10 and no bid appeared: the book is uncrossed.
-    let lvl = h.client().level(&h.market, &false, &10);
-    assert_eq!(lvl.open_lots, 4);
-    assert_eq!(h.client().best(&h.market, &true), None);
-    assert!(
-        super::harness::raw_level(&h, true, 10).is_none(),
-        "no bid level was written"
-    );
+    assert_eq!(take_bid(&h, &taker, 10, 1, 1), 1);
+    assert_eq!(h.client().level(&h.market, &false, &10).head_seq, 1);
+    assert_eq!(take_bid(&h, &taker, 10, 1, 2), 1);
+    assert_eq!(h.client().level(&h.market, &false, &10).head_seq, 72);
+    assert_eq!(h.client().level(&h.market, &false, &10).open_lots, 8);
 }

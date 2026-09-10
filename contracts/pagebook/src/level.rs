@@ -45,17 +45,16 @@ pub fn sweep_reset(env: &Env, level: &mut Level) {
 }
 
 /// Move the head past a run of zero slots (tombstones and consumed heads),
-/// scanning at most `max_slots`. A longer run leaves the head on a zero slot
-/// for the next take to clear (§7, stranded head).
-pub fn advance_head(level: &mut Level, max_slots: u32) {
+/// up to the tail. Bounded by `tail = slots.len()`, which `append` keeps at
+/// or under `level_cap` (`LevelFull`). The head may still rest on a zero slot
+/// when a take's demand ran out; that is not a cap effect.
+pub fn advance_head(level: &mut Level) {
     let tail = level.tail();
-    let mut scanned = 0u32;
-    while level.head_seq < tail && scanned < max_slots {
+    while level.head_seq < tail {
         if level.slot(level.head_seq) != 0 {
             break;
         }
         level.head_seq += 1;
-        scanned += 1;
     }
 }
 

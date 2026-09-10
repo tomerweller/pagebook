@@ -87,14 +87,13 @@ fn set_market_caps_bounds_level_cap() {
     let h = setup();
     super::assert_err(
         h.client()
-            .try_set_market_caps(&h.market, &32, &64, &10, &1, &1_000_000, &63),
+            .try_set_market_caps(&h.market, &32, &10, &1, &1_000_000, &63),
         Error::QtyOutOfBounds,
     );
     super::assert_err(
         h.client().try_set_market_caps(
             &h.market,
             &32,
-            &64,
             &10,
             &1,
             &1_000_000,
@@ -105,7 +104,6 @@ fn set_market_caps_bounds_level_cap() {
     h.client().set_market_caps(
         &h.market,
         &32,
-        &64,
         &10,
         &1,
         &1_000_000,
@@ -119,7 +117,7 @@ fn set_market_caps_retune_keeps_live_orders() {
     let maker = Address::generate(&h.env);
     super::harness::rest_ask(&h, &maker, 10, 5, 1);
     h.client()
-        .set_market_caps(&h.market, &16, &32, &10, &1, &1_000_000, &64);
+        .set_market_caps(&h.market, &16, &10, &1, &1_000_000, &64);
     let info = h.client().order(&h.market, &maker, &1);
     assert_eq!(info.qty_lots, 5);
 }

@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import * as StellarSdk from "@stellar/stellar-sdk";
-import { NETWORK_PASSPHRASE } from "../src/wallet/network";
-import type { AccountState } from "../src/wallet/account";
+import type { AccountState } from "../src/client/account";
+import { NETWORK_PASSPHRASE } from "../src/client/network";
 import {
   buildMergeTx,
   buildSwapMergeTx,

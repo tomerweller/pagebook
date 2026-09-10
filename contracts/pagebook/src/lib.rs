@@ -58,7 +58,6 @@ impl PageBook {
         env: Env,
         market: u32,
         max_levels_crossed: u32,
-        max_slots_scanned: u32,
         taker_fee_bps: u32,
         min_order_lots: u64,
         max_order_lots: u64,
@@ -68,7 +67,6 @@ impl PageBook {
             &env,
             market,
             max_levels_crossed,
-            max_slots_scanned,
             taker_fee_bps,
             min_order_lots,
             max_order_lots,
@@ -151,7 +149,7 @@ impl PageBook {
     }
 
     /// Multi-leg atomic route (architecture §8): one auth, one pause check, ONE
-    /// shared level/slot budget across all legs (clamped to every leg market's
+    /// shared level budget across all legs (clamped to every leg market's
     /// caps), deltas netted in memory, one SAC transfer per token at the end.
     pub fn route(
         env: Env,
@@ -178,10 +176,7 @@ impl PageBook {
             }
             markets[i] = Some(m);
         }
-        let mut b = budget.unwrap_or(matching::Budget {
-            levels: 0,
-            slots: 0,
-        });
+        let mut b = budget.unwrap_or(matching::Budget { levels: 0 });
         // A leg may not take liquidity an earlier leg of this call rested: that
         // fill's payout would be backed by this call's own pay-in, which lands
         // only after the backed pay-outs (Netting order, ADR-021). Conservative:

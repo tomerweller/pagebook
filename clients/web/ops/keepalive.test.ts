@@ -15,6 +15,22 @@ import {
 } from "./keepalive";
 import type { KeepaliveRow } from "./keepalive";
 
+function liveEntryXdr(key: string | { toXDR: (fmt: string) => string }): string {
+  const lk =
+    typeof key === "string"
+      ? StellarSdk.xdr.LedgerKey.fromXDR(key, "base64")
+      : StellarSdk.xdr.LedgerKey.fromXDR(key.toXDR("base64"), "base64");
+  return StellarSdk.xdr.LedgerEntryData.contractData(
+    new StellarSdk.xdr.ContractDataEntry({
+      ext: new StellarSdk.xdr.ExtensionPoint(0),
+      contract: lk.contractData().contract(),
+      key: lk.contractData().key(),
+      durability: StellarSdk.xdr.ContractDataDurability.persistent(),
+      val: StellarSdk.xdr.ScVal.scvBytes(new Uint8Array(40)),
+    }),
+  ).toXDR("base64");
+}
+
 test("keepalive flags and defaults", () => {
   const a = parseKeepaliveArgs(["--contract", "C1", "--market", "1", "--base-sac", "B", "--quote-sac", "Q"]);
   expect(a.identity).toBe("pb-mm");
@@ -123,7 +139,7 @@ test("runKeepalive dry-run plans from synthetic getLedgerEntries", async () => {
           latestLedger: 1000,
           entries: keys.slice(0, 2).map((k) => ({
             key: typeof k === "string" ? k : "toXDR" in k ? k.toXDR("base64") : "",
-            xdr: StellarSdk.xdr.ScVal.scvVoid().toXDR("base64"),
+            xdr: liveEntryXdr(k),
             liveUntilLedgerSeq: 1010,
           })),
         }),

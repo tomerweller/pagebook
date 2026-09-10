@@ -10,7 +10,7 @@ import {
   validateTicket,
   XLM_FEE_HEADROOM,
 } from "./ticket";
-import type { MarketInfo } from "../book";
+import type { MarketInfo } from "../client/protocol";
 
 const market: MarketInfo = {
   base: "C".padEnd(56, "A"),
@@ -23,7 +23,6 @@ const market: MarketInfo = {
   min_order_lots: 1n,
   max_order_lots: 1_000_000n,
   max_levels_crossed: 32,
-  max_slots_scanned: 64,
   level_cap: 64,
 };
 

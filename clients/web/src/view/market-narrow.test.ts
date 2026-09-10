@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { expect, test } from "vitest";
-import { mockSnapshot } from "../book";
+import { mockSnapshot } from "../demo/mockSnapshot";
 import { createStore } from "../store";
 import { midSpread } from "./format";
 import { emptyBookDomain, registerMarketView, resetPaneCache, syncNarrowFolds, type AppState } from "./market";

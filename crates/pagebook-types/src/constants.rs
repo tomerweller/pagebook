@@ -9,7 +9,10 @@ pub const LEVEL_CAP: u32 = 64;
 /// cap ≤ 211, and 128 leaves that shape at 70% (ADR-037).
 pub const LEVEL_CAP_MAX: u32 = 128;
 pub const MAX_LEVELS_CROSSED: u32 = 32;
-pub const MAX_SLOTS_SCANNED: u32 = 64;
+/// Slots scanned per transaction are bounded by `MAX_ROUTE_LEGS × LEVEL_CAP_MAX`
+/// (512). A partial take walks at most one level's queue (`level_cap` slots,
+/// ≤ 128); a four-leg route of those is 512. Measured ~3k WASM instructions
+/// per slot (ADR-044).
 pub const MAX_ROUTE_LEGS: u32 = 4;
 pub const MAX_REPLACE_BATCH: u32 = 40;
 pub const FEE_BPS_MAX: u32 = 1_000;
