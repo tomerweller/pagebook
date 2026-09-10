@@ -935,7 +935,7 @@ export function mountWallet(opts: {
     const v = app.read().versions;
     return `${v.wallet}|${v.book}`;
   });
-  app.register("wallet-ledger", maybeRefreshOnLedger, () => String(app.read().versions.book));
+  app.subscribe("wallet-ledger", maybeRefreshOnLedger, () => String(app.read().versions.book));
   app.update(() => {});
   void boot();
 
