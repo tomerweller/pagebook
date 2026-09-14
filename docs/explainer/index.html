@@ -330,7 +330,7 @@
   <h2>"Good enough" concessions</h2>
   <p>PageBook does not reproduce SDEX behavior exactly. It accepts four concessions:</p>
   <ul class="concessions">
-    <li><b>Price Quantization.</b> SDEX matches rational prices with no market configuration. PageBook quantizes each market with an admin-configured lot size, tick size, and tick range. The example market sets the lot to 10&nbsp;XLM, the tick to <code>0.00001 USDC/XLM</code>, and the range to the whole index. One lot at tick <code>15,800</code> (<code>0.15800 USDC/XLM</code>) costs <code>1.58 USDC</code>.</li>
+    <li><b>Price Quantization.</b> SDEX matches rational prices with no market configuration. PageBook quantizes each market with an admin-configured lot size, tick size, and tick range. The example market sets the lot to 10&nbsp;XLM, the tick to <code>0.00001 USDC/XLM</code>, and the range to the whole index. One lot at tick <code>15,800</code> (<code>0.15800 USDC/XLM</code>) costs <code>1.58 USDC</code>. Geometric ticks are <a href="#future">future work</a>.</li>
     <li><b>Async Maker Settlement.</b> SDEX credits both sides during execution. In PageBook, the taker settles during execution and makers claim later.</li>
     <li><b>(Slightly) Stale Best Prices.</b> SDEX matches against the best offer at apply time. PageBook starts from the best price seen during simulation, so better offers added before inclusion are not visible to that transaction.</li>
     <li><b>Footprint Padding.</b> This one is against Soroban convention rather than SDEX. A typical invocation submits the footprint returned by simulation as-is; PageBook clients pad the simulated footprint with a band of price levels around the simulated best.</li>
@@ -816,9 +816,9 @@
 
 <section id="future">
   <h2>Future work: geometric ticks</h2>
-  <p>PageBook uses linear ticks: the price of tick <code>t</code> is <code>t &#215; tick_size</code>, a fixed quote amount. Escrows and fill amounts are then plain integer multiplications that can be checked by hand. That is easy to debug and easy to explain, which is what a first version needs. A production system is better served by geometric ticks.</p>
-  <p>A linear tick's size as a fraction of price changes whenever the price moves. At <code>0.158 USDC/XLM</code> the example market's tick is about 0.6&nbsp;bps. If XLM fell to <code>0.02</code>, the same tick would be 5&nbsp;bps, and a maker could not ladder quotes inside a 5&nbsp;bps spread. If XLM rose to <code>1.58</code>, the tick would be 0.06&nbsp;bps, and a taker padding one percent of depth would declare 1,580 level keys, eight times the 200 writes a transaction may hold. Above <code>41.94</code> the band ends. Quantization is frozen at market creation, so the only remedy is a new market and a migration of resting liquidity.</p>
-  <p>A geometric grid, as in Liquidity Book, sets <code>price(id) = (1 + step)^(id &#8722; 2^21)</code> with one universal <code>step</code>. Adjacent ids are always <code>step</code> apart in percentage terms. With a 1&nbsp;bps step, one percent of depth is 100 ids at any price, the pad band is a constant percentage of depth, and <code>2^22</code> ids cover any real pair, so the per-market tick band goes away. Only the id-to-price function changes. Ids stay dense integers, so the tick index, level queue, order record and taker walk are untouched.</p>
+  <p>PageBook uses linear ticks: the price of tick <code>t</code> is <code>t &#215; tick_size</code>, a fixed quote amount. All matching amounts are then plain integer multiplications, easy to code, debug and explain. However, they are not ideal for a real market with price swings.</p>
+  <p>A linear tick's size as a fraction of price changes whenever the price moves. At <code>0.158 USDC/XLM</code> the example market's tick is about 0.6&nbsp;bps. If XLM fell to <code>0.02</code>, the same tick would be 5&nbsp;bps, and a maker could not ladder quotes inside a 5&nbsp;bps spread. If XLM rose to <code>1.58</code>, the tick would be 0.06&nbsp;bps, and a taker padding one percent of depth would declare 1,580 level keys, eight times the 200 writes a transaction may hold. Above <code>41.94 USDC/XLM</code> the band ends. Quantization is frozen at market creation, so the only remedy is a new market and a migration of resting liquidity.</p>
+  <p>A geometric grid keeps integer ticks but sets <code>price(t) = (1 + step)^(t &#8722; 2^21)</code>, with one <code>step</code> shared by every market, so tick <code>2^21</code> is price <code>1</code> and adjacent ticks are always <code>step</code> apart in percentage terms. With a 1&nbsp;bps step, one percent of depth is 100 ticks at any price, the pad band is a constant percentage of depth, and <code>2^22</code> ticks cover any real pair, so the per-market tick band goes away. Only the tick-to-price function changes. Ticks stay dense integers, so the tick index, level queue, order record and taker walk are untouched.</p>
 
   <figure>
     <div class="fig">
@@ -863,9 +863,7 @@
     <figcaption><b>Linear ticks drift with price; geometric ticks do not.</b> A linear tick is a fixed quote amount, so it is coarse when the price is low and fine when the price is high, and the level keys a taker must pad for a given depth grow with the price. A geometric tick is a fixed percentage, so the same depth costs the same keys everywhere.</figcaption>
   </figure>
 
-  <aside class="note">
-    <p><span class="lbl">Migration notes.</span> Exactness has to be kept by rounding once, at the grid, so that each id maps to an integer price per lot and matching stays a multiplication. Client and contract must compute that map bit for bit, which rules out floating point. The grid needs a per-market floor below which one step no longer moves the per-lot price by a whole quote atom, and an id ceiling to keep i128 arithmetic safe. Displayed prices stop being round numbers, so order entry snaps a typed price to an id. Quantization is frozen at market creation, so geometric ticks would ship as a new market type in a fresh deployment, alongside the linear markets.</p>
-  </aside>
+  <p>Implementing geometric ticks would make the code more complex and harder to debug, so it is left as future work.</p>
 </section>
 
 </main>
