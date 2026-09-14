@@ -741,7 +741,7 @@
 <section id="results">
   <h2>Results</h2>
   <p>A draft implementation is live on testnet. The <a href="https://tomerweller.com/pagebook/">web client</a> reads a PageBook market directly from Soroban RPC — best bid and ask, depth per side, recent trades, the market's vault and fee balances — and trades on it with an in-page disposable testnet wallet.</p>
-  <p>Each row below is a constructed worst-or-typical shape measured by the repository's resource gates: entries and write bytes metered by the SDK host against the mainnet cost snapshot, with the fee estimate from the architecture's per-operation table (execution plus any rent the shape creates). The maximum take crosses the full 32-level limit in one call. Persistent-state rent dominates wherever an entry is created.</p>
+  <p>Each row below is a constructed worst-or-typical shape measured on protocol 27 testnet by the repository's resource gates: entries and write bytes metered by the SDK host against the mainnet cost snapshot, with the fee estimate from the architecture's per-operation table (execution plus any rent the shape creates). The maximum take crosses the full 32-level limit in one call. Persistent-state rent dominates wherever an entry is created.</p>
   <div class="tablewrap">
     <table class="results">
       <caption class="sr-only">Measured entries, write bytes and estimated fee per invocation type</caption>
@@ -869,7 +869,6 @@
 </main>
 
 <footer>
-  <p>PageBook &#183; measured on protocol 27 testnet.</p>
   <p>Companion to the full <a href="https://github.com/tomerweller/pagebook/blob/main/docs/04-architecture.md">PageBook architecture document</a> and the <a href="https://tomerweller.com/pagebook/">web client</a>.</p>
 </footer>
 
