@@ -76,6 +76,13 @@ The page holds its own ed25519 keypair. Secrets live in localStorage under
 passphrase (`Test SDF Network ; September 2015`). Treat every key as
 throwaway.
 
+## Analytics
+
+Both the client and the explainer load Google Analytics (GA4, property
+"PageBook", measurement ID `G-7VJRGST3G9`) from a small inline snippet in
+their `index.html`. The snippet only runs when the page is served from
+`tomerweller.com`, so local dev, `vite preview`, and Playwright send nothing.
+
 ## Known limits
 
 - `route` is not in the UI.
