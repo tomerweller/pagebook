@@ -282,6 +282,9 @@ header.top {
   min-height: 28px;
 }
 .pair-caret { color: var(--muted); font-size: 11px; }
+.notice { margin: 6px 0 0; font-size: 11px; line-height: 1.5; color: var(--muted); }
+.notice a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
+.notice a:hover, .notice a:active { color: var(--ink); }
 .pair-title:hover .pair-caret { color: var(--accent); }
 .pair-select {
   position: absolute;
