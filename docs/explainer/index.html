@@ -306,6 +306,7 @@
     <li><a href="#order-record">Order record</a></li>
     <li><a href="#taker-walk">The taker walk</a></li>
     <li><a href="#results">Results</a></li>
+    <li><a href="#future">Future work: geometric ticks</a></li>
   </ol>
 </nav>
 
@@ -811,6 +812,60 @@
     <p><span class="lbl">Rent.</span> Creating a persistent <code>Order</code> adds about 0.046&nbsp;XLM of rent for the 120-day minimum TTL, and a new price level may also create or restore level and bitmap entries. <code>replace</code> reuses the existing order record, so normal quote updates do not pay that order rent again.</p>
   </aside>
   <p>Reading down the fee column: quoting costs fractions of a cent in XLM, and the heaviest legal taker transaction uses 72 of the 200 per-transaction writes and about a sixth of the write-byte cap. The full shape-by-shape record is the <a href="https://github.com/tomerweller/pagebook/blob/main/docs/08-worst-case-matrix.md">worst-case matrix</a>.</p>
+</section>
+
+<section id="future">
+  <h2>Future work: geometric ticks</h2>
+  <p>PageBook uses linear ticks: the price of tick <code>t</code> is <code>t &#215; tick_size</code>, a fixed quote amount. Escrows and fill amounts are then plain integer multiplications that can be checked by hand. That is easy to debug and easy to explain, which is what a first version needs. A production system is better served by geometric ticks.</p>
+  <p>A linear tick's size as a fraction of price changes whenever the price moves. At <code>0.158 USDC/XLM</code> the example market's tick is about 0.6&nbsp;bps. If XLM fell to <code>0.02</code>, the same tick would be 5&nbsp;bps, and a maker could not ladder quotes inside a 5&nbsp;bps spread. If XLM rose to <code>1.58</code>, the tick would be 0.06&nbsp;bps, and a taker padding one percent of depth would declare 1,580 level keys, eight times the 200 writes a transaction may hold. Above <code>41.94</code> the band ends. Quantization is frozen at market creation, so the only remedy is a new market and a migration of resting liquidity.</p>
+  <p>A geometric grid, as in Liquidity Book, sets <code>price(id) = (1 + step)^(id &#8722; 2^21)</code> with one universal <code>step</code>. Adjacent ids are always <code>step</code> apart in percentage terms. With a 1&nbsp;bps step, one percent of depth is 100 ids at any price, the pad band is a constant percentage of depth, and <code>2^22</code> ids cover any real pair, so the per-market tick band goes away. Only the id-to-price function changes. Ids stay dense integers, so the tick index, level queue, order record and taker walk are untouched.</p>
+
+  <figure>
+    <div class="fig">
+    <svg viewBox="0 0 940 300" role="img" aria-label="Three price slices, each 0.1% wide, at 0.02, 0.158 and 1.58 USDC per XLM. Under linear ticks the slice holds 2, 16 and 158 ticks, and padding one percent of depth declares 20, 158 and 1,580 level keys. Under geometric ticks every slice holds 10 ticks and one percent of depth is always 100 keys.">
+      <g fill="currentColor" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">
+      <text x="30" y="36" font-weight="700" font-size="13" font-family="inherit">Tick spacing across price</text>
+      <text x="30" y="54" fill="var(--muted)" font-size="11">each box is one 0.1% slice of price &#183; marks are ticks inside it</text>
+      <text x="235" y="86" text-anchor="middle" font-size="12">0.02 USDC/XLM</text>
+      <text x="505" y="86" text-anchor="middle" font-size="12">0.158 USDC/XLM</text>
+      <text x="775" y="86" text-anchor="middle" font-size="12">1.58 USDC/XLM</text>
+      <text x="30" y="122" fill="var(--muted)" font-size="11">linear</text>
+      <text x="30" y="137" fill="var(--muted)" font-size="10">tick = 0.00001 USDC</text>
+      <rect x="150" y="104" width="170" height="28" fill="none" stroke="var(--line)"/>
+      <line x1="193.0" y1="111" x2="193.0" y2="125" stroke="var(--accent)" stroke-width="1.5"/><line x1="277.0" y1="111" x2="277.0" y2="125" stroke="var(--accent)" stroke-width="1.5"/>
+      <text x="235" y="150" text-anchor="middle" fill="var(--muted)" font-size="11">tick = 5 bps</text>
+      <text x="235" y="165" text-anchor="middle" fill="var(--muted)" font-size="11">1% of depth = 20 keys</text>
+      <rect x="420" y="104" width="170" height="28" fill="none" stroke="var(--line)"/>
+      <line x1="426.2" y1="111" x2="426.2" y2="125" stroke="var(--accent)" stroke-width="1.5"/><line x1="436.8" y1="111" x2="436.8" y2="125" stroke="var(--accent)" stroke-width="1.5"/><line x1="447.2" y1="111" x2="447.2" y2="125" stroke="var(--accent)" stroke-width="1.5"/><line x1="457.8" y1="111" x2="457.8" y2="125" stroke="var(--accent)" stroke-width="1.5"/><line x1="468.2" y1="111" x2="468.2" y2="125" stroke="var(--accent)" stroke-width="1.5"/><line x1="478.8" y1="111" x2="478.8" y2="125" stroke="var(--accent)" stroke-width="1.5"/><line x1="489.2" y1="111" x2="489.2" y2="125" stroke="var(--accent)" stroke-width="1.5"/><line x1="499.8" y1="111" x2="499.8" y2="125" stroke="var(--accent)" stroke-width="1.5"/><line x1="510.2" y1="111" x2="510.2" y2="125" stroke="var(--accent)" stroke-width="1.5"/><line x1="520.8" y1="111" x2="520.8" y2="125" stroke="var(--accent)" stroke-width="1.5"/><line x1="531.2" y1="111" x2="531.2" y2="125" stroke="var(--accent)" stroke-width="1.5"/><line x1="541.8" y1="111" x2="541.8" y2="125" stroke="var(--accent)" stroke-width="1.5"/><line x1="552.2" y1="111" x2="552.2" y2="125" stroke="var(--accent)" stroke-width="1.5"/><line x1="562.8" y1="111" x2="562.8" y2="125" stroke="var(--accent)" stroke-width="1.5"/><line x1="573.2" y1="111" x2="573.2" y2="125" stroke="var(--accent)" stroke-width="1.5"/><line x1="583.8" y1="111" x2="583.8" y2="125" stroke="var(--accent)" stroke-width="1.5"/>
+      <text x="505" y="150" text-anchor="middle" fill="var(--muted)" font-size="11">tick = 0.63 bps</text>
+      <text x="505" y="165" text-anchor="middle" fill="var(--muted)" font-size="11">1% of depth = 158 keys</text>
+      <rect x="690" y="104" width="170" height="28" fill="none" stroke="var(--line)"/>
+      <rect x="691" y="111" width="168" height="14" fill="var(--accent)" opacity="0.55"/>
+      <text x="775" y="150" text-anchor="middle" fill="var(--muted)" font-size="11">tick = 0.063 bps</text>
+      <text x="775" y="165" text-anchor="middle" fill="var(--muted)" font-size="11">1% of depth = 1,580 keys</text>
+      <text x="30" y="212" fill="var(--muted)" font-size="11">geometric</text>
+      <text x="30" y="227" fill="var(--muted)" font-size="10">step = 1 bps</text>
+      <rect x="150" y="194" width="170" height="28" fill="none" stroke="var(--line)"/>
+      <line x1="159.4" y1="201" x2="159.4" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="176.2" y1="201" x2="176.2" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="193.0" y1="201" x2="193.0" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="209.8" y1="201" x2="209.8" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="226.6" y1="201" x2="226.6" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="243.4" y1="201" x2="243.4" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="260.2" y1="201" x2="260.2" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="277.0" y1="201" x2="277.0" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="293.8" y1="201" x2="293.8" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="310.6" y1="201" x2="310.6" y2="215" stroke="var(--accent)" stroke-width="1.5"/>
+      <text x="235" y="240" text-anchor="middle" fill="var(--muted)" font-size="11">tick = 1 bps</text>
+      <text x="235" y="255" text-anchor="middle" fill="var(--muted)" font-size="11">1% of depth = 100 keys</text>
+      <rect x="420" y="194" width="170" height="28" fill="none" stroke="var(--line)"/>
+      <line x1="429.4" y1="201" x2="429.4" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="446.2" y1="201" x2="446.2" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="463.0" y1="201" x2="463.0" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="479.8" y1="201" x2="479.8" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="496.6" y1="201" x2="496.6" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="513.4" y1="201" x2="513.4" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="530.2" y1="201" x2="530.2" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="547.0" y1="201" x2="547.0" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="563.8" y1="201" x2="563.8" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="580.6" y1="201" x2="580.6" y2="215" stroke="var(--accent)" stroke-width="1.5"/>
+      <text x="505" y="240" text-anchor="middle" fill="var(--muted)" font-size="11">tick = 1 bps</text>
+      <text x="505" y="255" text-anchor="middle" fill="var(--muted)" font-size="11">1% of depth = 100 keys</text>
+      <rect x="690" y="194" width="170" height="28" fill="none" stroke="var(--line)"/>
+      <line x1="699.4" y1="201" x2="699.4" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="716.2" y1="201" x2="716.2" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="733.0" y1="201" x2="733.0" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="749.8" y1="201" x2="749.8" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="766.6" y1="201" x2="766.6" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="783.4" y1="201" x2="783.4" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="800.2" y1="201" x2="800.2" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="817.0" y1="201" x2="817.0" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="833.8" y1="201" x2="833.8" y2="215" stroke="var(--accent)" stroke-width="1.5"/><line x1="850.6" y1="201" x2="850.6" y2="215" stroke="var(--accent)" stroke-width="1.5"/>
+      <text x="775" y="240" text-anchor="middle" fill="var(--muted)" font-size="11">tick = 1 bps</text>
+      <text x="775" y="255" text-anchor="middle" fill="var(--muted)" font-size="11">1% of depth = 100 keys</text>
+      <text x="30" y="286" fill="var(--muted)" font-size="11">a slice with more than 40 ticks is drawn solid</text>
+      </g></svg>
+    </div>
+    <figcaption><b>Linear ticks drift with price; geometric ticks do not.</b> A linear tick is a fixed quote amount, so it is coarse when the price is low and fine when the price is high, and the level keys a taker must pad for a given depth grow with the price. A geometric tick is a fixed percentage, so the same depth costs the same keys everywhere.</figcaption>
+  </figure>
+
+  <aside class="note">
+    <p><span class="lbl">Migration notes.</span> Exactness has to be kept by rounding once, at the grid, so that each id maps to an integer price per lot and matching stays a multiplication. Client and contract must compute that map bit for bit, which rules out floating point. The grid needs a per-market floor below which one step no longer moves the per-lot price by a whole quote atom, and an id ceiling to keep i128 arithmetic safe. Displayed prices stop being round numbers, so order entry snaps a typed price to an id. Quantization is frozen at market creation, so geometric ticks would ship as a new market type in a fresh deployment, alongside the linear markets.</p>
+  </aside>
 </section>
 
 </main>
