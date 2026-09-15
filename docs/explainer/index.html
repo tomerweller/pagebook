@@ -875,7 +875,7 @@
   </figure>
 
   <p>Two families of grid avoid the drift while keeping ticks as dense integers, so the tick index, level queue, order record and taker walk would not change. A <b>geometric</b> grid sets <code>price(t) = (1 + step)^(t &#8722; 2^21)</code>, so adjacent ticks are always <code>step</code> apart in percentage terms and one percent of depth costs the same number of keys at any price. Its cost is that prices are no longer whole numbers of quote atoms, so matching would have to round. A <b>significant-figure</b> grid, the rule Hyperliquid and traditional tick-size tables use, admits only prices with a fixed number of significant digits, so the tick grows by a factor of ten at each decade. Prices stay whole atoms and matching stays exact, but tick width as a fraction of price varies tenfold within a decade.</p>
-  <p>Neither is settled on. The <a href="https://github.com/tomerweller/pagebook/blob/main/docs/10-quantization-schemes.md">quantization schemes note</a> compares both, with worked numbers for the example market. Whatever grid a later market type adopts, quantization is frozen per market, so existing markets stay linear.</p>
+  <p>Neither is settled on. The <a href="https://github.com/tomerweller/pagebook/blob/main/docs/10-quantization-schemes.md">quantization schemes note</a> compares both, with worked numbers for the example market, and the <a href="tick-grids.html">tick grids page</a> lets you drag the price and watch each grid respond. Whatever grid a later market type adopts, quantization is frozen per market, so existing markets stay linear.</p>
 </section>
 
 </main>
