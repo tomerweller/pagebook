@@ -24,6 +24,22 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
+<!-- Google Analytics (GA4). Loads only on the published host so local dev,
+     Playwright and preview builds send nothing. -->
+<script>
+(function () {
+  if (location.hostname !== 'tomerweller.com') return;
+  var s = document.createElement('script');
+  s.async = true;
+  s.src = 'https://www.googletagmanager.com/gtag/js?id=G-7VJRGST3G9';
+  document.head.appendChild(s);
+  window.dataLayer = window.dataLayer || [];
+  function gtag() { dataLayer.push(arguments); }
+  window.gtag = gtag;
+  gtag('js', new Date());
+  gtag('config', 'G-7VJRGST3G9');
+})();
+</script>
 </head>
 <body>
 <div class="shell">
