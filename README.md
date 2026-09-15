@@ -173,6 +173,7 @@ same ADR).
 | `docs/03-soroban-constraints.md` | Soroban storage, footprint, and resource background |
 | `docs/04-architecture.md` | Full technical specification |
 | `docs/07-classic-dex-comparison.md` | Comparison with the classic Stellar DEX |
+| `docs/10-quantization-schemes.md` | Linear, geometric, significant-figure (Hyperliquid) and log-base-2 (Deepstate) price grids compared |
 | `docs/09-resource-utilization.md` | Measured declared-vs-metered resource ranges per invocation, from live testnet traffic |
 | `docs/explainer/index.html` | Executive explainer, rendered at [tomerweller.com/pagebook/explainer](https://tomerweller.com/pagebook/explainer/) |
 
@@ -202,3 +203,5 @@ make lint
   behind the design
 - [Classic Stellar DEX comparison](docs/07-classic-dex-comparison.md): what
   PageBook gives up and what it gains
+- [Quantization schemes](docs/10-quantization-schemes.md): linear ticks against
+  geometric, significant-figure and log-base-2 grids
