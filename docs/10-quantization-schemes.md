@@ -2,7 +2,9 @@
 
 *Research note, September 2026. Companion to `04-architecture.md` §0.2 (the linear
 scheme PageBook ships) and §20 (geometric ticks, deferred to v2). Hyperliquid's rule is
-stated from its public API docs; verify against them before quoting it elsewhere.*
+stated from its public API docs and the MiFID II, Tokyo and Hong Kong tick tables from
+memory of the published schedules; verify against the sources before quoting them
+elsewhere.*
 
 ## 1. What a scheme has to deliver
 
@@ -141,6 +143,82 @@ than any pair will traverse, so `tick_max` becomes an overflow guard rather than
 price-range choice. `lot_size` remains per market and shifts which decade a given
 price lands in, without changing relative widths.
 
+#### 2.3.1 Variants of the significant-figure grid
+
+The grid above steps the tick by ten at every decade. That is one point in a family;
+the members differ in how far the tick steps at each boundary, which sets the
+sawtooth amplitude, the ticks a decade costs, and how round the prices look. All of
+them keep prices as whole atoms, so all of them preserve §0.2.
+
+**Pure significant figures.** Fixed digit count `S`, one tick per decade, tenfold swing
+in relative width. The `m × 10^d` map above. Simplest to explain, roundest prices,
+widest swing: the top of each decade is where one percent of depth clears the
+200-write cap.
+
+**Significant figures with linear tails (Hyperliquid).** Hyperliquid's rule as actually
+stated: at most 5 significant figures, at most `MAX_DECIMALS − szDecimals` decimals,
+and any integer price is valid regardless of digit count. The grid is therefore
+significant-figure only in a middle band. Below it the decimal cap clamps the tick at
+a floor; above 10^5 the tick is one unit, so BTC above $100,000 trades at a $1 tick,
+finer than the rule alone would give. For PageBook the floor is the atom and comes for
+free, and the integer ceiling is an artifact of decimal-string prices with no reason
+to copy it.
+
+**Sub-decade tick tables (1-2-5).** The tick changes at round breakpoints inside the
+decade, almost always the 1-2-5 series: tick 1 on `[1, 2)`, tick 2 on `[2, 5)`, tick 5
+on `[5, 10)`, then times ten. With a 5-digit mantissa:
+
+```
+segment      mantissa range      tick   ticks    relative width
+[1, 2)       10_000 .. 19_999      1    10_000   1 bps → 0.5 bps
+[2, 5)       20_000 .. 49_999      2    15_000   1 bps → 0.4 bps
+[5, 10)      50_000 .. 99_999      5    10_000   1 bps → 0.5 bps
+                                        35_000 per decade
+```
+
+The swing drops from tenfold to 2.5-fold, one percent of depth costs 100 to 250 keys
+(over 200 only for mantissas in `[40_000, 50_000)`), 2^22 ticks cover 119 decades, and
+every price is still a round decimal. The tick-to-price map needs a three-segment
+lookup per decade instead of a division. MiFID II's RTS 11 tick table is this shape,
+with a second axis that picks a column by the instrument's average daily trade count;
+the Tokyo and Hong Kong spread tables are irregular cousins. That second axis has a
+natural PageBook analogue: `S` as a per-market parameter rather than a global constant,
+coarser for thin markets, still bounded in relative width whatever the price does.
+
+**Binary mantissa.** Floating point without the fraction: `p(t) = (2^M + m) × 2^e`,
+with `e = t >> M` and `m = t & (2^M − 1)`. The tick doubles at every octave, so the
+swing is exactly twofold and the map is two bit operations. With `M = 13` the relative
+width runs 1.22 to 0.61 bps, a decade costs about 27,200 ticks, one percent of depth
+costs 82 to 164 keys, always under the cap. The cost is that ticks are not round in
+decimal: 0.158 USDC/XLM lands on the grid at 0.15799296, stepping by 0.00001024. No
+exchange quotes this way as far as the survey found; it makes sense only where prices
+are never shown to a person. Any preferred-number series (Renard R5, R10) works as
+breakpoints too, and the geometric grid of §2.2 is the limit as the steps shrink to
+nothing, with roundness lost at every step along the way.
+
+The same three example prices under each decimal variant, with the coarsest tick set
+near 1 bps:
+
+| XLM price (USDC) | pure `S = 5` | 1-2-5, 5-digit | binary `M = 13` |
+|---|---|---|---|
+| 0.02 | 0.5 bps, 200 keys | 1 bps, 100 keys | 0.64 bps, 156 keys |
+| 0.158 | 0.63 bps, 158 keys | 0.63 bps, 158 keys | 0.65 bps, 154 keys |
+| 1.58 | 0.63 bps, 158 keys | 0.63 bps, 158 keys | 1.04 bps, 96 keys |
+
+Summary of the family, coarsest tick near 1 bps in each case:
+
+| Variant | Relative tick, coarse to fine | Ticks per decade | Keys per 1% | Prices |
+|---|---|---|---|---|
+| Pure sig-fig, `S = 5` | 1 to 0.1 bps | 90,000 | 100 to 1,000 | round decimal |
+| 1-2-5 table, 5-digit | 1 to 0.4 bps | 35,000 | 100 to 250 | round decimal |
+| Binary, `M = 13` | 1.22 to 0.61 bps | 27,200 | 82 to 164 | unround |
+| Geometric, 1 bps (§2.2) | 1 bps flat | 23,000 | 100 | irrational, rounded |
+
+The finer the sub-decade steps, the closer the table gets to geometric's flat pad
+cost, and the less round the prices. The 1-2-5 table is the point where both are still
+good: pad cost inside the cap for most of each decade, a swing small enough that a
+maker's ladder keeps its shape as price moves, and prices a trader would type.
+
 ### 2.4 Log-base-2 (Deepstate)
 
 `p(t) = 2^(96 t / 2^31)` over 32-bit `t`, covering `[2^-96, 2^96)`.
@@ -159,8 +237,8 @@ completeness as the far end of the fineness axis.
 |---|---|---|---|---|
 | `p(t)` | `t × tick_size` | `p₀(1+step)^(t−t₀)` | `(10^4 + t mod 9·10^4) × 10^(t div 9·10^4)` | `2^(96t/2^31)` |
 | Integer atoms, no rounding | yes | no | yes | no |
-| Relative tick across price | `tick_size / p`, unbounded drift | constant `step` | saws in `[1/10^S, 1/10^(S−1)]` | constant, ~0.0003 bps |
-| Keys per 1% depth | grows with price (20 → 1,580 in the example) | constant (~100 at 1 bps) | 100 to 1,000 at `S = 5` | ~320,000 |
+| Relative tick across price | `tick_size / p`, unbounded drift | constant `step` | saws in `[1/10^S, 1/10^(S−1)]`; 2.5× with a 1-2-5 table (§2.3.1) | constant, ~0.0003 bps |
+| Keys per 1% depth | grows with price (20 → 1,580 in the example) | constant (~100 at 1 bps) | 100 to 1,000 at `S = 5`; 100 to 250 with a 1-2-5 table | ~320,000 |
 | Per-market band needed | yes, price-range choice | no | only as §0.3 overflow guard | no |
 | Per-market parameters | `tick_size`, `lot_size`, band | `lot_size` | `lot_size` | none |
 | Global constants | none | `step`, `t₀` | `S` | none |
@@ -183,11 +261,12 @@ correctness argument is "there is no rounding".
 The significant-figure grid gets most of geometric's benefit at none of its cost. It
 is exact for the same reason linear is, needs no fixed-point exponentiation, removes
 the band as a price-range decision, and holds relative tick width inside a fixed
-one-decade window. Its one defect against geometric is the sawtooth: pad cost and
-quoting granularity vary by 10× within a decade. That is the behaviour every
-traditional venue's tick table already has, and makers are used to it. If a v2 market
-type is ever built to replace the band, this grid is the better candidate than §20's
-geometric one, and §20 should be updated to say so.
+window. Its one defect against geometric is the sawtooth: in the pure form pad cost
+and quoting granularity vary by 10× within a decade. The 1-2-5 table of §2.3.1 cuts
+that to 2.5× while keeping round prices, which is why traditional venues settled on it
+and why makers are already used to it. If a v2 market type is ever built to replace
+the band, a 1-2-5 significant-figure grid is the better candidate than §20's geometric
+one, and §20 should be updated to say so.
 
 None of this changes v1. Quantization is frozen per market, and the current markets
 are linear.
