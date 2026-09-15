@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Four tick grids on one real market</title>
+<meta name="description" content="Interactive comparison of linear, geometric, significant-figure and 1-2-5 price grids on PageBook's XLM/USDC example market: tick width, level keys per percent of depth, and the legal price ladder at any price.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="PageBook">
+<meta property="og:title" content="Four tick grids on one real market">
+<meta property="og:description" content="Drag the XLM price and watch what linear, geometric, significant-figure and 1-2-5 grids allow, how wide each tick is, and how many level keys a taker must declare.">
+<meta property="og:url" content="https://tomerweller.com/pagebook/explainer/tick-grids.html">
+<meta property="og:image" content="https://tomerweller.com/pagebook/icon-512.png">
+<meta property="og:image:width" content="512">
+<meta property="og:image:height" content="512">
+<meta property="og:image:alt" content="PageBook logo">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/png" sizes="192x192" href="../icon-192.png">
+<!-- Google Analytics (GA4). Loads only on the published host so local dev,
+     Playwright and preview builds send nothing. -->
+<script>
+(function () {
+  if (location.hostname !== 'tomerweller.com') return;
+  var s = document.createElement('script');
+  s.async = true;
+  s.src = 'https://www.googletagmanager.com/gtag/js?id=G-7VJRGST3G9';
+  document.head.appendChild(s);
+  window.dataLayer = window.dataLayer || [];
+  function gtag() { dataLayer.push(arguments); }
+  window.gtag = gtag;
+  gtag('js', new Date());
+  gtag('config', 'G-7VJRGST3G9');
+})();
+</script>
+<style>
+  :root {
+    --bg: #FAF8F3;
+    --surface: #FFFFFF;
+    --ink: #1C1B18;
+    --muted: #6B675E;
+    --line: #D8D3C6;
+    --accent: #2A5B8C;
+    --accent-soft: rgba(42, 91, 140, 0.10);
+    --s-lin: #2A5B8C;
+    --s-geo: #B2413A;
+    --s-sig: #A66F16;
+    --s-125: #2F7A5A;
+    --danger: #B2413A;
+    --grid: #E6E1D6;
+    --axis: #C4BEB0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #171613;
+      --surface: #1F1E1A;
+      --ink: #E7E3D8;
+      --muted: #9C978A;
+      --line: #35332C;
+      --accent: #7EA9E0;
+      --accent-soft: rgba(126, 169, 224, 0.15);
+      --s-lin: #7EA9E0;
+      --s-geo: #E8887E;
+      --s-sig: #DDA64C;
+      --s-125: #7FC4A0;
+      --danger: #E8887E;
+      --grid: #2A2924;
+      --axis: #46433B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #171613;
+    --surface: #1F1E1A;
+    --ink: #E7E3D8;
+    --muted: #9C978A;
+    --line: #35332C;
+    --accent: #7EA9E0;
+    --accent-soft: rgba(126, 169, 224, 0.15);
+    --s-lin: #7EA9E0;
+    --s-geo: #E8887E;
+    --s-sig: #DDA64C;
+    --s-125: #7FC4A0;
+    --danger: #E8887E;
+    --grid: #2A2924;
+    --axis: #46433B;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: Charter, "Bitstream Charter", "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Times New Roman", serif;
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    font-kerning: normal;
+    text-rendering: optimizeLegibility;
+  }
+  a { color: var(--accent); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 0.16em; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-size: 0.86em; }
+  .page { max-width: 1120px; margin: 0 auto; padding-block: 0 4rem; padding-inline: 24px; }
+
+  header { padding: 3rem 0 1.5rem; border-bottom: 1px solid var(--line); margin-bottom: 2rem; }
+  .eyebrow { font-size: 0.8rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0 0 0.5rem; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  h1 { font-size: clamp(1.9rem, 4vw, 2.6rem); line-height: 1.15; margin: 0 0 0.75rem; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+  .dek { max-width: 62ch; margin: 0; color: var(--muted); font-size: 1.05rem; }
+  .dek b { color: var(--ink); font-weight: 700; }
+
+  h2 { font-size: 1.35rem; margin: 2.5rem 0 0.75rem; font-weight: 700; text-wrap: balance; }
+  p { max-width: 68ch; }
+
+  .controls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 1rem 1.25rem; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); margin: 0 0 1.25rem; }
+  .controls label { color: var(--muted); font-size: 0.95rem; }
+  .controls input[type=range] { flex: 1; min-width: 180px; accent-color: var(--accent); }
+  .controls input[type=range]:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+  .price { font-size: 1.6rem; font-weight: 700; min-width: 9ch; font-variant-numeric: tabular-nums; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; }
+  .presets button { font: inherit; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.85rem; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--ink); cursor: pointer; }
+  .presets button:hover { border-color: var(--accent); }
+  .presets button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .presets button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+
+  .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 0 0 2rem; }
+  @media (max-width: 880px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 480px) { .grid { grid-template-columns: 1fr; } }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.1rem 1.1rem; background: var(--surface); min-width: 0; border-top: 3px solid var(--sc); }
+  .card h3 { font-size: 1.05rem; margin: 0 0 0.1rem; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .sw { width: 10px; height: 10px; border-radius: 2px; background: var(--sc); flex: none; }
+  .rule { font-size: 0.86rem; color: var(--muted); margin: 0 0 0.75rem; min-height: 2.6em; }
+  .stat { display: flex; justify-content: space-between; gap: 8px; font-size: 0.9rem; padding: 4px 0; border-top: 1px solid var(--line); }
+  .stat span:first-child { color: var(--muted); }
+  .stat span:last-child { font-variant-numeric: tabular-nums; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.86rem; white-space: nowrap; }
+  .stat.warn span:last-child { color: var(--danger); font-weight: 700; }
+  .ladder { margin-top: 0.75rem; }
+  .ladder .lbl { font-size: 0.8rem; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+  .ladder .rows { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.82rem; line-height: 1.75; font-variant-numeric: tabular-nums; overflow-x: auto; white-space: nowrap; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; margin: 0 0 8px; font-size: 0.85rem; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .ln { width: 20px; height: 0; border-top: 2px solid var(--sc); }
+  .chart { position: relative; width: 100%; height: 280px; margin: 0 0 0.5rem; }
+  figure { margin: 0 0 2.25rem; }
+  figcaption { font-size: 0.92rem; color: var(--muted); max-width: 68ch; }
+  figcaption b { color: var(--ink); }
+
+  footer { border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1.25rem; font-size: 0.92rem; color: var(--muted); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="page">
+<header>
+  <p class="eyebrow">PageBook · XLM/USDC · lot 10 XLM · quote in 7-decimal USDC</p>
+  <h1>Four tick grids on one real market</h1>
+  <p class="dek">A price grid decides which prices a maker may post. Drag the price and watch what each grid allows, how wide its tick is as a fraction of price, and how many <b>level keys</b> a taker must declare to cover one percent of depth. The cap is 200 writes per transaction.</p>
+</header>
+
+<div class="controls">
+  <label for="pr">XLM price</label>
+  <input type="range" id="pr" min="0" max="1000" value="566" aria-label="XLM price in USDC, logarithmic slider from 0.01 to 10">
+  <span class="price" id="pr-out">0.500</span>
+  <div class="presets" role="group" aria-label="Preset prices">
+    <button type="button" data-p="0.02">0.02</button>
+    <button type="button" data-p="0.158">0.158</button>
+    <button type="button" data-p="0.5" aria-pressed="true">0.5</button>
+    <button type="button" data-p="0.95">0.95</button>
+    <button type="button" data-p="1.58">1.58</button>
+    <button type="button" data-p="6.3">6.3</button>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card" id="c-lin" style="--sc: var(--s-lin)">
+    <h3><span class="sw"></span>Linear</h3>
+    <p class="rule">Tick is a fixed 0.00001 USDC. Price of tick <code>t</code> is <code>t × tick_size</code>.</p>
+    <div class="stat"><span>tick</span><span data-k="tick"></span></div>
+    <div class="stat"><span>tick / price</span><span data-k="bps"></span></div>
+    <div class="stat" data-warn><span>keys per 1% depth</span><span data-k="keys"></span></div>
+    <div class="ladder"><div class="lbl">next legal prices</div><div class="rows" data-k="ladder"></div></div>
+  </div>
+  <div class="card" id="c-geo" style="--sc: var(--s-geo)">
+    <h3><span class="sw"></span>Geometric</h3>
+    <p class="rule">Each tick is 1 bps above the last. Price of tick <code>t</code> is <code>1.0001^(t − 2^21)</code>.</p>
+    <div class="stat"><span>tick</span><span data-k="tick"></span></div>
+    <div class="stat"><span>tick / price</span><span data-k="bps"></span></div>
+    <div class="stat" data-warn><span>keys per 1% depth</span><span data-k="keys"></span></div>
+    <div class="ladder"><div class="lbl">next legal prices</div><div class="rows" data-k="ladder"></div></div>
+  </div>
+  <div class="card" id="c-sig" style="--sc: var(--s-sig)">
+    <h3><span class="sw"></span>5 significant figures</h3>
+    <p class="rule">Five digits of the per-lot price. The tick grows tenfold at every decade.</p>
+    <div class="stat"><span>tick</span><span data-k="tick"></span></div>
+    <div class="stat"><span>tick / price</span><span data-k="bps"></span></div>
+    <div class="stat" data-warn><span>keys per 1% depth</span><span data-k="keys"></span></div>
+    <div class="ladder"><div class="lbl">next legal prices</div><div class="rows" data-k="ladder"></div></div>
+  </div>
+  <div class="card" id="c-125" style="--sc: var(--s-125)">
+    <h3><span class="sw"></span>1-2-5 table</h3>
+    <p class="rule">Five digits, but the tick is 1, 2 or 5 units depending on where in the decade the price sits.</p>
+    <div class="stat"><span>tick</span><span data-k="tick"></span></div>
+    <div class="stat"><span>tick / price</span><span data-k="bps"></span></div>
+    <div class="stat" data-warn><span>keys per 1% depth</span><span data-k="keys"></span></div>
+    <div class="ladder"><div class="lbl">next legal prices</div><div class="rows" data-k="ladder"></div></div>
+  </div>
+</div>
+
+<p class="legend" id="legend">
+  <span style="--sc: var(--s-lin)"><span class="ln"></span>linear</span>
+  <span style="--sc: var(--s-geo)"><span class="ln" style="border-top-style: dashed"></span>geometric</span>
+  <span style="--sc: var(--s-sig)"><span class="ln" style="border-top-style: dashed"></span>5 significant figures</span>
+  <span style="--sc: var(--s-125)"><span class="ln" style="border-top-style: dotted"></span>1-2-5 table</span>
+  <span style="--sc: var(--muted)"><span class="ln" style="border-top-style: dashed"></span>200 writes per transaction</span>
+</p>
+
+<figure>
+  <div class="chart"><canvas id="ch-bps" role="img" aria-label="Tick width as a fraction of price, in basis points, against XLM price from 0.01 to 10 USDC on log axes. Linear falls from 10 bps to 0.01 bps. Geometric is flat at 1 bps. Five significant figures saws between 1 and 0.1 bps once per decade. The 1-2-5 table saws between 1 and 0.4 bps three times per decade.">Tick width in basis points versus price for the four grids.</canvas></div>
+  <figcaption><b>Tick as a fraction of price.</b> Linear is a fixed quote amount, so on log axes it is a straight line falling tenfold per decade. Geometric is flat. The two digit-based grids are sawtooths: significant figures resets once per decade with a tenfold swing, the 1-2-5 table resets at 1, 2 and 5 with a 2.5-fold swing.</figcaption>
+</figure>
+
+<figure>
+  <div class="chart"><canvas id="ch-keys" role="img" aria-label="Level keys one percent of depth costs, against XLM price on log axes. Linear rises from 10 keys to 10,000. Geometric is flat at 100. Five significant figures saws between 100 and 1,000. The 1-2-5 table saws between 100 and 250. A dashed line marks the 200-write cap.">Level keys per one percent of depth versus price for the four grids.</canvas></div>
+  <figcaption><b>Level keys for one percent of depth.</b> A taker declares every level key in the band it may walk, and a transaction holds 200 writes. Linear crosses the cap at 0.20 USDC. Significant figures spends most of every decade above it. The 1-2-5 table exceeds it only between mantissas 40,000 and 50,000, and geometric never does.</figcaption>
+</figure>
+
+<h2>What the ladders show</h2>
+<p>Each card lists the next five prices a maker may post above the chosen price. Linear steps by the same amount everywhere. The two digit grids step by one unit of the fifth digit, which means their ladders match linear's near the bottom of a decade and coarsen on the way up. Geometric's prices never end in a round number: every one of them would have to be rounded to atoms before it could be multiplied by a quantity, which is why PageBook's matching path rules it out.</p>
+<p>At 0.158 all four grids agree to within a rounding, because the example market's linear tick was chosen for that price. At 6.3 linear needs over six thousand keys while the others are unchanged.</p>
+
+<footer>
+  The example market and the 200-write cap are PageBook's. The full comparison, including Hyperliquid's rule and the exchange tick tables the 1-2-5 grid comes from, is in the <a href="https://github.com/tomerweller/pagebook/blob/main/docs/10-quantization-schemes.md">quantization schemes note</a>.
+</footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+(function(){
+  var ATOMS_PER_LOT = 1e8;      // 10 XLM per lot × 10^7 USDC atoms
+  var LIN_TICK_ATOMS = 1000;    // 0.00001 USDC/XLM per lot
+  var GEO_STEP = 1.0001;
+  var PMIN = 0.01, PMAX = 10;
+
+  function lin(p){ var A=p*ATOMS_PER_LOT; return {tick:LIN_TICK_ATOMS, bps:LIN_TICK_ATOMS/A*1e4, keys:0.01*A/LIN_TICK_ATOMS}; }
+  function geo(p){ return {bps:(GEO_STEP-1)*1e4, keys:Math.log(1.01)/Math.log(GEO_STEP), tick:(GEO_STEP-1)*p*ATOMS_PER_LOT}; }
+  function tickSig(A){ return Math.pow(10, Math.floor(Math.log10(A))-4); }
+  function tick125(A){ var pow=tickSig(A); var m=A/pow; return (m<20000 ? 1 : m<50000 ? 2 : 5)*pow; }
+  function sig(p){ var A=p*ATOMS_PER_LOT; var t=tickSig(A); return {tick:t, bps:t/A*1e4, keys:0.01*A/t}; }
+  function t125(p){ var A=p*ATOMS_PER_LOT; var t=tick125(A); return {tick:t, bps:t/A*1e4, keys:0.01*A/t}; }
+
+  function fmtTick(atoms){ var v=atoms/ATOMS_PER_LOT; var dec=Math.max(0,Math.min(9,Math.ceil(-Math.log10(v))+1)); return v.toFixed(dec); }
+  function fmtBps(b){ return (b>=10?b.toFixed(1):b>=1?b.toFixed(2):b.toFixed(3))+' bps'; }
+  function fmtKeys(k){ return Math.round(k).toLocaleString('en-US'); }
+
+  function ladderLin(p){ var A=p*ATOMS_PER_LOT, t=LIN_TICK_ATOMS, a=Math.ceil(A/t)*t, out=[]; for(var i=0;i<5;i++){ out.push((a/ATOMS_PER_LOT).toFixed(5)); a+=t; } return out; }
+  function ladderTable(p, tickFn){ var A=p*ATOMS_PER_LOT, out=[], t=tickFn(A), a=Math.ceil(A/t)*t; for(var i=0;i<5;i++){ var tk=tickFn(a); var dec=Math.max(0,8-Math.floor(Math.log10(tk))); out.push((a/ATOMS_PER_LOT).toFixed(Math.min(dec,9))); a+=tk; } return out; }
+  function ladderGeo(p){ var k=Math.ceil(Math.log(p)/Math.log(GEO_STEP)), out=[]; for(var i=0;i<5;i++){ out.push(Math.pow(GEO_STEP,k+i).toFixed(9)+'…'); } return out; }
+
+  function fill(id, r, ladder){
+    var c=document.getElementById(id);
+    c.querySelector('[data-k=tick]').textContent = (id==='c-geo'?'≈ ':'')+fmtTick(r.tick);
+    c.querySelector('[data-k=bps]').textContent = fmtBps(r.bps);
+    c.querySelector('[data-k=keys]').textContent = fmtKeys(r.keys);
+    c.querySelector('[data-warn]').classList.toggle('warn', r.keys>200);
+    c.querySelector('[data-k=ladder]').innerHTML = ladder.join('<br>');
+  }
+
+  var slider=document.getElementById('pr'), out=document.getElementById('pr-out');
+  var presets=Array.prototype.slice.call(document.querySelectorAll('.presets button'));
+  function sliderToPrice(v){ return PMIN*Math.pow(PMAX/PMIN, v/1000); }
+  function priceToSlider(p){ return Math.round(1000*Math.log(p/PMIN)/Math.log(PMAX/PMIN)); }
+
+  function tok(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function palette(){ return {lin:tok('--s-lin'),geo:tok('--s-geo'),sig:tok('--s-sig'),t125:tok('--s-125'),grid:tok('--grid'),axis:tok('--axis'),mu:tok('--muted'),surf:tok('--surface'),ink:tok('--ink')}; }
+
+  var xs=[]; var N=700; for(var i=0;i<=N;i++){ xs.push(PMIN*Math.pow(PMAX/PMIN,i/N)); }
+  [1,2,5].forEach(function(m){ for(var e=-4;e<=2;e++){ var bp=m*Math.pow(10,e); if(bp>PMIN&&bp<PMAX){ xs.push(bp*(1-1e-9)); xs.push(bp); } } });
+  xs.sort(function(a,b){return a-b;});
+  function series(fn,key){ return xs.map(function(p){ return {x:p,y:fn(p)[key]}; }); }
+  var names=['linear','geometric','5 sig. figures','1-2-5 table'], fns=[lin,geo,sig,t125], dashes=[[],[6,4],[8,3,2,3],[2,3]];
+  var xTicks=[0.01,0.02,0.05,0.1,0.2,0.5,1,2,5,10];
+  var chBps, chKeys, current=0.5;
+
+  function build(){
+    var C=palette(); var cols=[C.lin,C.geo,C.sig,C.t125];
+    function xScale(){ return {type:'logarithmic',min:PMIN,max:PMAX,title:{display:true,text:'XLM price, USDC',color:C.mu,font:{size:12,family:'ui-monospace, Menlo, Consolas, monospace'}},grid:{color:C.grid},border:{color:C.axis},
+      ticks:{color:C.mu,font:{size:11,family:'ui-monospace, Menlo, Consolas, monospace'},autoSkip:false,callback:function(v){ return xTicks.indexOf(+v.toPrecision(3))>=0 ? String(v) : ''; }},
+      afterBuildTicks:function(s){ s.ticks=xTicks.map(function(v){return {value:v};}); }}; }
+    function yScale(title,min,max,vals){ return {type:'logarithmic',min:min,max:max,title:{display:true,text:title,color:C.mu,font:{size:12,family:'ui-monospace, Menlo, Consolas, monospace'}},grid:{color:C.grid},border:{color:C.axis},
+      ticks:{color:C.mu,font:{size:11,family:'ui-monospace, Menlo, Consolas, monospace'},autoSkip:false,callback:function(v){ return vals.indexOf(+v.toPrecision(3))>=0 ? v.toLocaleString('en-US') : ''; }},
+      afterBuildTicks:function(s){ s.ticks=vals.map(function(v){return {value:v};}); }}; }
+    function opts(labelFn){ return {responsive:true,maintainAspectRatio:false,animation:false,parsing:false,normalized:true,
+      interaction:{mode:'nearest',axis:'x',intersect:false},
+      plugins:{legend:{display:false},tooltip:{backgroundColor:C.surf,titleColor:C.mu,bodyColor:C.ink,borderColor:C.axis,borderWidth:1,
+        callbacks:{title:function(it){ return it.length? it[0].parsed.x.toPrecision(3)+' USDC':''; }, label:labelFn}}},
+      elements:{line:{borderWidth:2,borderJoinStyle:'round',borderCapStyle:'round'},point:{radius:0,hitRadius:6}}}; }
+    function ds(label,data,color,dash){ return {label:label,data:data,borderColor:color,borderDash:dash||[],pointRadius:0}; }
+    function marker(color){ return {label:'now',data:[],borderColor:color,backgroundColor:color,pointRadius:5,pointBorderColor:C.surf,pointBorderWidth:2,showLine:false}; }
+    if(chBps){ chBps.destroy(); chKeys.destroy(); }
+    var o1=opts(function(it){ return it.dataset.label==='now'?null:it.dataset.label+': '+fmtBps(it.parsed.y); });
+    o1.scales={x:xScale(),y:yScale('basis points',0.01,20,[0.01,0.1,1,10])};
+    chBps=new Chart(document.getElementById('ch-bps'),{type:'line',options:o1,
+      data:{datasets:names.map(function(n,i){return ds(n,series(fns[i],'bps'),cols[i],dashes[i]);}).concat(cols.map(marker))}});
+    var o2=opts(function(it){ return it.dataset.label==='now'||it.dataset.label==='cap'?null:it.dataset.label+': '+fmtKeys(it.parsed.y)+' keys'; });
+    o2.scales={x:xScale(),y:yScale('level keys',5,20000,[10,100,1000,10000])};
+    chKeys=new Chart(document.getElementById('ch-keys'),{type:'line',options:o2,
+      data:{datasets:names.map(function(n,i){return ds(n,series(fns[i],'keys'),cols[i],dashes[i]);}).concat([ds('cap',[{x:PMIN,y:200},{x:PMAX,y:200}],C.mu,[4,4])]).concat(cols.map(marker))}});
+    update(current);
+  }
+
+  function update(p){
+    current=p;
+    out.textContent = p<0.1?p.toFixed(4):p<1?p.toFixed(3):p.toFixed(2);
+    var R=fns.map(function(f){return f(p);});
+    fill('c-lin',R[0],ladderLin(p)); fill('c-geo',R[1],ladderGeo(p)); fill('c-sig',R[2],ladderTable(p,tickSig)); fill('c-125',R[3],ladderTable(p,tick125));
+    presets.forEach(function(b){ b.setAttribute('aria-pressed', String(Math.abs(+b.getAttribute('data-p')-p)<1e-9)); });
+    for(var i=0;i<4;i++){ chBps.data.datasets[4+i].data=[{x:p,y:R[i].bps}]; chKeys.data.datasets[5+i].data=[{x:p,y:R[i].keys}]; }
+    chBps.update('none'); chKeys.update('none');
+  }
+  slider.addEventListener('input',function(){ update(sliderToPrice(+slider.value)); });
+  presets.forEach(function(b){ b.addEventListener('click',function(){ var p=+b.getAttribute('data-p'); slider.value=priceToSlider(p); update(p); }); });
+  slider.value=priceToSlider(0.5);
+  build();
+  var mq=matchMedia('(prefers-color-scheme: dark)'); if(mq.addEventListener){ mq.addEventListener('change',build); }
+  new MutationObserver(build).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+})();
+</script>
+</body>
+</html>
