@@ -1,4 +1,4 @@
-# 043: Web client at the site root, one explainer
+# 045: Web client at the site root, one explainer
 
 Date: 2026-09-10. The published site had three surfaces: an executive
 explainer at `/pagebook/`, a second HTML document of design notes at
