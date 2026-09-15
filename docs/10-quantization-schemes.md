@@ -1,10 +1,9 @@
 # Price quantization schemes: linear, geometric, significant-figure, log-base-2
 
 *Research note, September 2026. Companion to `04-architecture.md` §0.2 (the linear
-scheme PageBook ships) and §20 (geometric ticks, deferred to v2). Hyperliquid's rule is
-stated from its public API docs and the MiFID II, Tokyo and Hong Kong tick tables from
-memory of the published schedules; verify against the sources before quoting them
-elsewhere.*
+scheme PageBook ships) and §20 (geometric ticks, deferred to v2). Hyperliquid's rule and
+the exchange tick tables in §2.3.1 are read off the published schedules listed under
+Sources.*
 
 ## 1. What a scheme has to deliver
 
@@ -179,11 +178,32 @@ segment      mantissa range      tick   ticks    relative width
 The swing drops from tenfold to 2.5-fold, one percent of depth costs 100 to 250 keys
 (over 200 only for mantissas in `[40_000, 50_000)`), 2^22 ticks cover 119 decades, and
 every price is still a round decimal. The tick-to-price map needs a three-segment
-lookup per decade instead of a division. MiFID II's RTS 11 tick table is this shape,
-with a second axis that picks a column by the instrument's average daily trade count;
-the Tokyo and Hong Kong spread tables are irregular cousins. That second axis has a
-natural PageBook analogue: `S` as a per-market parameter rather than a global constant,
-coarser for thin markets, still bounded in relative width whatever the price does.
+lookup per decade instead of a division.
+
+This is the European standard. MiFID II's RTS 11 table, in force on every EU and UK
+equity venue since January 2018 (Euronext, Deutsche Börse, London Stock Exchange, SIX,
+Nasdaq Nordic and Baltic, Vienna, Warsaw, Zagreb, Aquis, Equiduct), has 19 price rows
+with breakpoints at 0.1, 0.2, 0.5, 1, 2, 5 and so on up to 50,000, and six liquidity
+columns chosen by the instrument's average daily number of transactions. Every column
+is the 1-2-5 series: the least liquid band ticks 0.01 on prices from 1 to 2, 0.02 from
+2 to 5, 0.05 from 5 to 10, so relative width runs 1% down to 0.4%. Each step up in
+liquidity shifts the column one 1-2-5 cell finer, not one decade, so the most liquid
+band runs 2 bps down to 0.8 bps. That is the detail to take: a per-market granularity
+knob in 1-2-5 steps is smoother than `S` in decades. The PageBook analogue is a
+per-market column index instead of a global `S`, coarser for thin markets, still
+bounded in relative width whatever the price does.
+
+Asia uses coarser cousins. KRX ticks 1, 5, 10, 50, 100, 500 and 1,000 won at
+breakpoints of 1,000, 5,000, 10,000, 50,000, 100,000 and 500,000, a 1-5 series with a
+fivefold swing; TSE's TOPIX100 table has the same shape (0.1 yen below 1,000, 0.5 to
+5,000, 1 above). HKEX's spread table is 1-2-5 at both ends with a flat 0.01 from 0.50
+all the way to 20.00, a linear segment over which the relative tick drifts fortyfold;
+SGX's is similarly irregular. US equities are a flat cent above $1 under Reg NMS
+Rule 612, CME futures a fixed tick per contract, and Binance, Coinbase and the other
+crypto venues a per-symbol tick adjusted by announcement when the price has moved
+enough. Those three are the linear scheme of §2.1 with an operator doing the
+migration by hand. No venue arrived at 1-2-5 independently the way Liquidity Book
+arrived at geometric ticks; it is a regulatory construct that a whole region adopted.
 
 **Binary mantissa.** Floating point without the fraction: `p(t) = (2^M + m) × 2^e`,
 with `e = t >> M` and `m = t & (2^M − 1)`. The tick doubles at every octave, so the
@@ -243,7 +263,7 @@ completeness as the far end of the fineness axis.
 | Per-market parameters | `tick_size`, `lot_size`, band | `lot_size` | `lot_size` | none |
 | Global constants | none | `step`, `t₀` | `S` | none |
 | Changes in PageBook | none | `p(t)` in fixed point, rounding policy, claim-sum proof, dust rule, tests | `p(t)` only, plus §0.3 uses `p(tick_max)` | not viable with padding |
-| Precedent | Serum, OpenBook, Phoenix, Manifest, dYdX v4, Injective | Trader Joe Liquidity Book | Hyperliquid, MiFID II tick tables | Deepstate |
+| Precedent | Serum, OpenBook, Phoenix, Manifest, dYdX v4, Injective; US equities, CME, crypto CEXs | Trader Joe Liquidity Book | Hyperliquid; MiFID II 1-2-5 tables on every EU/UK venue; KRX and TSE 1-5 tables | Deepstate |
 
 ## 4. Assessment
 
@@ -270,3 +290,38 @@ one, and §20 should be updated to say so.
 
 None of this changes v1. Quantization is frozen per market, and the current markets
 are linear.
+
+## 5. Freezing the grid is the concession
+
+`07-classic-dex-comparison.md` §3.7 and the explainer list quantization as a concession
+against SDEX. Against SDEX it is, but SDEX is the outlier. Every traditional venue in
+§2.3.1 quantizes price, with a flat tick, a per-contract tick or a price-dependent
+table, and every one quantizes size as well: board lots of 100 shares in Tokyo and
+Hong Kong, whole shares in the US, contract multiples in futures, millions in
+interbank FX. Fractional shares exist only inside brokers, which fill them from
+inventory rather than posting them to the exchange book. SDEX quantizes amounts at the
+stroop but accepts any ratio of two 32-bit integers as a price, a set dense enough to
+behave as continuous, which is why core needs rounding in the crossing computation and
+why §3.7 talks about dust. The only other venues with that property are AMMs and
+Deepstate-style logarithmic grids, none of them traditional.
+
+What traditional venues do not do is freeze the grid. ESMA reassigns liquidity bands
+yearly, HKEX cut its spreads in phases from 2024, SGX and JPX retune their tables, and
+the SEC has been revising Rule 612. When a tick changes, resting orders at now-invalid
+prices are handled by rule and liquidity stays where it is. A PageBook market cannot
+retune without a new market and a migration of resting orders. The frozen grid is the
+concession, and it is the gap the significant-figure and 1-2-5 grids close: they make
+the per-market choice one that never needs revisiting.
+
+## Sources
+
+[MiFID II RTS 11 tick size table (Vienna Stock Exchange)](https://www.wienerborse.at/en/trading/trading-information/tick-size/),
+[ESMA final report on the tick size regime](https://www.esma.europa.eu/press-news/esma-news/esma-publishes-final-report-tick-size-regime),
+[Nasdaq Nordic MiFID II tick size regime notice](https://view.news.eu.nasdaq.com/view?id=b342eaa0fdc828c42823694e47fec1b57&lang=en),
+[SIX price step overview](https://www.six-group.com/dam/download/the-swiss-stock-exchange/trading/trading-provisions/regulation/trading-guides/price-step-equity.pdf),
+[HKEX Second Schedule spread table](https://www.hkex.com.hk/-/media/HKEX-Market/Services/Rules-and-Forms-and-Fees/Rules/SEHK/Securities/Rules/Sch_2_eng.pdf),
+[HKEX minimum spread reduction FAQ](https://www.hkex.com.hk/-/media/HKEX-Market/Services/Trading/Securities/Overview/Trading-Mechanism/Reduction-of-Minimum-Spreads/Reduction-of-Minimum-Spreads-FAQP2_E.pdf),
+[JPX sub-yen tick sizes for TOPIX100](https://www.jpx.co.jp/files/tse/news/20/b7gje6000004ndt2-att/leaflet_english2.pdf),
+[KRX tick sizes](https://realtrading.com/trading-markets/krx/),
+[SGX tick size cut](https://www.thetradenews.com/sgx-aims-to-boost-liquidity-with-tick-size-cut/),
+[Hyperliquid API: tick and lot size](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size).
