@@ -77,11 +77,13 @@ MUST re-run the same proof on every `level_cap` raise (§12):
 Any order or taker quantity outside `[min_order_lots, max_order_lots]` is rejected,
 the floor is the dust-order defense, the ceiling is half the overflow proof.
 `FeeAccrual(token)` accrues in i128; its ceiling is total token supply, which SAC bounds
-below i128 by construction. Config constants that bound loops but are not per-market:
-`MAX_ROUTE_LEGS` (target 4) and `MAX_REPLACE_BATCH` (40: a replace item's two events
-measure ~340 B together, so 40 items are ~13.9 KB of the 16,384-byte event budget
-(§13) and 64 would exceed it; 40 items on dispersed levels are ~130 footprint entries
-and ~124 writes, inside the 400 / 200 caps, ADR-024).
+below i128 by construction. A new market starts at the contract defaults
+`MAX_LEVELS_CROSSED` = 32 and `level_cap` = 64; `create_market` takes neither as a
+parameter and `set_market_caps` retunes both (§12). Config constants that bound loops
+but are not per-market: `MAX_ROUTE_LEGS` (4) and `MAX_REPLACE_BATCH` (40: a replace
+item's two events measure ~340 B together, so 40 items are ~13.9 KB of the
+16,384-byte event budget (§13) and 64 would exceed it; 40 items on dispersed levels
+are ~130 footprint entries and ~124 writes, inside the 400 / 200 caps, ADR-024).
 
 ### 0.4 Actors
 
@@ -137,7 +139,7 @@ admin-governed, exact at all times.
 | Entry | Durability | Key | Contents | Target size |
 |---|---|---|---|---|
 | `Config` | instance | `Config` | admin `Address`, fee recipient `Address`, paused flag, market counter | ~190 B (named struct; ADR-022) |
-| `Market` | persistent | `Market(market_id)` | base/quote SAC addrs, lot_size, tick_size, tick band, fee bps, min/max order lots, `MAX_LEVELS_CROSSED`, `level_cap` | ~430 B (named struct; written at creation and retune only; ADR-022, ADR-037) |
+| `Market` | persistent | `Market(market_id)` | base/quote SAC addrs, lot_size, tick_size, tick band, fee bps, min/max order lots, `MAX_LEVELS_CROSSED`, `level_cap` | ~400 B (396 B measured; budget 500 B; named struct, written at creation and retune only; ADR-022, ADR-037, ADR-044) |
 
 **Mutability classes.** Market variables split by what may ever change (full analysis
 in `06-slp-sensitivity.md`). Frozen forever: quantization (`lot_size`, `tick_size`,
@@ -165,7 +167,7 @@ joins the two.
 
 | Entry | Durability | Key | Contents | Target size |
 |---|---|---|---|---|
-| `Level` | persistent | `Level(market, side, tick)` | named struct: `generation:u32, head_seq:u32, open_lots:u64, slots:Vec<u64>`; the slot vector holds every seq of the current generation, so `slots.len()` is the tail | 124 B empty, +12 B per slot, 892 B at the default `level_cap` of 64; budget 1,000 B |
+| `Level` | persistent | `Level(market, side, tick)` | named struct: `generation:u32, head_seq:u32, open_lots:u64, slots:Vec<u64>`; the slot vector holds every seq of the current generation, so `slots.len()` is the tail | 124 B empty, +12 B per slot, 892 B at the default `level_cap` of 64 (budget 1,000 B), 1,660 B at `LEVEL_CAP_MAX` = 128 (budget 1,750 B) |
 
 **One named struct, occupancy-sized.** `Level` is a plain `#[contracttype]` struct
 (ADR-036, ADR-037) whose `slots` vec is exactly as long as the queue has reached in the
@@ -404,9 +406,10 @@ settled-owed ledgers with **zero maker-related writes during matching**. The
 `open_lots × tick × tick_size` without reading slots (§8), so lots refunded by settle
 that stayed in `open_lots` would be paid out a second time from other makers' escrow.
 
-**Failure modes.** `UnknownOrder` if no `Order(market, owner, nonce)` is live;
-`NotOwner` if the authenticated address is not the key's owner. There is no footprint
-edge to hit: the machine touches `Order` and one `Level`.
+**Failure modes.** `UnknownOrder` if no `Order(market, owner, nonce)` is live. The
+owner is part of the key and is the address that authenticates, so another address's
+order is simply not found: `NotOwner` is reserved in the error table but never raised.
+There is no footprint edge to hit: the machine touches `Order` and one `Level`.
 
 **Stranded head.** The `s == H` row advances `H` through consecutive zero slots up
 to the tail. The head may still stand on a zero slot when a take's demand ran out:
@@ -458,7 +461,8 @@ place(taker, market, side, limit_tick, qty_lots, start_tick, nonce, flags):
       quote += consumed * best * tick_size      # ONE Level write; loop ends
   if qty_lots > 0:
     fill_or_kill ⇒ fail Unfilled; post_only + crossed ⇒ fail Crossed
-    if no_rest, or the recorded BestTick(opposite) still crosses limit_tick:
+    if no_rest, or the recorded BestTick(opposite) still crosses limit_tick,
+       or remainder < min_order_lots:           # dust is refunded, never rested, never an error
       refund remainder                          # NEVER rest a crossing order (inv. 8)
     else: rest remainder at limit_tick (§9)
   transfer: taker pays the vault the FULL escrow at limit_tick (bid: qty × limit × tick_size
@@ -531,22 +535,29 @@ The other degradations are in the
 pseudocode: `MAX_LEVELS_CROSSED` and a stale bit each end or skip a step with progress
 persisted; a remainder that still crosses is refunded, never rested.
 
-**Multi-leg composition: `route(legs[])`.** Sequential walks across markets, deltas
-netted in invocation memory, one SAC transfer per token at the end. **Route caps are
-per-transaction, not per-leg:** `legs.len() ≤ MAX_ROUTE_LEGS`, and one shared
-`MAX_LEVELS_CROSSED` budget spans all legs, so a route's
-worst-case writes, events, and footprint are the same as a single maximal place plus
-per-leg constants, and the §0.3 creation bound already reserves `MAX_ROUTE_LEGS`
-headroom for the netted transfers. Legs are placed in order; a leg's failure fails the
-route.
+**Multi-leg composition: `route(legs[])`.** Each leg is a full `place` minus the
+taker (its own market, side, limit, quantity, `start_tick`, nonce and flags), so a leg
+may take and rest; the walks run sequentially across markets, deltas are netted in
+invocation memory, and one SAC transfer per token moves at the end. **Route caps are
+per-transaction, not per-leg:** `legs.len() ≤ MAX_ROUTE_LEGS` (`TooManyLegs`), and one
+shared levels budget spans all legs, fixed before the first leg runs as the minimum of
+every leg market's `MAX_LEVELS_CROSSED`, so a route's worst-case writes, events, and
+footprint are the same as a single maximal place plus per-leg constants, and the §0.3
+creation bound already reserves `MAX_ROUTE_LEGS` headroom for the netted transfers.
+Legs are placed in order; a leg's failure fails the route. A leg may not take what an
+earlier leg of the same call rested (that fill's payout would be backed by this call's
+own pay-in, which lands after the backed pay-outs): a later leg on the same market whose
+limit crosses an earlier leg's rest tick on the other side fails `SelfTrade`. The check
+is tick-based and conservative, and it is the only self-trade rule in v1 (§20).
 
 **Owned invariants (§19): 5**, price-time priority, scoped by `start_tick`: takes
 consume strictly best-tick-first among ticks at-or-worse than `start_tick`, FIFO
 within level (tombstones skipped); orders rested at better ticks after simulation keep
 their place, they are not consumed and not harmed. **7**, every loop is bounded by a
-config constant (`MAX_LEVELS_CROSSED`, `MAX_ROUTE_LEGS × level_cap` slots, `MAX_ROUTE_LEGS`,
-`MAX_REPLACE_BATCH`, `level_cap`), the crossed-level budget is shared across legs, not
-multiplied by them; slot reads are per leg, bounded by `level_cap` each. **8** (shared with §9), the book is never crossed after any operation completes:
+config constant (`MAX_LEVELS_CROSSED`, `MAX_ROUTE_LEGS × level_cap` slots, 512 at
+`LEVEL_CAP_MAX`, `MAX_ROUTE_LEGS`, `MAX_REPLACE_BATCH`, `level_cap`), the crossed-level
+budget is shared across legs, not multiplied by them; slot reads are per leg, bounded
+by `level_cap` each. **8** (shared with §9), the book is never crossed after any operation completes:
 a matching loop terminated by a cap refunds its remainder.
 
 **Budget** (§17): take-only, 8 levels swept ≈ 22 touched (band padding on top) /
@@ -592,7 +603,10 @@ dust while it rests, a `min_order_lots`-sized fill inside the spread, which is w
 `min_order_lots × price` and not rent is the deterrent for this class (§17). The
 damage is bounded to a quiet interval on one side of one market and heals on the
 first take; v1 accepts it rather than read the recorded best's `Level` on every
-post-only rest.
+post-only rest. The heal is any take that walks through the phantom; operators run it
+as a crank, a 1-lot `no_rest` take at or through the phantom tick (~0.02 XLM, at most
+`MAX_LEVELS_CROSSED` levels per take), because a `replace` that empties a level never
+clears its bit (ADR-026; a contract-side repair is deferred, §20).
 
 **Budget** (§17): rest at an existing level ≈ 13 footprint / 5 writes / ~1.1 KB /
 **~0.048 XLM** (dominated by `Order` rent; the 64th rest at a price writes the full
@@ -620,13 +634,16 @@ signed authorization holds whatever filled in flight, §8 "Deterministic pay-in"
 the old order's proceeds and refund flow back out; per token, at most one transfer
 each way.
 
-**`replace_batch(items[])`**, ≤ `MAX_REPLACE_BATCH` items, settlement deltas netted
-in invocation memory, one transfer per token at the end. A full book refresh is one
-transaction. Failure of any item fails the batch (all-or-nothing).
+**`replace_batch(items[])`**, ≤ `MAX_REPLACE_BATCH` items (`BatchTooLarge`),
+settlement deltas netted in invocation memory, one transfer per token at the end. A
+full book refresh is one transaction. Failure of any item fails the batch
+(all-or-nothing). Two items may not name the same nonce (`OrderExists`): the second
+would settle an order this batch just rested, whose refund would be backed by the
+call's own pay-in.
 
-**Failure modes.** Everything §7 and §9 can raise (`UnknownOrder`, `NotOwner`,
-`QtyOutOfBounds`, `LevelFull`, `Crossed`); `Paused`, replace contains a
-rest, so it pauses with the entry side of the book (§12).
+**Failure modes.** Everything §7 and §9 can raise (`UnknownOrder`, `QtyOutOfBounds`,
+`LevelFull`, `Crossed`); `Paused`, replace contains a rest, so it pauses with the entry
+side of the book (§12).
 
 **Budget** (§17): one quote to a new tick ≈ 13 touched / 7 writes / ~1.7 KB /
 **~0.0024 XLM** of execution (plus `Level` rent if the tick had none); a 40-quote
@@ -644,7 +661,9 @@ declared as read-only and never conflict.
 - `level(market, side, tick) → LevelInfo`, `{ generation, head_seq, depth, open_lots }`
   from one `Level`, where `depth` is the slot vector's length (the tail).
 - `order(market, owner, nonce) → OrderInfo`, the stored coordinates plus a settlement
-  preview: §7's table evaluated read-only against the current counters.
+  preview: §7's table evaluated read-only against the current counters. Fails
+  `UnknownOrder` when no order is live at that key; a settled nonce and a never-used
+  one are indistinguishable from inside the contract.
 - `quote_place(market, side, limit_tick, qty) → QuoteResult`, the **simulate** step
   of the client's protocol (§14): walks the book read-only and returns
   `{ start_tick, crossed: [{tick, open_lots}], filled_lots, quote_atoms, keys }`, the
@@ -664,10 +683,10 @@ Every state-changing entry point authenticates, explicitly:
 | Entry point | Auth | Composes | Declared footprint | Blocked by pause |
 |---|---|---|---|---|
 | `place` | `taker.require_auth()` | walk (§8) + rest (§9) | band + own rest keys (§14) | yes |
-| `route` | `taker.require_auth()` | walk per leg (§8) | per-leg bands, split across the 400-entry budget (§14) | yes |
+| `route` | `taker.require_auth()` | walk (§8) + rest (§9) per leg | per-leg bands and own rest keys, split across the 400-entry budget (§14) | yes |
 | `settle` | `owner.require_auth()` | settlement (§7) | `Order`, its `Level`, both vault balances | **never** |
 | `replace` / `replace_batch` | `owner.require_auth()` | settlement (§7) + rest (§9) per item (§10) | union of settle's and rest's keys per item | yes |
-| `create_market` | `admin.require_auth()` |, | new `Market`, `Config` read |, |
+| `create_market` | `admin.require_auth()` |, | new `Market`; `Config` (write: market counter); both token instances read (`authorized` check) |, |
 | `set_admin`, `set_fee_recipient`, `set_paused` | `admin.require_auth()` |, | `Config` (write) |, |
 | `set_market_caps` | `admin.require_auth()` | §0.3 re-proof (`level_cap` raise-only) | one `Market` |, |
 | `collect_fees` | none |, | `FeeAccrual`, one vault balance, recipient's balance | **never** |
@@ -681,7 +700,8 @@ Views (§11) authenticate nothing and write nothing.
   `lot_size, tick_size ≥ 1` and `1 ≤ min_order_lots ≤ max_order_lots`
   (`BadQuantization` / `QtyOutOfBounds`); the two §0.3 overflow bounds (`Overflow`);
   and `taker_fee_bps ≤ FEE_BPS_MAX` (`FeeTooHigh`). It does not check for a duplicate
-  pair (§0.1). Assigns the next `market_id` from `Config`'s counter. ~0.088 XLM,
+  pair (§0.1). Assigns the next `market_id` from `Config`'s counter, the one market
+  operation that writes the instance entry (it is an admin op, §1). ~0.081 XLM,
   dominated by `Market` rent (§17).
 - **Asset eligibility (admin's call, contract cannot verify).** The vault is a SAC
   contract balance (§6): no trustline or reserve, the entry is created by the first
@@ -692,18 +712,24 @@ Views (§11) authenticate nothing and write nothing.
   vault (conservation holds), but "exit is never gated" is then true at PageBook's
   layer and false at the asset's. *Clawback-enabled* assets let the issuer pull from
   the vault directly, breaking conservation with no contract involvement. `create_market`
-  SHOULD refuse an asset whose SAC reports `authorized(vault) == false` (one read of a
-  trusted SAC, the only cross-contract call outside `transfer`); clawback is not
+  refuses an asset whose SAC reports `authorized(vault) == false` with
+  `TokenNotAuthorized` (one read of each trusted SAC, the only cross-contract call
+  outside `transfer`); clawback is not
   observable on-chain, so deployments custodying value MUST document that residual
   issuer trust. A taker whose own output-asset balance is frozen simply fails the
   final transfer (makers unharmed, taker burns the fee).
 - **Cranks.** `collect_fees(market, token)` pays the accrued `FeeAccrual` to the fee
-  recipient; ALWAYS works, under any admin state. `keepalive()` bumps the instance TTL
-  out-of-band (~2.3 XLM per ~120 days, mostly wasm code-entry rent, §17), anyone may
-  crank it; admin ops also bump. Market ops never write the instance entry (§1). The
+  recipient; ALWAYS works, under any admin state, at PageBook's layer. The asset layer
+  can still refuse it: if the recipient cannot hold the token (a classic asset with no
+  trustline, a frozen balance) the SAC transfer fails, the accrual stays put, and
+  `set_fee_recipient` is the remedy (observed on testnet: USDC fees stranded on a
+  recipient without a USDC trustline, ADR-044). `keepalive()` extends the instance and
+  code entries to the maximum TTL (~180 days) out-of-band, anyone may crank it, and
+  admin ops do the same. The rent is ~1.7 XLM per 120 days at the current ~30 KB wasm,
+  mostly code-entry rent (§17). Market ops never write the instance entry (§1). The
   crank has no reward, so **if nobody cranks, the instance and code archive**, and the
   next market operation of any kind auto-restores them at that caller's expense
-  (~2.3 XLM on a ~0.03 XLM operation, shown by simulation, never silently charged);
+  (~1.7 XLM on a ~0.03 XLM operation, shown by simulation, never silently charged);
   the venue self-heals but the surprise reads as an outage. Custodial deployments run
   the crank on a schedule; burn-address deployments rely on the first-caller-pays
   fallback or on a v2 reimbursing crank (§20).
@@ -725,7 +751,9 @@ Views (§11) authenticate nothing and write nothing.
 - **Cap retuning: `set_market_caps(market, max_levels_crossed,
   taker_fee_bps, min_order_lots, max_order_lots, level_cap)`.** Retunes the mutable
   class of §1 per market; every call re-runs the §0.3 overflow proof and rejects values
-  that break it; `level_cap` is raise-only and capped at `LEVEL_CAP_MAX` (§2). The
+  that break it (`Overflow`); `max_levels_crossed` must be non-zero (`BadQuantization`),
+  and `level_cap` is raise-only and must lie in `[MAX_REPLACE_BATCH, LEVEL_CAP_MAX]`
+  (`QtyOutOfBounds`; §0.3, §2). The
   entry point exists because validators retune Soroban's limits every few months (the
   SLP process) and a contract cannot read network config, no host function exposes
   resource limits or remaining budget, so stored caps can only track the network
@@ -749,12 +777,20 @@ The contract's output surface (per tx ≤ 16,384 bytes):
 | `filled` | walk (§8), one per crossed level | `side, tick, lots, quote`, `side` is the consumed level's (makers') side, as for `swept` |
 | `swept` | walk (§8) | `side, tick, generation` |
 | `settled` | settlement (§7), replace (§10) | `owner, nonce, filled_lots, refunded_lots` |
-| `top_changed` | walk (§8), rest (§9) | `side, old, new` |
+| `top_changed` | walk (§8), rest (§9) | `side, old, new`; tick 0 encodes an empty side (tick 0 is never a legal price, §0.2) |
 
 Event bytes are bounded by the same caps that bound the loops: ≤ `MAX_LEVELS_CROSSED`
 take/sweep events per invocation (shared across route legs) ⇒ worst case ≈ 64 ×
 ~100 B ≈ 6.4 KB, asserted in tests. Top-of-book changes are events, not hooks,
-Soroban cannot resource-cap an untrusted synchronous call (§20).
+Soroban cannot resource-cap an untrusted synchronous call (§20). Every event's topic
+carries the market id alongside the name.
+
+**Typed errors** are the other half of the output surface. Codes are a per-contract
+table in declaration order, append-only; retired codes (12, 19, 22) are never reused.
+A SAC called from inside PageBook's frame raises its *own* table's codes (its
+`BalanceError` is #10, the number of PageBook's `Unfilled`), so a client MUST attribute
+a contract error to the contract that raised it, from the diagnostic events, before
+decoding the number (ADR-033, ADR-034).
 
 ### 14. The client's process: simulate → pad → submit
 
@@ -790,9 +826,10 @@ over the simulated ones (about 100k instructions per padded key, existing or not
 measured on testnet (ADR-026), write bytes for band keys that exist, disk-read bytes
 for classic entries), since simulation budgets exactly what it touched. `Config`,
 `Market`, and both token instances are declared read-only (§16). Write-byte cover for an
-existing band key is either a flat 1,100 B per key, enough for a `Level` at the default
-`level_cap` (pad v1), or the entry's actual size from the same RPC sweep that reads
-liveness (pad v2, ADR-028). Band padding is required because a new level can appear at
+existing band key is the entry's actual size from the same RPC sweep that reads
+liveness, plus a small growth margin (pad v2, the client's default; ADR-028, ADR-039); a
+flat 1,100 B per key, enough for a `Level` at the default `level_cap` (pad v1), survives
+only as a research mode. Band padding is required because a new level can appear at
 *any* tick inside the walk range; a queue that deepens, empties or resets in flight
 stays inside the `Level` key the band already holds. The band need not
 extend past the deepest level the take can *consume*: the walk never scans for the
@@ -937,7 +974,7 @@ stroops per byte per 120-day minimum TTL at the 1,000/KB floor (03 §Fees, ADR-0
 | `TickWord` / `TickSummary` | 372 / 368 B | ~0.062 / ~0.061 XLM |
 | `BestTick` | 156 B | ~0.026 XLM |
 | `FeeAccrual` | 184 B | ~0.031 XLM |
-| `Market` | 524 B | ~0.087 XLM |
+| `Market` | 480 B | ~0.080 XLM |
 | a caller's first SAC balance in a token | 224 B | ~0.037 XLM |
 
 **Estimated resource fees per operation.** Execution (instructions, write entries at
@@ -961,7 +998,7 @@ rewrites are live and name what it creates:
 | place, take only, 8 levels swept | **~0.006 XLM** | exec 62k stroops (+ `FeeAccrual` 0.031 and the taker's first balance 0.037, once) |
 | place, take 8 levels + rest (empty side, first take) | **~0.31 XLM** | exec 0.008 + the rest's five entries 0.236 + `FeeAccrual` and first balance 0.068 |
 | place, maximal take (32 levels) | **~0.025 XLM** | exec 253k stroops (72 writes) |
-| `create_market` | **~0.088 XLM** | `Market` rent 0.087 |
+| `create_market` | **~0.081 XLM** | `Market` rent 0.080 |
 | `collect_fees` | **~0.001 XLM** | exec (+ recipient's first balance 0.037, once) |
 | `keepalive` (whole venue, per ~120 d) | **~1.7 XLM** | wasm code-entry rent (~30 KB at ⅓ discount) |
 
@@ -1001,9 +1038,12 @@ Readings, in design terms:
   does not exist costs its tx bytes (~300 stroops) plus, if read-write, the
   write-entry fee (2,500 stroops, 0.00025 XLM); one that exists and is read-write is
   also charged its write bytes as if written (~200 to ~850 stroops for a `Level`, by depth); a 100-key
-  band is therefore ~0.03 XLM, still small. What it is not small in is capacity: each
-  read-write key is one of the transaction's 200 and the ledger's 1,000 write entries,
-  and each existing one is write bytes against 132 KB / 286,720 B (ADR-025). The
+  band is therefore ~0.03 XLM, still small. Each declared key also costs ~100k
+  instructions of footprint processing, existing or not, ~70 stroops in fees but real
+  headroom in the declared instruction budget (§14, ADR-026). What it is not small in is
+  capacity: each read-write key is one of the transaction's 200 and the ledger's 1,000
+  write entries, and each existing one is write bytes against 132 KB / 286,720 B
+  (ADR-025). The
   exception in rent terms is an archived entry the walk *touches* (a stale bit over an
   archived level): that one is restored at ~0.04 to ~0.17 XLM by depth, once, and simulation shows it
   (§14).
@@ -1025,7 +1065,7 @@ entries). Per-structure lifecycles are specified in Part I; the summary:
 
 | Entry | TTL comes from | On archival (~120 d idle) |
 |---|---|---|
-| `Config` (instance) + wasm code | permissionless `keepalive()` crank + admin ops, **never market ops** | crank restores (~2.3 XLM/120 d, mostly code rent); if the crank lapses, the next market op of any kind auto-restores at that caller's expense (§12) |
+| `Config` (instance) + wasm code | permissionless `keepalive()` crank + admin ops, **never market ops** | the crank extends both to the maximum TTL (~180 d); ~1.7 XLM per 120 d of rent, mostly code; if the crank lapses, the next market op of any kind auto-restores at that caller's expense (§12) |
 | `Market`, `BestTick`, `TickSummary`, `TickWord`, `Level`, `FeeAccrual` | 120-d minimum at creation/restore; whoever restores pays the next chunk | auto-restore on touch (generation survives) |
 | `Order` | 120-d minimum at rest (maker pays); the current contract has no per-order TTL extension entry point | the settling maker auto-restores; costs land on beneficiary |
 | Vault SAC balances (§6) | the token contract's policy; touched by every settling op | auto-restore on touch; toucher pays (in practice never idle while a market is active) |
@@ -1061,9 +1101,9 @@ owns it; property tests cite these numbers.
 6. No operation touches entries outside its declared key family; cap edges degrade
    gracefully (refund), and only walking past `pad_end` traps. *(§15)*
 7. Every loop is bounded by a config constant (`MAX_LEVELS_CROSSED`,
-   `MAX_ROUTE_LEGS × level_cap` slots, `MAX_ROUTE_LEGS`, `MAX_REPLACE_BATCH`, `level_cap`), the
-   crossed-level budget is shared across legs, not multiplied by them; slot reads are per
-   leg, bounded by `level_cap` each. *(§8)*
+   `MAX_ROUTE_LEGS × level_cap` slots, 512 at `LEVEL_CAP_MAX`, `MAX_ROUTE_LEGS`,
+   `MAX_REPLACE_BATCH`, `level_cap`), the crossed-level budget is shared across legs,
+   not multiplied by them; slot reads are per leg, bounded by `level_cap` each. *(§8)*
 8. The book is never crossed after any operation completes: a matching loop terminated
    by a cap refunds its remainder; post-only compares against recorded `BestTick` and
    fails closed. *(§8, §9)*
@@ -1097,6 +1137,12 @@ owns it; property tests cite these numbers.
 - **Volatility-scaled taker fee** (LB surge pricing): the matching loop already counts
   crossings and `FeeAccrual` is already RW, zero added footprint; costs `quote_place`
   exact fee determinism. v2, decision note required.
-- **Self-trade prevention, oracle-pegged orders, batch-auction market type**
-  (SPEEDEX-flavored sibling for hot markets): design notes exist in
-  `01-prior-art.md`; not v1.
+- **Pointer repair on cancel-to-empty.** A `settle` or `replace` that empties a level
+  leaves its bit set and, if that tick was the recorded best, a phantom `BestTick`
+  that only a take heals (§5, §9). Clearing the bit when the exit path knows the level
+  is empty (its own order was the last, `open_lots` hit zero) is one more write on
+  `settle`; not adopted for v1 (ADR-026, ADR-046). Decision note required before
+  mainnet.
+- **Self-trade prevention within a market** (v1 has only the cross-leg `route` rule,
+  §8), **oracle-pegged orders, batch-auction market type** (SPEEDEX-flavored sibling
+  for hot markets): design notes exist in `01-prior-art.md`; not v1.
