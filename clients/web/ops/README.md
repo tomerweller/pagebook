@@ -152,10 +152,10 @@ a state file is lost.
 
 ## Fly deployment (retired 2026-09-23)
 
-The bots moved to a Docker host on 2026-09-23 (ADR-047). Machine
-`080d229a790448` of app `pagebook-bots` stays stopped, with its volume and
-secrets, as the rollback target until 2026-09-30; the ADR has the rollback
-steps. What follows describes that deployment as it ran.
+The bots moved to a Docker host on 2026-09-23 (ADR-047) and machine
+`080d229a790448` of app `pagebook-bots` was destroyed the same evening. What
+follows describes that deployment as it ran; a return to Fly would start
+from `fly deploy` again.
 
 `clients/web/fly.toml` runs the maker, trader, and watchdog on one Fly Machine
 in `iad`; its `[env]` block carries `CONTRACT`, `MARKET` (0), both SAC ids and

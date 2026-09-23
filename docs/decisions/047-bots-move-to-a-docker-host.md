@@ -636,6 +636,28 @@ stop the three earlier wind-downs used, plus the nonce scan.
   `replace_batch` landed in the first half minute; all 40 pre-stop nonces
   adopted.
 
-The move is complete. Fly machine `080d229a790448` stays stopped as the
-rollback target; phase 5 (destroy the machine, volume and app) is due on or
-after 2026-09-30 with the operator's confirmation, and its record goes here.
+### Phase 5, 2026-09-23 22:56 UTC
+
+The operator waived the seven-day rollback window the same evening, after
+the two clean checks and the drill. `fly machine destroy 080d229a790448
+--force` removed the stopped machine at 22:56:05Z. The volume
+`vol_r682qpoe0xglm3n4` (`pagebook_data`, 1 GB, created 2026-08-25) and the
+app `pagebook-bots` with its three secrets were left for the operator to
+remove by hand, since the agent's tooling refused those two destroys:
+
+```bash
+fly volumes destroy vol_r682qpoe0xglm3n4 -a pagebook-bots -y
+```
+
+```bash
+fly apps destroy pagebook-bots -y
+```
+
+The volume still holds the Fly era's `mm.log` (40 MB), `trader.log` (18 MB)
+and `keepalive.log` (4 MB), which were not archived; the state files, the
+watchdog log and every number the ADR-033 to ADR-044 records quote are
+already in the repository or in `~/pagebook-migration/` on the host. With
+the machine gone there is no rollback to Fly; the rollback section above
+would need a fresh `fly deploy` first.
+
+The move is complete.
