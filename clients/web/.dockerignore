@@ -4,3 +4,7 @@ ops/*.log
 ops/*.out
 ops/state
 ops/logs
+# The compose secrets files live under ops/deploy; COPY ops must not bake them
+# into an image layer.
+ops/deploy/env
+ops/deploy/env.*

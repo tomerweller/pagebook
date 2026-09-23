@@ -145,16 +145,45 @@ watchdog() {
 watchdog &
 watchdog_pid=$!
 
+# True while any process is still in process group $1. The image has no ps,
+# so read /proc: field 3 after the ")" that closes the comm is the pgrp.
+group_alive() {
+  local d
+  for d in /proc/[0-9]*; do
+    [[ "$(sed 's/.*) //' "$d/stat" 2>/dev/null | awk '{print $3}')" == "$1" ]] && return 0
+  done
+  return 1
+}
+
 shutdown() {
   # The runner loops are separate processes; a shell variable cannot reach
   # them. The stop file can.
   touch "$stop_file"
   trap - SIGINT SIGTERM
+  local groups=() child pid_file
   for pid_file in "$mm_pid_file" "$trader_pid_file"; do
     child=$(cat "$pid_file" 2>/dev/null || true)
     if [[ "$child" =~ ^[0-9]+$ ]]; then
+      groups+=("$child")
       kill -TERM -- "-$child" 2>/dev/null || kill -TERM "$child" 2>/dev/null || true
     fi
+  done
+  # The bots are grandchildren, so `wait` cannot see them, and a runner loop
+  # returns as soon as its npx wrapper dies while the node process is still
+  # finishing the cycle (the maker saving state, the trader settling its
+  # rests). Poll the process groups until both are gone or the 180 s grace
+  # period (Fly kill_timeout, compose stop_grace_period) is nearly spent.
+  # Without this the supervisor exited seconds after the signal and cut the
+  # bots off mid-cycle (ADR-044).
+  local waited=0 alive
+  while (( waited < 170 )); do
+    alive=0
+    for child in ${groups[@]+"${groups[@]}"}; do
+      group_alive "$child" && alive=1
+    done
+    (( alive )) || break
+    sleep 1
+    waited=$((waited + 1))
   done
   kill -TERM "$mm_pid" "$trader_pid" "$watchdog_pid" "$keepalive_pid" "$refill_pid" 2>/dev/null || true
   wait "$mm_pid" 2>/dev/null || true
