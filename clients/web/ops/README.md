@@ -86,6 +86,66 @@ is how the original migration cut over).
 - Feeds (Coinbase, Kraken, Bitstamp), Soroban RPC, and Horizon are the only outbound
   dependencies; all HTTPS.
 
+## Host deployment (one supervisor container)
+
+`deploy/docker-compose.host.yml` runs the Fly layout on any Docker host as a
+single container: the supervisor in `deploy/fly-entrypoint.sh` starts the
+maker, the trader, the daily keepalive and refill cranks and the hourly
+watchdog, with `/data` on the external volume `pagebook-data`
+(`/data/state/mm-<CONTRACT>-m<MARKET>.json`, `/data/logs/*.log`). The
+contract, market, SAC ids and USDC issuer are the compose file's
+`environment` block, the same values as `fly.toml`. ADR-047 records the move
+from Fly and holds the step-by-step cutover.
+
+Bring-up, from `clients/web/ops/deploy`:
+
+1. `docker volume create pagebook-data`. The volume is external so `docker
+   compose down -v` cannot delete the state file.
+2. Secrets into `./env`, mode 600 (`umask 077`). A running Fly Machine hands
+   them out with `fly machine exec <id> -a pagebook-bots "printenv
+   PB_SECRET_PB_MM"` (likewise `PB_SECRET_PB_TRADER` and
+   `PB_SECRET_PB_KEEPER`); the stellar CLI keychain is the other source.
+   `.dockerignore` keeps the file out of the image.
+3. `docker compose -f docker-compose.host.yml build`, then the read-only
+   checks with the real env: `run --rm --no-deps bots sh -c 'npx tsx
+   ops/keepalive.ts ... --dry-run'` and `run --rm --no-deps bots sh -c 'npx
+   tsx ops/refill.ts --usdc-issuer $USDC_ISSUER --dry-run'`. Never start
+   `mm.ts` on a host while another maker runs on the same identity
+   (ADR-037).
+4. Seed the volume with the maker's state file from the old host (handoff
+   below), then `docker compose -f docker-compose.host.yml up -d`.
+5. After boot, count bot process groups: each bot runs under `setsid`, so
+   its `npx`, `tsx` and `node` processes share one pgid, and the listing
+   must show exactly two. Run `check.ts` by hand at 5 and 35 minutes; the
+   supervisor's own watchdog runs at 5 minutes and then hourly into
+   `/data/logs/watchdog.log`.
+
+   ```bash
+   docker compose -f docker-compose.host.yml exec bots bash -c 'for d in /proc/[0-9]*; do c=$(tr "\0" " " < $d/cmdline 2>/dev/null); case "$c" in *ops/mm.ts*|*ops/trader.ts*) echo "pgid $(awk "{print \$5}" $d/stat) $c";; esac; done | sort'
+   ```
+
+Stopping. `docker compose -f docker-compose.host.yml stop` sends SIGTERM to
+the supervisor, which signals both bot process groups and then waits up to
+170 s for them to exit (the maker at its cycle boundary with its state
+saved, the trader after settling its rests) before it lets the container go
+down; `stop_grace_period` is 180 s. Rebuilds (`up -d --build`), `dockerd`
+restarts and host reboots take the same path, so `restart: unless-stopped`
+plus state resume keeps them safe.
+
+State handoff to or from another host: stop the maker without
+`--cancel-on-exit`, copy `mm-<CONTRACT>-m<MARKET>.json` into the other
+host's state directory, start, and confirm the first `loop` line adopts the
+quotes. Into the volume before a first start:
+
+```bash
+docker run --rm -v pagebook-data:/data -v "$PWD":/h alpine sh -c 'mkdir -p /data/state /data/logs && cp /h/mm-<CONTRACT>-m<MARKET>.json /data/state/'
+```
+
+Out of it, the same command with the two `cp` arguments reversed. A daily
+crontab entry that copies `/data/state/*.json` out this way is the backup;
+the nonce-range scan in the redeploy skill is the last-resort recovery when
+a state file is lost.
+
 ## Fly deployment
 
 `clients/web/fly.toml` runs the maker, trader, and watchdog on one Fly Machine

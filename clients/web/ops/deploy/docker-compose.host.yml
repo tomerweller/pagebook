@@ -1,0 +1,46 @@
+# PageBook bots on a Docker host (ADR-047): the maker, trader, keepalive and
+# refill cranks and the watchdog, all under the supervisor in
+# fly-entrypoint.sh, as one container with /data on a named volume. This is
+# the same image and process layout the Fly Machine ran. From this directory:
+#
+#   docker volume create pagebook-data              # once; seed the state file before the first start
+#   cp env.example env && chmod 600 env             # fill in the PB_SECRET_* values
+#   docker compose -f docker-compose.host.yml up -d --build
+#   docker compose -f docker-compose.host.yml logs -f
+#   docker compose -f docker-compose.host.yml exec bots tail -f /data/logs/watchdog.log
+#
+# The volume is external so `down -v` cannot delete the maker's state file.
+# See ops/README.md for the cutover, rollback and backup procedures.
+
+name: pagebook-bots
+
+services:
+  bots:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    env_file: ./env
+    environment:
+      CONTRACT: CAYPAQDKNWMHRATKU5DQ327VDHVRSIVK7UGVWT2A5SUZCUFTLUHXH2JA
+      MARKET: "0"
+      BASE_SAC: CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
+      QUOTE_SAC: CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA
+      USDC_ISSUER: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+    volumes:
+      - pagebook-data:/data
+    # tini as pid 1 forwards SIGTERM to the supervisor and reaps orphans.
+    init: true
+    restart: unless-stopped
+    # Fly's kill_timeout. The supervisor's shutdown waits for the bots to
+    # finish their cycle (maker saves state, trader settles its rests) before
+    # it exits, so a stop or rebuild does not cut them off.
+    stop_grace_period: 180s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+volumes:
+  pagebook-data:
+    external: true
