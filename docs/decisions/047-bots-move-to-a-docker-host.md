@@ -664,3 +664,14 @@ check now reads the contract and market from `docker-compose.host.yml`, and
 the redeploy skill's cutover step rebuilds the container on the host).
 
 The move is complete.
+
+### Adjustment, 2026-09-23 23:20 UTC: refill every six hours
+
+The evening's flow was one-directional: the trader bought XLM off the ask
+ladder and the maker's free XLM fell from 37,887 at 22:27Z to 29,183 at
+23:17Z, about 11,000 an hour, under the 30,000 refill floor (ADR-035) with
+the daily crank's next run 23 hours away. At that rate the free balance
+stops covering ask-side escrow within an hour or two and the ADR-033
+failure mode begins. The refill was run by hand, and the supervisor's
+refill loop now sleeps 21,600 s instead of 86,400 s; the keepalive stays
+daily.

@@ -331,7 +331,7 @@ def main():
         held = bal.get(asset, 0.0)
         if held < floor:
             flags.append(f"{label} {asset} {held:,.0f} is under its {floor:,.0f} floor "
-                         "(the daily refill crank tops it up)")
+                         "(the refill crank tops it up every six hours)")
 
     report["flags"] = flags
     if a.json:
