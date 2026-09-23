@@ -2,9 +2,9 @@
 """Outside-in health check for the live PageBook deployment.
 
 Reads only public HTTP endpoints (Soroban RPC, Horizon, a spot feed), so it
-runs anywhere: a laptop, CI, or an isolated cloud session with no fly.io
-credentials and no stellar CLI keychain. It therefore cannot see the fly
-machine, the bots' logs, or the on-machine watchdog; `clients/web/ops/check.ts`
+runs anywhere: a laptop, CI, or an isolated cloud session with no access to
+the bots host and no stellar CLI keychain. It therefore cannot see the
+container, the bots' logs, or the watchdog beside them; `clients/web/ops/check.ts`
 does that and needs the bots' own log and state files. What this sees instead
 is the ledger, which is the state the bots are supposed to be moving.
 
@@ -19,7 +19,8 @@ Three signals, in the order they answer "is the venue alive":
   reserves   both bots' balances against the ADR-035 refill floors.
 
 Configuration is read from the repo so this does not go stale after a
-redeploy: contract and market from `clients/web/fly.toml`, bot addresses from
+redeploy: contract and market from `clients/web/ops/deploy/docker-compose.host.yml`,
+bot addresses from
 `clients/web/ops/refill.ts`. Flags override any of it.
 
 Exit status is 0 whether or not anything is flagged: read the FLAGS line, or
@@ -42,7 +43,7 @@ from pathlib import Path
 UA = {"User-Agent": "pagebook-health/1.0"}
 
 REPO = Path(__file__).resolve().parents[2]
-FLY_TOML = REPO / "clients" / "web" / "fly.toml"
+COMPOSE_FILE = REPO / "clients" / "web" / "ops" / "deploy" / "docker-compose.host.yml"
 REFILL_TS = REPO / "clients" / "web" / "ops" / "refill.ts"
 
 # XDR discriminants, for building a LedgerKey and walking a stored ScVal map.
@@ -198,8 +199,8 @@ def main():
     p.add_argument("--rpc", default="https://soroban-testnet.stellar.org")
     p.add_argument("--horizon", default="https://horizon-testnet.stellar.org")
     p.add_argument("--spot", default="https://api.coinbase.com/v2/prices/XLM-USD/spot")
-    p.add_argument("--contract", help="default: CONTRACT in clients/web/fly.toml")
-    p.add_argument("--market", type=int, help="default: MARKET in clients/web/fly.toml")
+    p.add_argument("--contract", help="default: CONTRACT in clients/web/ops/deploy/docker-compose.host.yml")
+    p.add_argument("--market", type=int, help="default: MARKET in clients/web/ops/deploy/docker-compose.host.yml")
     p.add_argument("--maker", help="default: FLY_MAKER in clients/web/ops/refill.ts")
     p.add_argument("--trader", help="default: FLY_TRADER in clients/web/ops/refill.ts")
     p.add_argument("--xlm-floor", type=float, default=30_000,
@@ -215,11 +216,11 @@ def main():
     p.add_argument("--json", action="store_true", help="emit the whole report as JSON")
     a = p.parse_args()
 
-    contract = a.contract or from_repo(FLY_TOML, r'CONTRACT\s*=\s*"([A-Z0-9]+)"', "contract")
+    contract = a.contract or from_repo(COMPOSE_FILE, r'CONTRACT:\s*([A-Z0-9]+)', "contract")
     if not contract:
         p.error("no contract to check: pass --contract")
     market = a.market if a.market is not None else int(
-        from_repo(FLY_TOML, r'MARKET\s*=\s*"(\d+)"', "market") or 0)
+        from_repo(COMPOSE_FILE, r'MARKET:\s*"(\d+)"', "market") or 0)
     maker = a.maker or from_repo(REFILL_TS, r'FLY_MAKER\s*=\s*"([A-Z0-9]+)"', "maker")
     trader = a.trader or from_repo(REFILL_TS, r'FLY_TRADER\s*=\s*"([A-Z0-9]+)"', "trader")
 
