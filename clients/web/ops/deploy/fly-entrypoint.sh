@@ -74,14 +74,16 @@ run_keepalive() {
 }
 
 run_refill() {
-  # Testnet-only friendbot top-up (ADR-034). Signs only with locally generated
-  # throwaway keys, so it needs no bot identity or secret.
+  # Testnet-only friendbot top-up (ADR-035). Signs only with locally generated
+  # throwaway keys, so it needs no bot identity or secret. Every six hours: a
+  # one-directional session drains the maker's free XLM at about 10,000 an
+  # hour (ADR-047), which a daily run cannot keep above the 30,000 floor.
   while [[ ! -f "$stop_file" ]]; do
     npx tsx ops/refill.ts \
       --usdc-issuer "$usdc_issuer" \
       --log "$log_dir/refill.log" || true
     [[ ! -f "$stop_file" ]] || break
-    sleep 86400
+    sleep 21600
   done
 }
 

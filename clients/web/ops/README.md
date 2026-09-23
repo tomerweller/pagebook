@@ -90,8 +90,8 @@ is how the original migration cut over).
 
 `deploy/docker-compose.host.yml` runs every bot on any Docker host as a
 single container: the supervisor in `deploy/fly-entrypoint.sh` starts the
-maker, the trader, the daily keepalive and refill cranks and the hourly
-watchdog, with `/data` on the external volume `pagebook-data`
+maker, the trader, the daily keepalive crank, the six-hourly refill crank and
+the hourly watchdog, with `/data` on the external volume `pagebook-data`
 (`/data/state/mm-<CONTRACT>-m<MARKET>.json`, `/data/logs/*.log`). The
 contract, market, SAC ids and USDC issuer are the compose file's
 `environment` block; the outside-in health check in `tools/health/` reads the
