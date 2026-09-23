@@ -121,8 +121,12 @@ Bring-up, from `clients/web/ops/deploy`:
    `/data/logs/watchdog.log`.
 
    ```bash
-   docker compose -f docker-compose.host.yml exec bots bash -c 'for d in /proc/[0-9]*; do c=$(tr "\0" " " < $d/cmdline 2>/dev/null); case "$c" in *ops/mm.ts*|*ops/trader.ts*) echo "pgid $(awk "{print \$5}" $d/stat) $c";; esac; done | sort'
+   docker compose -f docker-compose.host.yml exec bots bash -c 'for d in /proc/[0-9]*; do c=$(tr "\0" " " < $d/cmdline 2>/dev/null); case "$c" in *"/proc/"*) ;; *ops/mm.ts*|*ops/trader.ts*) echo "pgid $(sed "s/.*) //" $d/stat | awk "{print \$3}") $c";; esac; done | sort'
    ```
+
+   (The pgid is read after the `)` that closes the command name: `npx` sets
+   a process title with spaces, which breaks a plain field count on
+   `/proc/<pid>/stat`. The first case arm skips the listing shell itself.)
 
 Stopping. `docker compose -f docker-compose.host.yml stop` sends SIGTERM to
 the supervisor, which signals both bot process groups and then waits up to
@@ -146,7 +150,12 @@ crontab entry that copies `/data/state/*.json` out this way is the backup;
 the nonce-range scan in the redeploy skill is the last-resort recovery when
 a state file is lost.
 
-## Fly deployment
+## Fly deployment (retired 2026-09-23)
+
+The bots moved to a Docker host on 2026-09-23 (ADR-047). Machine
+`080d229a790448` of app `pagebook-bots` stays stopped, with its volume and
+secrets, as the rollback target until 2026-09-30; the ADR has the rollback
+steps. What follows describes that deployment as it ran.
 
 `clients/web/fly.toml` runs the maker, trader, and watchdog on one Fly Machine
 in `iad`; its `[env]` block carries `CONTRACT`, `MARKET` (0), both SAC ids and

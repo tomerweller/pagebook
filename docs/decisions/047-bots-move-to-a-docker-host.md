@@ -290,10 +290,12 @@ kill goes through `bash -c`.
    copy. Then `fly sftp get` `mm.log`, `trader.log`, `watchdog.log`,
    `keepalive.log` and `refill.log` from `/data/logs`.
 
-5. Let the machine exit: `kill -CONT <supervisor pid>` in the console. Its
-   `wait -n` returns for the finished runner, `shutdown` finds nothing left
-   to signal, and the machine exits and stays stopped, as it did in the
-   ADR-036, 037 and 044 wind-downs. Confirm `stopped` in `fly status`. If
+5. Let the machine exit: `kill -CONT <supervisor pid>` in the console, or
+   over exec as `fly machine exec <id> -a pagebook-bots "sh -c 'kill -CONT
+   <pid>'"` (exec runs a bare argv, and `kill` is a shell builtin in this
+   image). Its `wait -n` returns for the finished runner, `shutdown` finds
+   nothing left to signal, and the machine exits and stays stopped, as it
+   did in the ADR-036, 037 and 044 wind-downs. Confirm `stopped` in `fly status`. If
    the machine comes back up instead, the entrypoint clears the stop file
    and the bots resume on Fly, which is harmless as long as phase 3 has not
    started: run `fly machine stop <id>` and repeat this phase.
@@ -327,8 +329,13 @@ trader rest.
    `ops/mm.ts` and one for `ops/trader.ts`:
 
    ```bash
-   docker compose -f docker-compose.host.yml exec bots bash -c 'for d in /proc/[0-9]*; do c=$(tr "\0" " " < $d/cmdline 2>/dev/null); case "$c" in *ops/mm.ts*|*ops/trader.ts*) echo "pgid $(awk "{print \$5}" $d/stat) $c";; esac; done | sort'
+   docker compose -f docker-compose.host.yml exec bots bash -c 'for d in /proc/[0-9]*; do c=$(tr "\0" " " < $d/cmdline 2>/dev/null); case "$c" in *"/proc/"*) ;; *ops/mm.ts*|*ops/trader.ts*) echo "pgid $(sed "s/.*) //" $d/stat | awk "{print \$3}") $c";; esac; done | sort'
    ```
+
+   The pgid is read after the `)` that closes the command name, because
+   `npx` sets a process title with spaces in it and a plain field count on
+   `/proc/<pid>/stat` misreads those rows. The first case arm skips the
+   listing shell itself, whose command line contains the patterns.
 
 4. Watch adoption: `docker compose -f docker-compose.host.yml exec bots tail
    -f /data/logs/mm.log`. The first `loop` line carries `live` 40 and the
@@ -352,11 +359,16 @@ trader rest.
    docker run --rm -v ~/code/pagebook-ops:/repo -w /repo/clients/web node:22-slim sh -c 'npm ci --no-audit --no-fund >/dev/null && npx tsx ../../.claude/skills/redeploy-testnet/scripts/scan-orders.mts CAYPAQDKNWMHRATKU5DQ327VDHVRSIVK7UGVWT2A5SUZCUFTLUHXH2JA GDBXA45UBW2O3UH2RJOCOBXRGEMIP5745RQRINZZ2WHKECHHKKUWDOBH <base> <base+4000> --market 0'
    ```
 
-   The maker's base is `next_nonce` from `mm-final.json` rounded down to a
-   thousand; the hits must be exactly the 40 nonces in the state file. The
-   trader's base is its last Fly boot second, read from any of its recent
-   transactions on Horizon; the scan must find no live rest. A straggler is
-   settled the way the skill's step 4.5 describes.
+   Bot nonces are `boot_seconds * 1000 + k`, and the maker's counter
+   persists in its state file, so both identities' bases are the Fly
+   machine's last start second (the `start` event's timestamp, here
+   1,789,072,630). Scan from there to just past the maker's current
+   `next_nonce`; the redeploy skill's shortcut of rounding `next_nonce` down
+   to a thousand only works while the counter is still near its base, and
+   after thirteen days it was 22,884 past it with the live quotes far below.
+   The maker hits must be exactly the nonces in the current state file; the
+   trader scan must find no live rest. A straggler is settled the way the
+   skill's step 4.5 describes.
 
 7. Outside-in: `python3 tools/health/pagebook-health.py` reads `FLAGS: none`
    with `rested` and `top_changed` events still flowing, now from the host
@@ -487,7 +499,143 @@ stop the three earlier wind-downs used, plus the nonce scan.
   branch to be on GitHub; phase 0 ran from the worktree, and the env file
   and image move with a rebuild (the volume is independent of the checkout).
 
-Still to append: Fly stop time and the `shutdown done` tails;
-`mm-final.json` quote count and `next_nonce` against the insurance copy; the
-first host `loop` line; the two `MM OK` lines; both nonce scans; the
-outside-in check after cutover; the stop drill; the Fly destroy date.
+### Phase 1, 2026-09-23 22:07 UTC
+
+- Branch committed as `d7e8ffc` (compose file, supervisor shutdown wait,
+  dockerignore, env.example, README section, this ADR).
+- Fly machine `080d229a790448` still `started`. The volume's state directory
+  holds the live file `mm-CAYP…H2JA-m0.json` (3,442 B, written 22:07) beside
+  the retired contracts' files (`mm-CAMH…56F4-m0.json`, `mm-CB6I…DAZB.json`,
+  `mm.json`) and two August rebuild and cancel copies, all kept as history.
+- The watchdog's last three hourly lines are `MM OK` with 40 live quotes,
+  0 bad outcomes on either bot, maker XLM between 34,009 and 36,629; the
+  maker log's last line was a `replace` that landed (`b69c97…2f4b`).
+- Insurance copy over `fly machine exec` to
+  `~/pagebook-migration/mm-pre-20260923T220746Z.json` (also `mm-pre.json`),
+  3,442 B, same size as on the volume: 40 quotes (20 bids, 20 asks),
+  `next_nonce` 1,789,072,652,878, 16,316 fills, 387,254 lots, `inv0` 59,782
+  XLM and 72,837 USDC (the ADR-044 cutover balances).
+
+### Phase 2, 2026-09-23 22:18 to 22:25 UTC
+
+- Discovery over `fly machine exec` (a base64-encoded script run through
+  `sh -c`): supervisor pid 643 with parent pid 1 (`/fly/init`), five runner
+  and watchdog subshells, maker group 657 and trader group 658 (each the
+  `npx` wrapper, `sh -c tsx`, the `tsx` node and the bot's node process),
+  pid files matching, machine up 13 days.
+- 22:18:11Z: SIGSTOP to 643 (state `T` confirmed), stop file set, SIGTERM to
+  groups 657 and 658 from bash. The trader logged `shutdown done` at
+  22:18:25Z with `resting` 0 (its last three takes had landed; 21,031 takes
+  and 2,544 rests, all settled, over the Fly deployment). The maker finished
+  loop 31,157 (`live` 40, `replaced` 40, mid 0.20303, 37,007 XLM and 95,637
+  USDC) and logged `shutdown done` at 22:18:54Z; the state file was written
+  in the same second. All bot processes were gone 18 s after the signal.
+  The two bot runner loops exited on the stop file; 643 stayed frozen.
+- Final state pulled with `exec cat` to `~/pagebook-migration/mm-final.json`
+  (3,450 B, valid JSON): 40 quotes, 20 per side, best 20,300 / 20,328,
+  `next_nonce` 1,789,072,652,884 (6 past the insurance copy), 16,331 fills,
+  387,678 lots. All 40 nonces are the insurance copy's; every tick had
+  changed, so the copy taken eleven minutes earlier would have been stale.
+  Also copied: `watchdog.log` (2,329 lines since 2026-08-25: 382 `MM OK`,
+  258 `MM ALERT`, 321 autofix lines). The 40 MB maker log and 18 MB trader
+  log stayed on the volume; the keepalive had run at 20:43Z (980 extends)
+  and the refill at 20:39Z (nothing due).
+- The SIGCONT did not land: `fly machine exec` runs its argument as a bare
+  argv with no shell, and `kill` is a shell builtin in this image, so
+  `exec "kill -CONT 643"` failed with "No such file or directory". The
+  procedure is `exec "sh -c 'kill -CONT <pid>'"`. `fly machine stop` at
+  22:22:06Z then delivered SIGTERM to the frozen supervisor, which could not
+  act on it, and Fly's 180 s kill timeout ended the machine at 22:25:12Z
+  (event `crash`, exit -1). Nothing was running but the frozen shell and
+  the sleeping cranks, so the hard end changed no state. Machine
+  `080d229a790448` is `stopped`; volume and secrets intact.
+- Host volume seeded at 22:25Z with `mm-final.json` as
+  `/data/state/mm-CAYP…H2JA-m0.json` and the Fly watchdog log as
+  `/data/logs/watchdog.log`.
+
+### Phase 3, 2026-09-23 22:25 UTC onward
+
+- 22:25:49Z: `docker compose -f docker-compose.host.yml up -d` from the
+  worktree; container `pagebook-bots-bots-1`, image `pagebook-bots-bots`.
+  Two bot process groups (14 maker, 16 trader), each the `npx` wrapper,
+  `sh -c tsx`, the `tsx` node and the bot's node process. The refill crank
+  ran at boot (37,887 XLM, 19,167 USDC, nothing due) and the keepalive as
+  `pb-keeper` extended the 5 levels the dry run had flagged.
+- First host `loop` line at 22:26:57Z, 68 s after start: loop 0, `live` 40,
+  20 per side, `replaced` 40, `placed` 0, `fills_total` 16,331 and
+  `volume_lots` 387,678 carried from Fly, mid 0.20245. In its first two
+  minutes the maker landed 10 `replace` and 3 `replace_batch`, with 8
+  post-only `Crossed` rejections at simulation (free) and no bad outcome.
+  The trader rested one order 3 s after start and took 2 lots at 22:26:53Z.
+- Nonce scans from the checkout in a `node:22-slim` container: the maker's
+  full Fly range [1,789,072,630,000, 1,789,072,654,000) holds exactly 40
+  live orders (nonces 1,789,072,642,001 to ...042), the same set as the
+  host's current state file, so nothing was stranded and nothing adopted
+  was stale. The trader's range [1,789,072,630,000, 1,789,072,655,000)
+  holds zero live orders. A first maker scan over `next_nonce` rounded
+  down, the redeploy skill's shortcut, found nothing because the quotes'
+  nonces sit 10,000 below the counter; the procedure text above is
+  corrected.
+- First acceptance check, `check.ts` by hand at 22:28:48Z: `MM OK`, 40
+  live, own quotes 20,233 / 20,251 against book 20,245 / 20,247, last hour
+  21 ok, 8 simulation-rejected, 0 apply-rejected, 2 heals, 0 bad; trader 2
+  takes for 61 lots, 2 rests, 0 bad. One note: touch within the 15 bps
+  through-mid tolerance.
+
+- The supervisor's own first watchdog run, five minutes after boot at
+  22:30:49Z: `MM OK`, 40 live, last hour 31 ok, 8 simulation-rejected, 0
+  apply-rejected, 5 heals, 0 bad; trader 4 takes for 61 lots, 2 rests, 0
+  bad. It lands in `/data/logs/watchdog.log` after the 2,329 Fly lines and
+  on the container's stdout.
+
+### Phase 4, 2026-09-23 22:32 UTC onward
+
+- Ops clone at `~/code/pagebook-ops`, cloned from the local repository on
+  this branch at `d7e8ffc` with `origin` pointed at GitHub; the env file
+  installed there with mode 600; compose config validates. The deployment
+  moves to it at the stop drill below, and it switches to `main` once the
+  branch merges.
+- Backup: `~/.local/bin/pagebook-backup-state.sh` copies the state files and
+  the last 200 watchdog lines out of the volume into
+  `~/pagebook-backups/<date>/` through an `alpine` container running as the
+  user, keeps 30 days, and runs daily at 03:23 UTC from the user's crontab.
+  Trial run at 22:32:44Z: 2 files.
+- Health: `~/.local/bin/pagebook-health-cron.sh` runs the outside-in check
+  from the ops clone and appends one compacted JSON line to
+  `~/pagebook-health.jsonl`, hourly at :07 from the crontab. The script
+  pretty-prints its `--json`, so the wrapper pipes it through `jq -c`. Trial
+  at 22:33Z: `flags` empty, newest event 0.4 min old (the host bots), book
+  20,232 / 20,235, maker 36,567 XLM.
+- Off-host copies: none. The `aws` CLI here has no credentials for it; the
+  Fly volume's snapshots cover the first week and the nonce scan is the
+  last resort after that.
+
+### Acceptance and stop drill, 2026-09-23 22:48 to 22:50 UTC
+
+- Second `check.ts` by hand at 22:48:53Z, twenty minutes after the first
+  (the operator waived the remaining ten, as ADR-031's cutover shortened
+  its window): `MM OK`, 40 live, own quotes 20,228 / 20,246 against book
+  20,228 / 20,244, last hour 122 ok, 27 simulation-rejected, 0
+  apply-rejected, 19 heals, 0 bad; trader 25 takes for 517 lots, 5 rests,
+  4 settles, 0 bad. No `footprint`, `trapped:unknown`, `resource_limit`,
+  `Unfilled` or archived-entry outcome in either log since boot. Outside-in
+  check at ledger 4,836,029: 3,015 events in the window, newest 6 s old,
+  book 0.20228 / 0.20244 (8 bps, mid 1 bps under spot), maker 34,676 XLM
+  and 96,133 USDC, trader 18,514 USDC, `FLAGS: none`.
+- Stop drill at 22:49:05Z from the worktree: `docker compose stop` returned
+  after 18 s. The maker finished loop 41 and logged `shutdown done` at
+  22:49:18Z with the state file written at 22:48:58Z (40 quotes); the trader
+  settled its one resting order (`0426dd…57d1`) and logged `shutdown done`
+  at 22:49:22Z. The supervisor exited 143 after its shutdown wait, so the
+  container stopped only once both bots were gone. This is the graceful
+  path the Fly supervisor did not have.
+- 22:49:24Z: `up -d --build` from `~/code/pagebook-ops` rebuilt the image
+  (cache hits) and recreated the container in 1 s; the compose project now
+  points at the ops clone's file. First loop line 35 s later: `live` 40,
+  `replaced` 40, fills 16,352 carried over; two process groups; 5
+  `replace_batch` landed in the first half minute; all 40 pre-stop nonces
+  adopted.
+
+The move is complete. Fly machine `080d229a790448` stays stopped as the
+rollback target; phase 5 (destroy the machine, volume and app) is due on or
+after 2026-09-30 with the operator's confirmation, and its record goes here.
