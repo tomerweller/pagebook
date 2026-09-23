@@ -67,7 +67,7 @@ is how the original migration cut over).
 
 ## Operational notes
 
-- The fly entrypoint launches each bot under `setsid` and its watchdog autofix
+- The supervisor (`deploy/fly-entrypoint.sh`) launches each bot under `setsid` and its watchdog autofix
   signals the process group. Signalling only the `npx` wrapper lets the node
   process survive while the runner starts another: two makers then share one
   state file and quotes fall out of it (the 2026-09-09 duplicate-maker
@@ -88,23 +88,24 @@ is how the original migration cut over).
 
 ## Host deployment (one supervisor container)
 
-`deploy/docker-compose.host.yml` runs the Fly layout on any Docker host as a
+`deploy/docker-compose.host.yml` runs every bot on any Docker host as a
 single container: the supervisor in `deploy/fly-entrypoint.sh` starts the
 maker, the trader, the daily keepalive and refill cranks and the hourly
 watchdog, with `/data` on the external volume `pagebook-data`
 (`/data/state/mm-<CONTRACT>-m<MARKET>.json`, `/data/logs/*.log`). The
 contract, market, SAC ids and USDC issuer are the compose file's
-`environment` block, the same values as `fly.toml`. ADR-047 records the move
-from Fly and holds the step-by-step cutover.
+`environment` block; the outside-in health check in `tools/health/` reads the
+contract and market from there too. ADR-047 records the move from Fly and
+holds the step-by-step cutover.
 
 Bring-up, from `clients/web/ops/deploy`:
 
 1. `docker volume create pagebook-data`. The volume is external so `docker
    compose down -v` cannot delete the state file.
-2. Secrets into `./env`, mode 600 (`umask 077`). A running Fly Machine hands
-   them out with `fly machine exec <id> -a pagebook-bots "printenv
-   PB_SECRET_PB_MM"` (likewise `PB_SECRET_PB_TRADER` and
-   `PB_SECRET_PB_KEEPER`); the stellar CLI keychain is the other source.
+2. Secrets into `./env`, mode 600 (`umask 077`): `PB_SECRET_PB_MM`,
+   `PB_SECRET_PB_TRADER` and the optional `PB_SECRET_PB_KEEPER`, from the
+   stellar CLI keychain that holds the bot identities (`stellar keys secret
+   pb-mm-fly --config-dir <keychain>`) or from an existing host's env file.
    `.dockerignore` keeps the file out of the image.
 3. `docker compose -f docker-compose.host.yml build`, then the read-only
    checks with the real env: `run --rm --no-deps bots sh -c 'npx tsx
@@ -157,7 +158,7 @@ The bots moved to a Docker host on 2026-09-23 (ADR-047) and machine
 follows describes that deployment as it ran; a return to Fly would start
 from `fly deploy` again.
 
-`clients/web/fly.toml` runs the maker, trader, and watchdog on one Fly Machine
+`clients/web/fly.toml` (now only in the git history) ran the maker, trader, and watchdog on one Fly Machine
 in `iad`; its `[env]` block carries `CONTRACT`, `MARKET` (0), both SAC ids and
 the USDC issuer, which `deploy/fly-entrypoint.sh` passes to every bot. The
 maker's state file on the volume is `/data/state/mm-<CONTRACT>-m<MARKET>.json`,

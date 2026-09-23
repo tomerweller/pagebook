@@ -15,6 +15,7 @@ COPY public ./public
 
 RUN mkdir -p /app/ops/state /app/ops/logs
 
-# Fly runs all three bots on one Machine. Compose overrides this command for
-# its one-process-per-container services.
+# The host deployment (ops/deploy/docker-compose.host.yml) runs the supervisor,
+# which starts every bot in this one container. The per-process compose file
+# (ops/deploy/docker-compose.yml) overrides this command per service.
 CMD ["/bin/bash", "ops/deploy/fly-entrypoint.sh"]

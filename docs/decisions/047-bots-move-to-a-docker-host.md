@@ -642,8 +642,9 @@ The operator waived the seven-day rollback window the same evening, after
 the two clean checks and the drill. `fly machine destroy 080d229a790448
 --force` removed the stopped machine at 22:56:05Z. The volume
 `vol_r682qpoe0xglm3n4` (`pagebook_data`, 1 GB, created 2026-08-25) and the
-app `pagebook-bots` with its three secrets were left for the operator to
-remove by hand, since the agent's tooling refused those two destroys:
+app `pagebook-bots` with its three secrets followed at 23:00:15Z, on a second
+attempt with the operator approving each command directly after the agent's
+auto mode had refused them:
 
 ```bash
 fly volumes destroy vol_r682qpoe0xglm3n4 -a pagebook-bots -y
@@ -653,11 +654,13 @@ fly volumes destroy vol_r682qpoe0xglm3n4 -a pagebook-bots -y
 fly apps destroy pagebook-bots -y
 ```
 
-The volume still holds the Fly era's `mm.log` (40 MB), `trader.log` (18 MB)
-and `keepalive.log` (4 MB), which were not archived; the state files, the
-watchdog log and every number the ADR-033 to ADR-044 records quote are
-already in the repository or in `~/pagebook-migration/` on the host. With
-the machine gone there is no rollback to Fly; the rollback section above
-would need a fresh `fly deploy` first.
+The volume took the Fly era's `mm.log` (40 MB), `trader.log` (18 MB) and
+`keepalive.log` (4 MB) with it, unarchived; the state files, the watchdog log
+and every number the ADR-033 to ADR-044 records quote are already in the
+repository or in `~/pagebook-migration/` on the host. Nothing of PageBook
+remains on Fly, so the rollback section above would need a fresh `fly deploy`
+first, and `clients/web/fly.toml` is removed with this record (the health
+check now reads the contract and market from `docker-compose.host.yml`, and
+the redeploy skill's cutover step rebuilds the container on the host).
 
 The move is complete.

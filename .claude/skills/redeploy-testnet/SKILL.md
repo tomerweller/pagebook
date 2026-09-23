@@ -1,6 +1,6 @@
 ---
 name: redeploy-testnet
-description: Redeploy the PageBook contract to Stellar testnet and cut the fly bots and web client over to it, end to end (build, upload, deploy, create market 0, 30-minute smoke on scratch identities, wind down the old deployment, edit the five config locations, fly deploy, acceptance, ADR cutover record, PR). Use this whenever a merged change alters a storage entry layout or the contract interface (ADR-023 says there is no upgrade path, so any `Market`, `Level`, `Order` or entry-point change means a fresh deployment), whenever the user says "redeploy", "cut over", "new testnet contract", "the client can't parse the live Market entry", or asks to fill in an ADR's "Cutover record" section. Also use it for partial runs (only the smoke, only the wind-down, only collecting fees from a retired contract).
+description: Redeploy the PageBook contract to Stellar testnet and cut the bots and web client over to it, end to end (build, upload, deploy, create market 0, 30-minute smoke on scratch identities, wind down the old deployment, edit the five config locations, rebuild the bots container on the ops host, acceptance, ADR cutover record, PR). Use this whenever a merged change alters a storage entry layout or the contract interface (ADR-023 says there is no upgrade path, so any `Market`, `Level`, `Order` or entry-point change means a fresh deployment), whenever the user says "redeploy", "cut over", "new testnet contract", "the client can't parse the live Market entry", or asks to fill in an ADR's "Cutover record" section. Also use it for partial runs (only the smoke, only the wind-down, only collecting fees from a retired contract).
 ---
 
 # Redeploy PageBook on testnet
@@ -13,13 +13,15 @@ newest of them first so the record you write matches in shape.
 
 The whole run takes about two hours of wall clock, most of it waiting on two 30-minute
 acceptance windows. Everything is testnet; still, treat `pagebook-builder-2` as a
-production key and the fly machine as production.
+production key and the bots container on the ops host as production. Steps 1 to 4 run
+where the keychain and the stellar CLI are (the Mac); the bot stop in step 4 and the
+restart in step 5 run on the ops host, over ssh, with Docker (ADR-047).
 
 ## Stop-and-ask boundaries
 
 Do these only with the user's explicit go-ahead in chat, given for this run:
 
-- Stopping the fly machine (it halts the live maker and trader).
+- Stopping the bots container on the ops host (it halts the live maker and trader).
 - Spending from `pagebook-builder-2` for anything except upload, deploy,
   `create_market` and `collect_fees`. Adding a USDC trustline to it counts.
 - Merging the PR.
@@ -40,7 +42,7 @@ fails acceptance, stop, leave the old deployment running, and report with the lo
 | Quote SAC (USDC) | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
 | USDC issuer | `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5` |
 | Market 0 geometry (ADR-026) | lot 100,000,000, tick 1,000, band [1, 4,194,304), fee 5 bps, 1 to 1,000,000 lots, `level_cap` default 64 |
-| Fly app | `pagebook-bots`, one machine in `iad`, volume at `/data` |
+| Bots host | `user-dev-050a`, container `pagebook-bots-bots-1` from `~/code/pagebook-ops/clients/web/ops/deploy/docker-compose.host.yml`, volume `pagebook-data` at `/data`, secrets in the gitignored `env` beside the compose file |
 | Acceptance (ADR-031) | watchdog `MM OK` twice, 30 minutes apart, no `footprint` / `trapped:unknown` / `resource_limit` outcome on either bot |
 
 Every `stellar` command takes `--config-dir /Users/tomer/dev/pagebook/.stellar` with the
@@ -91,7 +93,7 @@ new contract and present on the old one. Note both entry sizes for the record.
 ### 3. Smoke run on the funder identities (30 minutes)
 
 Never point production identities at an unproven contract. Refill the smoke identities
-first (the flags take addresses, and default to the fly bots, so pass both):
+first (the flags take addresses, and default to the production bots, so pass both):
 
 ```bash
 npx tsx ops/refill.ts --maker <pb-fly-funder-1 address> --trader <pb-fly-funder-2 address> --usdc-issuer GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5 --log <scratch>/refill-smoke.log
@@ -146,28 +148,18 @@ the amounts; the default is to collect the XLM and leave the USDC, saying so in 
 
 With the go-ahead, in this order:
 
-1. Read the machine's current state for the record:
-   `fly ssh console -a pagebook-bots -C "sh -c 'tail -c 1500 /data/logs/watchdog.log; ls -la /data/state'"`.
-2. Set the stop file, read the pid files, then signal the bot process groups. The
-   machine's `sh` is dash, whose `kill` rejects `-- -<pgid>`, so go through bash and
-   use the literal pids:
-   `fly ssh console -a pagebook-bots -C "sh -c 'touch /data/state/stopping; cat /data/state/mm.pid /data/state/trader.pid'"`
-   then
-   `fly ssh console -a pagebook-bots -C "bash -c 'kill -TERM -- -<mm pid> -<trader pid>'"`.
-   Expect the machine to exit within seconds, not after a graceful shutdown: the
-   entrypoint's `shutdown` waits on its runner loops, which die on SIGTERM, so `wait`
-   returns at once and the bots are cut off mid-cycle (ADR-044 saw a maker batch land
-   two seconds after the signal and a trader rest left on the book). The state file on
-   the volume is the last cycle's; the chain is the truth, which is why step 5 exists.
-   Confirm `stopped` with `fly status`.
-3. Read the state file without booting the bots. `fly machine start` would run the
-   entrypoint on the old contract, so first replace the command:
-   `fly machine update <id> -a pagebook-bots --command "sleep 7200" --yes`, then
-   `fly machine start <id>`, then
-   `fly sftp get /data/state/mm-<old>-m0.json <scratch>/mm-old.json -a pagebook-bots`,
-   then `fly machine stop <id>`. After the later `fly deploy`, check
-   `fly machine status <id>` still shows the image CMD and not `sleep`; if it does not,
-   `fly machine update <id> --command "/bin/bash ops/deploy/fly-entrypoint.sh"`.
+1. Read the container's current state for the record, on the host:
+   `docker exec pagebook-bots-bots-1 sh -c 'tail -c 1500 /data/logs/watchdog.log; ls -la /data/state'`.
+2. Stop the container: `docker compose -f docker-compose.host.yml stop` from the deploy
+   directory of the ops clone. The supervisor's `shutdown` signals both bot process
+   groups and waits up to 170 s for them to exit, so the maker finishes its cycle with
+   its state saved and the trader settles its rests before the container goes down
+   (18 s in the ADR-047 drill). Confirm both logs end with `shutdown done`; the volume
+   is readable through a throwaway container while the bots are stopped:
+   `docker run --rm -v pagebook-data:/data:ro alpine sh -c 'tail -c 300 /data/logs/mm.log; echo; tail -c 300 /data/logs/trader.log'`.
+   The chain is still the truth, which is why step 5 exists.
+3. Copy the state file out the same way:
+   `docker run --rm -v pagebook-data:/data:ro alpine cat /data/state/mm-<old>-m0.json > <scratch>/mm-old.json`.
 4. Settle the old quotes so escrow returns to `pb-mm-fly`:
    `npx tsx ops/mm.ts --contract <old> --market 0 --identity pb-mm-fly --config-dir ... --base-sac ... --quote-sac ... --usdc-issuer ... --state <scratch>/mm-old.json --log <scratch>/mm-old-cancel.log --cancel-all`.
    The `main` client reads `Market` fields by name, so it usually still parses the old
@@ -175,20 +167,23 @@ With the go-ahead, in this order:
    change broke parsing or the pads, run the cancel from a worktree at the old ADR's
    commit. Record the first and last tx and the `level` view at the recorded bests.
 5. Scan for orders the state file lost. Two makers or two traders running at once (the
-   ADR-037 duplicate-bot incident) leave orders no state file knows about, and the
-   hard exit in step 2 does too (ADR-044: one trader rest). `Order` entries exist only
-   while an order is live, and bot nonces are `boot_seconds * 1000 + k`, so a few
-   thousand keys through batched `getLedgerEntries` cover an identity:
+   ADR-037 duplicate-bot incident) leave orders no state file knows about, and a hard
+   kill mid-cycle does too (ADR-044: one trader rest). `Order` entries exist only
+   while an order is live, and bot nonces are `boot_seconds * 1000 + k`, so a range of
+   keys through batched `getLedgerEntries` covers an identity:
 
    ```bash
-   npx tsx ../../.claude/skills/redeploy-testnet/scripts/scan-orders.mts <old> <G-owner> <base> <base+4000> [--state <scratch>/rebuilt.json]
+   npx tsx ../../.claude/skills/redeploy-testnet/scripts/scan-orders.mts <old> <G-owner> <base> <to> [--state <scratch>/rebuilt.json]
    ```
 
-   The maker's base is the state file's `next_nonce` rounded down to a thousand (it
-   persists across restarts, so it dates from the state file's creation). The trader's
-   base is its last boot second; recover it from any trader transaction on Horizon
-   (`/transactions/<hash>/operations`, the `place` parameters carry the nonce as a
-   `U64`). Settle stragglers: a maker's via `--cancel-all` over the `--state` file the
+   Both bases are the container's last start second (`docker inspect -f
+   '{{.State.StartedAt}}' pagebook-bots-bots-1`, times 1,000); the maker's counter
+   persists in its state file, so scan up to just past its `next_nonce`, and do not
+   shortcut with `next_nonce` rounded down: after weeks the live quotes sit thousands
+   of nonces below the counter (ADR-047 found 40 orders at 1,789,072,642,0xx under a
+   counter of ...652,884). If the trader's start second is in doubt, any trader
+   transaction on Horizon (`/transactions/<hash>/operations`) carries the nonce as a
+   `U64` in the `place` parameters. Settle stragglers: a maker's via `--cancel-all` over the `--state` file the
    scan writes, a trader's with
    `stellar contract invoke --id <old> --source pb-trader-fly ... -- settle --market 0 --owner <G> --nonce <n>`.
    Rescan until both read zero, and compare `pb-mm-fly` / `pb-trader-fly` balances
@@ -200,7 +195,8 @@ With the go-ahead, in this order:
 Five places carry the contract id. Edit all of them; a `grep -rn <old-id>` outside
 `docs/decisions/` afterwards should find only the README's list of earlier deployments:
 
-- `clients/web/fly.toml` (`CONTRACT`)
+- `clients/web/ops/deploy/docker-compose.host.yml` (`CONTRACT` in `environment`; the
+  outside-in health check reads the id and market from here too)
 - `clients/web/ops/deploy/docker-compose.yml` (`CONTRACT` in `x-market`)
 - `clients/web/src/main.ts` (`DEFAULT_CONTRACT`)
 - `README.md` "Testnet deployment": the current contract and its ADR; move the old id
@@ -214,25 +210,36 @@ production traffic in every category, so it stays the follow-up unless the user 
 it. Do not edit the explainer pages unless they name the contract; if you must, they go
 through the `humanizer` skill.
 
-Then from `clients/web`: `fly deploy -a pagebook-bots` (a remote image build, a few
-minutes; run it in the background). On a stopped machine this updates the config, resets
-any `--command` override from step 4.3, and leaves the machine stopped. Before starting
-it, confirm the config carries the new id:
-`fly machine status <id> -a pagebook-bots -d | grep CONTRACT`. Then
-`fly machine start <id>`. Within two minutes check, over `fly ssh console`, that exactly
-one `node ... ops/mm.ts` and one `node ... ops/trader.ts` exist under `/proc`, that
-`refill.log` and `keepalive.log` show a run, and that the maker created a fresh
-`/data/state/mm-<new>-m0.json`. The trader should be taking within a couple of minutes.
-Acceptance is two `MM OK` lines 30 minutes apart in `/data/logs/watchdog.log`; the
-entrypoint's watchdog first runs five minutes after boot and then hourly, so run
-`check.ts` over `fly ssh console` yourself at the 30-minute marks rather than waiting.
+Push the branch, then on the ops host bring the clone onto it and rebuild:
+
+```bash
+cd ~/code/pagebook-ops && git fetch origin && git checkout <branch> && cd clients/web/ops/deploy && docker compose -f docker-compose.host.yml up -d --build
+```
+
+The container is stopped from step 4, so `up` builds the image from the branch (a
+minute; cached layers) and starts it with the new `CONTRACT`. The maker's state file is
+keyed by contract, so it starts from a fresh `/data/state/mm-<new>-m0.json`; the old
+file stays on the volume as history. Within two minutes check that exactly two bot
+process groups exist (the listing in `ops/README.md`, one pgid for `ops/mm.ts` and one
+for `ops/trader.ts`), that `refill.log` and `keepalive.log` show a run, and that the
+trader is taking. Acceptance is two `MM OK` lines 30 minutes apart in
+`/data/logs/watchdog.log`; the supervisor's watchdog first runs five minutes after boot
+and then hourly, so run `check.ts` yourself at the 30-minute marks:
+
+```bash
+docker exec pagebook-bots-bots-1 sh -c 'npx tsx ops/check.ts --contract $CONTRACT --market $MARKET --identity pb-mm --log /data/logs/mm.log --state /data/state/mm-$CONTRACT-m$MARKET.json --trader-log /data/logs/trader.log'
+```
+
+After the PR merges, put the ops clone back on `main` (`git checkout main && git pull`);
+no rebuild is needed when the merge changes nothing under `clients/web`.
 
 ### 6. Record and PR
 
 Fill the ADR's "Cutover record" in the ADR-037 shape: a bullet list (date and
 identities; wasm hash, size, source commit, test counts, upload and deploy tx; contract
 id; market 0 tx and geometry with the entry check), then `### Smoke run`, `### Wind-down
-and cutover` subsections with the tallies, tx ids, balances and the fly image name. Short
+and cutover` subsections with the tallies, tx ids, balances and the image id
+(`docker inspect -f '{{.Image}}' pagebook-bots-bots-1`). Short
 tx ids as `abcdef…1234`. Factual, short, no em dashes, no history of the run's own
 mistakes unless they changed the procedure (then a subsection, as ADR-037's incident did).
 
@@ -245,8 +252,10 @@ characters and a body that says what was deployed and links the contract on
 ## Things that bit earlier runs
 
 - Two makers sharing a state file overwrite each other's quote lists and strand orders
-  (ADR-037). The entrypoint now uses `setsid` and a five-minute watchdog grace period,
-  but still count processes after every boot.
+  (ADR-037). The supervisor uses `setsid`, a five-minute watchdog grace period, and a
+  shutdown that waits for the bots (ADR-047), but still count process groups after
+  every boot. Never start a second maker on the production identity anywhere, a smoke
+  run included, while the container runs.
 - The Bash tool's background mode is not a process supervisor. Its commands are bounded
   by the tool timeout, so a bot started there can die mid-cycle. Detach with `nohup` and
   `disown` instead, and confirm exactly one maker and one trader with
@@ -258,9 +267,11 @@ characters and a body that says what was deployed and links the contract on
 - The refill crank's floors (maker 30,000 XLM, trader 5,000 USDC) are tuned for the
   production ladder; on a funder identity it will merge four friendbot accounts the first
   time. That is expected and cheap.
-- `fly ssh console -C` passes the command through `sh -c` on the machine (dash): `$(...)`
-  survives, `kill -- -<pgid>` does not. Wrap group kills in `bash -c`. There is no `ps`
-  on the image; walk `/proc/*/cmdline` and `/proc/<pid>/stat` (field 5 is the pgid).
+- `docker exec` runs a bare argv: pipelines and shell builtins (`kill`) need `sh -c`,
+  and group kills need `bash -c` because dash's `kill` rejects `-- -<pgid>`. There is
+  no `ps` in the image; walk `/proc/*/cmdline`, and read the pgid from
+  `/proc/<pid>/stat` after the `)` that closes the command name, because `npx` sets a
+  process title with spaces and a plain field count misreads those rows.
 - `mm.ts --cancel-all` reports `settle other / fetch failed` on an RPC hiccup and keeps
   the quote in the state file; rerun it. `sim:typed:UnknownOrder` on the rerun means the
   first attempt had landed.
