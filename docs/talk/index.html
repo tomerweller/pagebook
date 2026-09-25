@@ -645,7 +645,7 @@
 <section class="slide bultop">
   <h2><span class="k">8</span>Level queue</h2>
   <ul>
-    <li><b>One entry per price level so crossing a price touches one key however many orders rest there.</b> A FIFO of order quantities: appends go at the tail, the head advances, nothing is ever moved. 124 B empty, 12 B per resting order</li>
+    <li><b>One entry per price level, so crossing a price touches one key however many orders rest there.</b> A FIFO of order quantities: appends go at the tail, the head advances, consumed history is dropped behind it. 124 B empty, 12 B per slot ahead of the head</li>
     <li><b>A sweep is one write.</b> A taker that clears the level prices it from the open total and writes it empty without reading a single slot. Matching cost scales with levels crossed, not with makers</li>
   </ul>
   <div class="fig" data-frag="3"><svg viewBox="0 70 940 322" role="img" aria-label="One level queue at tick 15,800, stored as one Level entry holding the generation, the head sequence number, open_lots, and a vector of quantity slots whose length is the tail. Slots hold consumed history, a cancelled tombstone, or open quantities; the head advances through the vector, appends push onto its end, and nothing moves. The entry is 124 bytes empty and grows 12 bytes per slot, 892 bytes at the default cap of 64.">
@@ -716,6 +716,7 @@
     <p>The whole FIFO at one price lives in one entry: a generation counter, a head sequence number, the open total, and a vector of quantity slots. Sequence numbers are slot positions. A rest pushes onto the end. A take decrements the head slot in place and advances the head. A cancel zeroes its slot. Nothing is ever moved or compacted.</p>
     <p>The entry is sized to occupancy: 124 bytes empty, 12 more per resting order, about 900 bytes at the default cap of 64 orders. A swept level is written empty, so the hot-path writes are small.</p>
     <p>A taker that consumes the whole level prices it from the open total, writes the entry empty, and bumps the generation. It never reads the slots. Sweeping a level with sixty makers costs one write, the same as sweeping one. And because the queue lives under the key the transaction already declared, a queue that deepens in flight changes nothing about the footprint. Level entries are never deleted; the generation counter must survive so old makers can still settle.</p>
+      <p>A cancel leaves its slot in place at zero, a tombstone, because later makers' sequence numbers point at positions and their records cannot be rewritten. The walk skips tombstones. The level cap of 64 counts the slots ahead of the head, live or tombstoned; a sweep or a rest into an empty level starts a new generation and clears them. The current contract also keeps filled history behind the head until then, which is issue 66: co-located makers refreshing one tick can fill it with tombstones. The fix drops the consumed prefix behind the head, which the slide describes.</p>
   </aside>
 </section>
 
