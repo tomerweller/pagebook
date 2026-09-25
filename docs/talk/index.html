@@ -399,14 +399,6 @@
       <ul><li>Example: an order that crosses 1 offer "costs" as much as an order that crosses 1000 offers</li></ul>
     </li>
   </ul>
-    </li>
-    <li>No room for customization
-      <ul><li>Example: taker fees, maker discounts</li></ul>
-    </li>
-    <li>No proper metering
-      <ul><li>Example: an order that crosses 1 offer "costs" as much as an order that crosses 1000 offers</li></ul>
-    </li>
-  </ul>
   <aside class="notes">
     <p>Stellar already has an order book in the protocol. The problem is the boundary: a Soroban contract cannot place an SDEX offer or route a payment through it, and SDEX cannot invoke a contract. Any DeFi that wants an order book as a building block needs one on the Soroban side.</p>
     <p>Being a contract buys things SDEX cannot offer: contracts can be makers and takers, a route across markets is atomic, a market operator can charge a taker fee, and time-in-force flags exist. The cost is real: a PageBook market is separate liquidity, and nothing inside a contract can bridge it to SDEX.</p>
