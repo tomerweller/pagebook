@@ -30,12 +30,15 @@ jobs:
         run: npm ci && npm run build
         working-directory: clients/web
       - name: Assemble site
-        # Web client at the site root, executive explainer at /explainer/.
+        # Web client at the site root, executive explainer at /explainer/,
+        # talk slides at /talk/.
         run: |
           mkdir -p _site
           cp -a clients/web/dist/. _site/
           mkdir -p _site/explainer
           cp -a docs/explainer/. _site/explainer/
+          mkdir -p _site/talk
+          cp -a docs/talk/. _site/talk/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
