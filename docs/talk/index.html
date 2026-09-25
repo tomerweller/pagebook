@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -133,7 +133,7 @@
   .slide p { margin: 0 0 14px; font-size: 27px; line-height: 1.42; max-width: 32em; }
   .slide p.sub { font-size: 30px; color: var(--muted); max-width: 26em; }
   .slide p.small, .slide li.small { font-size: 21px; color: var(--muted); }
-  .slide ul { margin: 0; padding-left: 1.1em; max-width: 36em; }
+  .slide ul { margin: 0; padding-left: 1.1em; max-width: none; }
   .slide li { font-size: 27px; line-height: 1.38; margin-bottom: 14px; }
   .slide li::marker { color: var(--muted); }
   .slide li b { font-weight: 700; }
@@ -153,6 +153,17 @@
   .slide.shot .shotlink { display: block; flex: 1; min-height: 0; text-align: center; }
   .slide.shot img { max-width: 100%; max-height: 100%; height: auto; border: 1px solid var(--line); }
   .slide.shot .foot { text-align: center; font-size: 22px; }
+  .slide ul ul { margin-top: 8px; padding-left: 1.2em; }
+  .slide ul ul li { font-size: 24px; margin-bottom: 8px; }
+  .slide li.em { font-style: italic; }
+  .slide.bultop ul { max-width: none; flex: 0 0 auto; }
+  .slide.bultop li { font-size: 24px; margin-bottom: 10px; }
+  .slide.bultop .fig { flex: 1; min-height: 0; margin-top: 18px; justify-content: center; }
+  .slide.bultop .fig svg { width: auto; height: 100%; max-width: 100%; }
+  .slide.bultop .fig.short svg { max-height: 190px; }
+  .slide.bultop .fig.img img { max-width: 100%; max-height: 100%; height: auto; object-fit: contain; }
+  .slide p.cap { font-size: 19px; color: var(--muted); margin: 0; }
+  .slide p.try { font-size: 24px; margin-top: 12px; }
   .slide .foot {
     margin-top: auto;
     padding-top: 16px;
@@ -351,7 +362,7 @@
 <!-- 0 -->
 <section class="slide title">
   <h1>PageBook</h1>
-  <p class="sub">An order book for Soroban</p>
+  <p class="sub">A "good enough" order book for Soroban</p>
   <aside class="notes">
     <p>PageBook is an experiment: a Soroban contract that stores, matches, and settles limit orders on-chain. It runs on testnet today with a web client and a set of bots. It is not production software and nothing about its economics or interface is final.</p>
     <p>The talk is thirty minutes. The shape is: a demo, why the obvious designs fail on Soroban, what we gave up, the three data structures that make it work, and what testnet measured. Slides and links are on the site afterwards.</p>
@@ -371,12 +382,18 @@
 </section>
 
 <!-- 2 -->
-<section class="slide">
-  <h2><span class="k">1</span>But we have SDEX</h2>
+<section class="slide ">
+  <h2><span class="k">1</span>Why build a Soroban Orderbook</h2>
   <ul>
-    <li>SDEX exists, but contracts can't call SDEX and SDEX can't call contracts. Example: contract tokens</li>
-    <li>Room for customization. Example: a taker fee to the market operator</li>
-    <li>SDEX is not properly metered</li>
+    <li>SDEX exists but contracts can't call SDEX and SDEX can't call contracts
+      <ul><li>Example: contract tokens</li></ul>
+    </li>
+    <li>No room for customization
+      <ul><li>Example: taker fees, maker discounts</li></ul>
+    </li>
+    <li>No proper metering
+      <ul><li>Example: an order that crosses 1 offer "costs" as much as an order that crosses 1000 offers</li></ul>
+    </li>
   </ul>
   <aside class="notes">
     <p>Stellar already has an order book in the protocol. The problem is the boundary: a Soroban contract cannot place an SDEX offer or route a payment through it, and SDEX cannot invoke a contract. Any DeFi that wants an order book as a building block needs one on the Soroban side.</p>
@@ -386,43 +403,15 @@
 </section>
 
 <!-- 3 -->
-<section class="slide figtop">
+<section class="slide bultop">
   <h2><span class="k">2</span>Order book 101</h2>
-  <div class="fig"><svg viewBox="0 0 620 330" role="img" aria-label="Two sides of a book. Each side has price levels, and each level is a FIFO queue of resting maker orders. A taker crosses from the best level outward; a maker rests at the tail of a level.">
-        <g fill="currentColor" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">
-          <text x="20" y="26" font-weight="700" font-size="13" font-family="inherit">bids</text>
-          <text x="330" y="26" font-weight="700" font-size="13" font-family="inherit">asks</text>
-          <g>
-            <text x="20" y="66" fill="var(--muted)" font-size="11">0.15795</text>
-            <rect x="90" y="50" width="40" height="24" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="110" y="67" text-anchor="middle" fill="var(--accent)">12</text>
-            <rect x="134" y="50" width="40" height="24" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="154" y="67" text-anchor="middle" fill="var(--accent)">5</text>
-            <text x="20" y="106" fill="var(--muted)" font-size="11">0.15790</text>
-            <rect x="90" y="90" width="40" height="24" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="110" y="107" text-anchor="middle" fill="var(--accent)">40</text>
-            <rect x="134" y="90" width="40" height="24" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="154" y="107" text-anchor="middle" fill="var(--accent)">8</text>
-            <rect x="178" y="90" width="40" height="24" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="198" y="107" text-anchor="middle" fill="var(--accent)">20</text>
-            <text x="20" y="146" fill="var(--muted)" font-size="11">0.15785</text>
-            <rect x="90" y="130" width="40" height="24" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="110" y="147" text-anchor="middle" fill="var(--accent)">60</text>
-          </g>
-          <g>
-            <text x="330" y="66" fill="var(--muted)" font-size="11">0.15800</text>
-            <rect x="400" y="50" width="40" height="24" fill="var(--ask-soft)" stroke="var(--ask)"/><text x="420" y="67" text-anchor="middle" fill="var(--ask)">25</text>
-            <rect x="444" y="50" width="40" height="24" fill="var(--ask-soft)" stroke="var(--ask)"/><text x="464" y="67" text-anchor="middle" fill="var(--ask)">40</text>
-            <rect x="488" y="50" width="40" height="24" fill="var(--ask-soft)" stroke="var(--ask)"/><text x="508" y="67" text-anchor="middle" fill="var(--ask)">15</text>
-            <text x="330" y="106" fill="var(--muted)" font-size="11">0.15805</text>
-            <rect x="400" y="90" width="40" height="24" fill="var(--ask-soft)" stroke="var(--ask)"/><text x="420" y="107" text-anchor="middle" fill="var(--ask)">30</text>
-            <text x="330" y="146" fill="var(--muted)" font-size="11">0.15810</text>
-            <rect x="400" y="130" width="40" height="24" fill="var(--ask-soft)" stroke="var(--ask)"/><text x="420" y="147" text-anchor="middle" fill="var(--ask)">10</text>
-            <rect x="444" y="130" width="40" height="24" fill="var(--ask-soft)" stroke="var(--ask)"/><text x="464" y="147" text-anchor="middle" fill="var(--ask)">10</text>
-          </g>
-          <text x="420" y="42" text-anchor="middle" fill="var(--muted)" font-size="10">head</text>
-          <text x="508" y="42" text-anchor="middle" fill="var(--muted)" font-size="10">tail</text>
-          <line x1="310" y1="44" x2="310" y2="160" stroke="var(--line)" stroke-dasharray="3 3"/>
-          <text x="20" y="200" fill="var(--muted)" font-size="11">a level is a FIFO queue of maker orders at one price</text>
-          <text x="20" y="218" fill="var(--muted)" font-size="11">a maker rests at the tail; a taker consumes from the head, best level first</text>
-          <text x="20" y="252" fill="var(--muted)" font-size="11">the hard part on any chain: find the next live level while others are writing</text>
-        </g>
-      </svg></div>
-  <div class="row"><div><b>Two sides, price levels, a FIFO queue at each level.</b> A maker rests at the tail; a taker crosses from the best level, head first</div><div><b>Entry points</b> are <code>place</code>, <code>replace</code>, <code>settle</code>, <code>route</code>. <b>Behaviors</b> are take, rest, sweep. "Fill" is only an order state</div></div>
+  <ul>
+    <li>Limit order: buy or sell an amount at a price or better; rests until matched or cancelled</li>
+    <li>Two sides: bids to buy, asks to sell; the gap between the best of each is the spread</li>
+    <li>Price-time priority: best price first, then oldest order at that price</li>
+    <li>Makers rest orders; takers cross the spread and match against them</li>
+  </ul>
+  <div class="fig img"><img src="depth-chart.png" alt="A depth chart and order book from a centralized exchange: cumulative bids in green on the left, asks in red on the right, and the price ladder beside it"></div>
   <aside class="notes">
     <p>Standard vocabulary, stated once so the rest of the talk can use it. Two sides. Each side is a set of price levels. Each level is a queue in arrival order. A maker rests at the tail of a level; a taker starts at the best level on the opposite side and consumes from the head outward.</p>
     <p>The repo pins the words. Entry points are what you call: place, replace, settle, route. Behaviors are what a call did: take, rest, sweep. "Fill" is only ever an order state. This matters because the same word meaning two things caused real confusion in review.</p>
@@ -431,19 +420,15 @@
 </section>
 
 <!-- 4 -->
-<section class="slide">
+<section class="slide ">
   <h2><span class="k">3</span>Naive design one: SDEX-ish</h2>
   <div class="cols wide-right">
-    <div>
-      <ul>
-        <li>One ledger entry per offer, keyed by offer id, like <code>OfferEntry</code></li>
-        <li>Soroban needs the footprint before execution, but the offers a take crosses depend on the live queue</li>
-        <li>Any concurrent rest or cancel changes the key set; the take fails</li>
-        <li>Busier market, higher failure rate, and no way to over-declare unpredictable keys</li>
-      </ul>
-    </div>
-    <div class="fig">
-      <svg viewBox="0 0 620 360" role="img" aria-label="Offers stored as separate entries keyed by offer id. At simulation the take would cross offers 41, 17 and 88; by inclusion offer 17 was cancelled and offer 93 arrived at the head, so the footprint declared at simulation no longer matches and the transaction fails.">
+    <div><ul>
+    <li>One ledger entry per offer, keyed by offer id, like OfferEntry</li>
+    <li class="em">Problem: Soroban needs the footprint before execution, but the offers a take crosses depend on the live queue</li>
+    <li class="em">Lesson: Predictable keys, Stable footprints</li>
+  </ul></div>
+    <div class="fig"><svg viewBox="0 0 620 360" role="img" aria-label="Offers stored as separate entries keyed by offer id. At simulation the take would cross offers 41, 17 and 88; by inclusion offer 17 was cancelled and offer 93 arrived at the head, so the footprint declared at simulation no longer matches and the transaction fails.">
         <g fill="currentColor" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">
           <text x="20" y="26" font-weight="700" font-size="13" font-family="inherit">at simulation</text>
           <text x="20" y="46" fill="var(--muted)" font-size="11">asks at 0.15800, head first</text>
@@ -461,8 +446,7 @@
           <text x="20" y="300" fill="var(--ask)" font-weight="700">transaction fails on the footprint</text>
           <text x="20" y="336" fill="var(--muted)" font-size="11">the write set depends on who else traded; keys derived from content can't be padded</text>
         </g>
-      </svg>
-    </div>
+      </svg></div>
   </div>
   <aside class="notes">
     <p>The first thing anyone tries is to copy SDEX: one entry per offer, an offer id as the key, match by walking offers in price-time order. On the classic protocol that works because the protocol reads whatever it needs at apply time.</p>
@@ -472,20 +456,15 @@
 </section>
 
 <!-- 5 -->
-<section class="slide">
+<section class="slide ">
   <h2><span class="k">4</span>Naive design two: the monolith</h2>
   <div class="cols wide-right">
-    <div>
-      <ul>
-        <li>Whole book in one entry; the footprint is trivially predictable</li>
-        <li>Soroban charges write bytes for the whole entry on every rewrite, and every trade rewrites the book</li>
-        <li>Ledger write bytes (286,720 B) are the network's throughput ceiling; a big blob eats it</li>
-        <li>The 64 KB entry cap bounds the book</li>
-        <li>Solana lets you rewrite part of a 1 MB account for a flat cost; Soroban doesn't</li>
-      </ul>
-    </div>
-    <div class="fig">
-      <svg viewBox="0 0 620 360" role="img" aria-label="One large book entry. A one-lot trade changes a few bytes but the whole entry is rewritten and charged. Four such trades consume a large share of the per-ledger write-byte budget.">
+    <div><ul>
+    <li>Whole book in one entry; the footprint is trivially predictable</li>
+    <li class="em">Problem: Soroban charges write bytes for the whole entry on every rewrite, and every trade rewrites the book</li>
+    <li class="em">Lesson: Small entries</li>
+  </ul></div>
+    <div class="fig"><svg viewBox="0 0 620 360" role="img" aria-label="One large book entry. A one-lot trade changes a few bytes but the whole entry is rewritten and charged. Four such trades consume a large share of the per-ledger write-byte budget.">
         <g fill="currentColor" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">
           <text x="20" y="26" font-weight="700" font-size="13" font-family="inherit">Book(market)</text>
           <text x="20" y="46" fill="var(--muted)" font-size="11">one entry, every level and every order inside</text>
@@ -514,8 +493,7 @@
           <rect x="506" y="296" width="81" height="22" fill="var(--ask-soft)" stroke="var(--ask)"/>
           <text x="20" y="340" fill="var(--muted)" font-size="11">seven trades per ledger, network-wide</text>
         </g>
-      </svg>
-    </div>
+      </svg></div>
   </div>
   <aside class="notes">
     <p>The opposite extreme: put the whole book in one entry. The footprint is one key, always known, and there is no race to declare. This is roughly what Phoenix does on Solana, and it works there because rewriting part of a large account costs the same as rewriting a small one.</p>
@@ -525,13 +503,13 @@
 </section>
 
 <!-- 6 -->
-<section class="slide">
-  <h2><span class="k">5</span>Acceptable concessions</h2>
+<section class="slide ">
+  <h2><span class="k">5</span>PageBook's "good enough" concessions</h2>
   <ul>
-    <li><b>Price quantization.</b> Admin-created markets with a fixed lot size, tick size, and tick band; integer math, no rounding</li>
-    <li><b>Async maker settlement.</b> The taker settles at apply; the maker calls <code>settle</code> later, an O(1) claim from counters</li>
-    <li><b>Slightly stale best.</b> The take starts from the best price seen at simulation</li>
-    <li><b>Footprint padding.</b> The client declares a band of price levels around the simulated best, against Soroban convention</li>
+    <li><b>Price quantization</b>. Admin-created markets with a fixed lot size, tick size, and tick band</li>
+    <li><b>Async maker settlement</b>. The taker settles at apply; the maker calls settle later</li>
+    <li><b>Slightly stale best</b>. The take starts from the best price seen at simulation</li>
+    <li><b>Footprint padding</b>. The client declares a band of price levels around the simulated best</li>
   </ul>
   <aside class="notes">
     <p>PageBook does not reproduce SDEX. It accepts four concessions, and each one buys something.</p>
@@ -542,47 +520,17 @@
 </section>
 
 <!-- 7 -->
-<section class="slide figtop">
+<section class="slide ">
   <h2><span class="k">6</span>Introducing PageBook</h2>
-  <div class="fig" style="height:360px"><svg viewBox="0 0 700 330" role="img" aria-label="Three structures. The tick index finds price levels with supply; the level queue stores the FIFO supply at one tick in one entry; the order record points a maker at its queue position. Arrows show the taker walk reading the index and the levels, and settle joining the order record to the level counters.">
-        <defs>
-          <marker id="iarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
-          </marker>
-        </defs>
-        <g fill="currentColor" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">
-          <rect x="20" y="40" width="200" height="110" fill="none" stroke="currentColor"/>
-          <text x="36" y="66" font-weight="700">Tick index</text>
-          <text x="36" y="88" fill="var(--muted)" font-size="11">BestTick, TickSummary,</text>
-          <text x="36" y="104" fill="var(--muted)" font-size="11">TickWord bitmaps</text>
-          <text x="36" y="132" fill="var(--muted)" font-size="11">find: which ticks may have supply</text>
-
-          <rect x="250" y="40" width="200" height="110" fill="none" stroke="currentColor"/>
-          <text x="266" y="66" font-weight="700">Level queue</text>
-          <text x="266" y="88" fill="var(--muted)" font-size="11">Level(market, side, tick)</text>
-          <text x="266" y="104" fill="var(--muted)" font-size="11">counters + quantity slots</text>
-          <text x="266" y="132" fill="var(--muted)" font-size="11">supply: the FIFO at one price</text>
-
-          <rect x="480" y="40" width="200" height="110" fill="none" stroke="currentColor"/>
-          <text x="496" y="66" font-weight="700">Order record</text>
-          <text x="496" y="88" fill="var(--muted)" font-size="11">Order(market, owner, nonce)</text>
-          <text x="496" y="104" fill="var(--muted)" font-size="11">side, tick, gen, seq, qty</text>
-          <text x="496" y="132" fill="var(--muted)" font-size="11">claim: where one maker stood</text>
-
-          <line x1="220" y1="95" x2="246" y2="95" stroke="var(--accent)" marker-end="url(#iarr)"/>
-          <text x="120" y="190" text-anchor="middle" fill="var(--accent)" font-size="11">taker walk: index, then levels</text>
-          <path d="M 120 176 L 120 160" fill="none" stroke="var(--accent)" marker-end="url(#iarr)"/>
-          <path d="M 350 176 L 350 160" fill="none" stroke="var(--accent)" marker-end="url(#iarr)"/>
-          <text x="350" y="190" text-anchor="middle" fill="var(--accent)" font-size="11">writes O(levels crossed)</text>
-
-          <path d="M 580 160 L 580 200 L 350 200 L 350 215" fill="none" stroke="var(--ask)" marker-end="url(#iarr)"/>
-          <text x="465" y="232" text-anchor="middle" fill="var(--ask)" font-size="11">settle: join the record to the level's counters, O(1)</text>
-
-          <text x="20" y="282" fill="var(--muted)" font-size="11">keys are pure functions of (market, side, tick) or (market, owner, nonce): nothing assigned at apply time appears in a key</text>
-          <text x="20" y="300" fill="var(--muted)" font-size="11">the order store is authoritative; the index is derived and may be stale in one direction</text>
-        </g>
-      </svg></div>
-  <div class="row three"><div><b>Keys</b> are pure functions of client-known coordinates</div><div><b>Entries</b> are small and sized to occupancy</div><div><b>State is split by function</b>: find, supply, claim. All of it so footprints stay computable, paddable, and bounded</div></div>
+  <ul>
+    <li>Orders live across three data structures with predictable keys and small entries
+      <ul>
+        <li><b>Tick index</b> finds price levels with supply</li>
+        <li><b>Level queue</b> holds the orders at one price</li>
+        <li><b>Order record</b> is a maker's claim on its place in the queue</li>
+      </ul>
+    </li>
+  </ul>
   <aside class="notes">
     <p>Two principles run through the whole design. First, every key is a pure function of things the client already knows: market, side, tick, or the maker's own address and a nonce it picked. Nothing assigned during execution ever appears in a key the client has to declare. Second, entries are small and sized to what they hold, so the write bytes a transaction pays track the work it did.</p>
     <p>Book state is split by function into three structures. The tick index finds price levels that may have supply. The level queue stores the FIFO at one price in one entry. The order record is the maker's claim on a queue position. The taker walk touches the first two and never the third. Settle touches the third and one level.</p>
@@ -591,8 +539,12 @@
 </section>
 
 <!-- 8 -->
-<section class="slide figtop">
+<section class="slide bultop">
   <h2><span class="k">7</span>Tick index</h2>
+  <ul>
+    <li><b>A two-level bitmap of which price levels may have supply, so matching finds the next level without a scan. A</b> 2,048-bit summary over 2,048-bit words covers 2<sup>22</sup> ticks; each bitmap is one 256-byte entry</li>
+    <li><b>Derived, allowed to be stale.</b> A live level always has its bit set; a set bit over an empty level is cleared by the next taker to land there</li>
+  </ul>
   <div class="fig"><svg viewBox="0 70 940 266" role="img" aria-label="The tick index is a 2,048-bit summary over 2,048-bit tick words. A tick number splits into a word index and a bit index: tick 15,805 is word 7, bit 1,469. A set bit means the tick's level may have resting supply; a stale set bit points at an empty level; a clear bit means nothing rests there.">
       <g fill="currentColor" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">
 
@@ -675,7 +627,6 @@
         <text x="203" y="323" font-size="11" fill="var(--muted)">clear: nothing rests at this tick</text>
       </g>
     </svg></div>
-  <div class="row"><div><b>Two bitmap levels per side.</b> A 2,048-bit summary over 2,048-bit words covers 2<sup>22</sup> ticks; each bitmap is one 256-byte entry</div><div><b>Derived, and allowed to be stale.</b> A live level always has its bit set; a set bit over an empty level is cleared by the next taker to land there</div></div>
   <aside class="notes">
     <p>Each market side has a two-level bitmap: a 2,048-bit summary over 2,048-bit words, which covers four million ticks. Each bitmap is a 256-byte entry. A tick number splits into a word index and a bit index, so the key for any tick's word is known in advance. BestTick is a hint for where to start.</p>
     <p>Finding the next candidate tick is a find-first-set on the current word, then on the summary, without scanning prices.</p>
@@ -684,8 +635,12 @@
 </section>
 
 <!-- 9 -->
-<section class="slide figtop">
+<section class="slide bultop">
   <h2><span class="k">8</span>Level queue</h2>
+  <ul>
+    <li><b>One entry per price level so crossing a price touches one key however many orders rest there.</b> A FIFO of order quantities: appends go at the tail, the head advances, nothing is ever moved. 124 B empty, 12 B per resting order</li>
+    <li><b>A sweep is one write.</b> A taker that clears the level prices it from the open total and writes it empty without reading a single slot. Matching cost scales with levels crossed, not with makers</li>
+  </ul>
   <div class="fig"><svg viewBox="0 70 940 322" role="img" aria-label="One level queue at tick 15,800, stored as one Level entry holding the generation, the head sequence number, open_lots, and a vector of quantity slots whose length is the tail. Slots hold consumed history, a cancelled tombstone, or open quantities; the head advances through the vector, appends push onto its end, and nothing moves. The entry is 124 bytes empty and grows 12 bytes per slot, 892 bytes at the default cap of 64.">
       <g fill="currentColor" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">
 
@@ -750,7 +705,6 @@
         <text x="30" y="378" fill="var(--muted)" font-size="11">increments gen, empties the vector, and restarts seqs</text>
       </g>
     </svg></div>
-  <div class="row"><div><b>One entry per (market, side, tick).</b> Counters plus a slot vector as long as the queue has reached: 124 B empty, 12 B per order</div><div><b>A sweep is one write.</b> Price by the open total, write the entry empty, bump the generation; slots unread. Matching writes O(levels), never O(makers)</div></div>
   <aside class="notes">
     <p>The whole FIFO at one price lives in one entry: a generation counter, a head sequence number, the open total, and a vector of quantity slots. Sequence numbers are slot positions. A rest pushes onto the end. A take decrements the head slot in place and advances the head. A cancel zeroes its slot. Nothing is ever moved or compacted.</p>
     <p>The entry is sized to occupancy: 124 bytes empty, 12 more per resting order, about 900 bytes at the default cap of 64 orders. A swept level is written empty, so the hot-path writes are small.</p>
@@ -759,8 +713,14 @@
 </section>
 
 <!-- 10 -->
-<section class="slide figtop">
+<section class="slide bultop">
   <h2><span class="k">9</span>Order record</h2>
+  <ul>
+    <li><b>Ownership lives apart from the queue, so a taker never writes maker state.</b></li>
+    <li>Keyed by the maker and a nonce it picks, so the key is known before the transaction runs; the queue position is stored inside, where it cannot affect the footprint</li>
+    <li><b>Settle is a comparison.</b> The record's generation and sequence against the level's counters say filled, still open, or both, in constant work whatever the queue holds</li>
+    <li><b>Replace rewrites in place.</b> The record is fixed-size, so moving a quote pays no new rent</li>
+  </ul>
   <div class="fig"><svg viewBox="0 70 940 278" role="img" aria-label="An Order record stores the maker's nonce, side, tick, queue generation, sequence number, and original quantity, and never changes while takers fill it. At settle, its generation and sequence number are compared with the level's counters: behind the head means fully filled, at the head may be partially filled, ahead of the head is still open, and an older generation is fully filled regardless of position.">
       <defs>
         <marker id="oarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -825,7 +785,6 @@
         <text x="180" y="316" fill="var(--muted)" font-size="11">constant work, no matter how many other makers are in the queue</text>
       </g>
     </svg></div>
-  <div class="row three"><div><b>Keyed by (owner, nonce).</b> The client picks the nonce, so the key is declarable before execution; the queue position lives inside</div><div><b>Settle is a comparison.</b> Generation and sequence against the level counters give filled, open, or both, in constant work</div><div><b>Replace rewrites in place.</b> The record is fixed-size, so re-quoting pays no new rent</div></div>
   <aside class="notes">
     <p>The queue stores quantities only. Who owns them lives in a separate record per order, keyed by the maker's address and a nonce the maker chose before simulation. That is what makes the key declarable no matter what the book does in flight. The queue position, generation and sequence, is assigned at execution and stored inside the entry, where it cannot affect any footprint.</p>
     <p>At settle, the contract compares the record's generation and sequence with the level's counters. An older generation, or a sequence behind the head, is fully filled. At the head, possibly partially filled, so read that one slot. Ahead of the head, still open. It pays the filled part, refunds the open part, and deletes the record. Constant work regardless of how many other makers are in the queue.</p>
@@ -834,8 +793,13 @@
 </section>
 
 <!-- 11 -->
-<section class="slide figtop">
-  <h2><span class="k">9</span>The taker walk</h2>
+<section class="slide bultop">
+  <h2><span class="k">10</span>The taker walk</h2>
+  <ul>
+    <li><b>A take crosses the opposite side from the best price outward.</b> Index, then level, then index again, at most 32 levels per transaction; hitting the cap keeps the progress made, and the remainder rests or is refunded by flag</li>
+    <li><b>One way to fail.</b> Only a walk past the padded band fails on the footprint; every other outcome is a typed result. Arithmetic is exact, and the taker fee is the only rounding</li>
+  </ul>
+  <p class="cap">Example: buy 35 lots with a limit of 15,805, against 20 lots resting at 15,800 and 30 at 15,805. Steps 1 to 4 in the figure.</p>
   <div class="fig"><svg viewBox="0 70 940 330" role="img" aria-label="The taker walk over the real structures. The tick index points to the best ask at 15,800 (step 1); that 20-lot level is swept whole using its counters, with one Level write and no slot reads, resetting its generation and clearing its tick bit (step 2); the index's next set bit is 15,805 (step 3); 15 lots are consumed from that queue's head and the walk stops with all 35 lots filled (step 4).">
       <defs>
         <marker id="warr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -922,7 +886,6 @@
         <text x="180" y="386" fill="var(--muted)" font-size="11">maker order records: never read or written by the walk; makers settle later against the updated counters</text>
       </g>
     </svg></div>
-  <div class="row"><div><b>Index, level, index, level.</b> Best tick outward, at most <code>MAX_LEVELS_CROSSED</code> (32) levels; a cap ends the walk with progress kept and the rest refunded</div><div><b>One trap.</b> Only walking past the padded band fails on the footprint. Arithmetic is exact; the taker fee is the only rounding</div></div>
   <aside class="notes">
     <p>Worked example from the explainer: asks of 20 lots at 15,800 and 30 lots at 15,805, and a bid for 35 lots. The index says start at 15,800. That level has fewer lots than the taker wants, so it is swept whole by its counters for 31.60 USDC: one write, slots unread, generation bumped, bit cleared. The index's next set bit is 15,805. Fifteen lots come off the head of that queue for 23.7075 USDC, and the walk stops there. No maker record was touched.</p>
     <p>Every loop is bounded by a constant. A walk crosses at most 32 levels and reads at most a level's cap of slots when it partially consumes one. Hitting a cap is not an error: progress is kept and the rest is refunded, or rests, depending on flags. The single hard failure is the walk needing a level past the padded band, which fails on the footprint. That residual is real, and we say so.</p>
@@ -931,16 +894,12 @@
 </section>
 
 <!-- 12 -->
-<section class="slide">
-  <h2><span class="k">10</span>Putting it all together</h2>
-  <div class="step">
-    <div><b>Simulate</b>Call <code>quote_place</code>: the starting tick, the levels the walk expects to cross, the fill. Pick a nonce.</div>
-    <div><b>Pad</b>Declare every <code>Level</code> in a band from the best to a chosen end, the words spanning it, the own-side rest keys, the <code>Order</code>, both vault and own balances, both fee accruals.</div>
-    <div><b>Submit</b>Every race but one degrades gracefully with a typed reason. The one trap is a walk past the band.</div>
-  </div>
+<section class="slide ">
+  <h2><span class="k">11</span>Putting it all together: simulate, pad, submit</h2>
   <ul>
-    <li>A declared read-write key costs its write-entry fee and, if it exists, its write bytes as if written: padding costs capacity more than money</li>
-    <li>Running today on testnet: the contract, a TypeScript web client with an in-page wallet, a market maker plus soak and stress bots, and the cranks</li>
+    <li><b>Simulate.</b> Call quote_place() for the starting tick and the levels the walk expects to cross. Pick a nonce</li>
+    <li><b>Pad.</b> Add to the simulated footprint what the book could need if it moves: a band of level keys around the simulated best, empty or not, and the keys a rest would touch</li>
+    <li><b>Submit.</b> If the book moved inside the band, the transaction still runs and reports a different fill, a cap hit, or a typed error</li>
   </ul>
   <aside class="notes">
     <p>The client's half of the protocol. Simulate to learn where the walk starts and what it expects to cross. Then pad: declare every level key in a contiguous band from the simulated best out to a chosen end, set or not, plus the bitmap words that span it, the keys a rest on the own side would touch, the order record at the chosen nonce, the vault's balance in both tokens, the caller's own balances, and both fee accruals. That list is exhaustive; a place touches nothing else. Then submit.</p>
@@ -951,7 +910,7 @@
 
 <!-- 13 -->
 <section class="slide">
-  <h2><span class="k">11</span>Results, measured on testnet</h2>
+  <h2><span class="k">12</span>Results, measured on testnet</h2>
   <table>
     <thead>
       <tr>
@@ -985,9 +944,14 @@
 </section>
 
 <!-- 14 -->
-<section class="slide figtop">
-  <h2><span class="k">12</span>Future work: better quantization</h2>
-  <div class="fig" style="height:190px"><svg viewBox="0 70 940 140" role="img" aria-label="Three price slices, each 0.1% wide, at 0.02, 0.158 and 1.58 USDC per XLM. Under linear ticks the slice holds 2, 16 and 158 ticks, and padding one percent of depth declares 20, 158 and 1,580 level keys.">
+<section class="slide bultop">
+  <h2><span class="k">13</span>Quantization today: linear ticks</h2>
+  <ul>
+    <li><b>Prices move in a fixed step.</b> A market fixes its lot size, tick size, and tick range at creation; every price is a whole number of ticks, so matching is one multiplication with nothing to round</li>
+    <li><b>A fixed step is a different fraction of the price at every price.</b> On the example market, 5 bps at 0.02 and 0.06 bps at 1.58</li>
+    <li><b>Both ends hurt.</b> At low prices the step is too coarse to quote inside the spread. At high prices, padding 1% of depth takes 1,580 level keys, eight times what a transaction may write. Once the price leaves the tick range, the only fix is a new market and a migration</li>
+  </ul>
+  <div class="fig short"><svg viewBox="0 70 940 140" role="img" aria-label="Three price slices, each 0.1% wide, at 0.02, 0.158 and 1.58 USDC per XLM. Under linear ticks the slice holds 2, 16 and 158 ticks, and padding one percent of depth declares 20, 158 and 1,580 level keys.">
       <g fill="currentColor" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">
       <text x="235" y="86" text-anchor="middle" font-size="12">0.02 USDC/XLM</text>
       <text x="505" y="86" text-anchor="middle" font-size="12">0.158 USDC/XLM</text>
@@ -1008,21 +972,28 @@
       <text x="775" y="165" text-anchor="middle" fill="var(--muted)" font-size="11">1% of depth = 1,580 keys</text>
       <text x="30" y="196" fill="var(--muted)" font-size="11">a slice with more than 40 ticks is drawn solid</text>
       </g></svg></div>
-  <div class="row three">
-    <div><b>Linear, today.</b> A fixed quote amount per tick, so relative width drifts with price: 5 bps at 0.02, 0.06 bps at 1.58. Band exhaustion means a new market</div>
-    <div><b>Geometric.</b> Constant relative width, no band, but prices stop being whole atoms and matching has to round, inside the maker claim</div>
-    <div><b>Significant-figure, 1-2-5.</b> Exact, relative width held in a window, no band. What Hyperliquid and traditional tick tables do</div>
-  </div>
-  <p class="foot">Also on the list: per-market vault sub-accounts for parallelism, settle batching, permissionless market creation.</p>
   <aside class="notes">
     <p>The concession that bites is the frozen grid. A linear tick is a fixed quote amount, so it is a different fraction of price at every price. On the example market the tick is 0.6 basis points at today's price. If XLM fell to two cents it would be 5 basis points and a maker could not ladder inside the spread. If XLM rose to 1.58 it would be 0.06 basis points, and padding one percent of depth would need 1,580 level keys, eight times the writes a transaction may hold. The only remedy today is a new market and a migration of resting liquidity.</p>
+  </aside>
+</section>
+
+<!-- 15 -->
+<section class="slide ">
+  <h2><span class="k">14</span>Future work: a better tick grid</h2>
+  <ul>
+    <li><b>Geometric ticks.</b> The step is a fixed fraction of the price, so no tick range is needed, but prices are no longer whole numbers of quote units and matching would have to round</li>
+    <li><b>Significant-figure ticks, 1-2-5 tables.</b> Prices stay whole, the step stays within a fixed fraction of the price, no tick range. What Hyperliquid and traditional exchanges use, and the better candidate</li>
+  </ul>
+  <p class="try">Try it: <a href="https://tomerweller.com/pagebook/explainer/tick-grids.html" target="_blank" rel="noopener">tomerweller.com/pagebook/explainer/tick-grids.html</a>, drag the price and watch each grid respond</p>
+  <p class="foot">Also on the list: per-market vault sub-accounts so markets sharing a token stop serializing, settle batching, permissionless market creation.</p>
+  <aside class="notes">
     <p>A geometric grid, as in the Liquidity Book, makes relative tick width constant, but its prices are not whole atoms, so matching would have to round, and the rounding lands inside the maker's claim. That trades away the property the whole correctness argument rests on.</p>
     <p>A significant-figure grid, which is what Hyperliquid and every traditional tick table do, keeps prices as whole atoms, needs no band, and holds relative width within a fixed window. The 1-2-5 table variant that MiFID venues use keeps round prices too. If a v2 market type is built, that is the better candidate. None of this changes existing markets; quantization is frozen per market.</p>
     <p>Other v2 items: per-market vault sub-accounts so markets sharing a token stop forming one serial cluster, batched settle, and permissionless market creation with an anti-spam fee.</p>
   </aside>
 </section>
 
-<!-- 15 -->
+<!-- 16 -->
 <section class="slide">
   <h2>Links</h2>
   <dl class="kv">
