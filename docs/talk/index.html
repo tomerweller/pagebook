@@ -648,30 +648,35 @@
     <li><b>One entry per price level, so crossing a price touches one key however many orders rest there.</b> A FIFO of order quantities: appends go at the tail, the head advances, consumed history is dropped behind it. 124 B empty, 12 B per slot ahead of the head</li>
     <li><b>A sweep is one write.</b> A taker that clears the level prices it from the open total and writes it empty without reading a single slot. Matching cost scales with levels crossed, not with makers</li>
   </ul>
-  <div class="fig" data-frag="3"><svg viewBox="0 70 940 322" role="img" aria-label="One level queue at tick 15,800, stored as one Level entry holding the generation, the head sequence number, open_lots, and a vector of quantity slots whose length is the tail. Slots hold consumed history, a cancelled tombstone, or open quantities; the head advances through the vector, appends push onto its end, and nothing moves. The entry is 124 bytes empty and grows 12 bytes per slot, 892 bytes at the default cap of 64.">
+  <div class="fig" data-frag="3"><svg viewBox="0 70 940 322" role="img" aria-label="One level queue at tick 15,800, stored as one Level entry holding the generation, the head sequence number, open_lots, and a vector of quantity slots that starts at the head. Sequence numbers 0 and 1 were consumed and dropped; the vector holds seqs 2 to 5: an open head slot, a cancelled tombstone, and two open slots, then empty positions at the tail. The entry is 124 bytes empty and grows 12 bytes per slot ahead of the head, 892 bytes at the default cap of 64.">
       <g fill="currentColor" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">
-
         <!-- Level entry -->
         <rect x="30" y="84" width="880" height="140" fill="none" stroke="currentColor"/>
         <text x="46" y="110" font-weight="700">Level</text>
         <text x="46" y="132" fill="var(--muted)" font-size="11">gen 3</text>
         <text x="46" y="150" fill="var(--muted)" font-size="11">head_seq 2</text>
-        <text x="46" y="168" fill="var(--muted)" font-size="11">slots.len() 5</text>
+        <text x="46" y="168" fill="var(--muted)" font-size="11">slots.len() 4</text>
         <text x="46" y="186" fill="var(--muted)" font-size="11">open_lots 80</text>
 
+        <!-- dropped prefix, drawn as ghosts outside the vector -->
+        <rect x="178" y="140" width="48" height="48" fill="none" stroke="var(--line)" stroke-dasharray="2 4"/>
+        <text x="202" y="169" text-anchor="middle" fill="var(--dead)">30</text>
+        <rect x="230" y="140" width="48" height="48" fill="none" stroke="var(--line)" stroke-dasharray="2 4"/>
+        <line x1="234" y1="184" x2="274" y2="144" stroke="var(--dead)"/>
+        <text x="202" y="206" text-anchor="middle" font-size="10" fill="var(--dead)">0</text>
+        <text x="254" y="206" text-anchor="middle" font-size="10" fill="var(--dead)">1</text>
+
         <!-- head / tail markers -->
-        <text x="358" y="116" text-anchor="middle" font-size="11" fill="var(--muted)">head</text>
-        <line x1="358" y1="121" x2="358" y2="136" stroke="currentColor"/>
+        <text x="306" y="116" text-anchor="middle" font-size="11" fill="var(--muted)">head = slots[0]</text>
+        <line x1="306" y1="121" x2="306" y2="136" stroke="currentColor"/>
         <text x="514" y="116" text-anchor="middle" font-size="11" fill="var(--muted)">tail</text>
         <line x1="514" y1="121" x2="514" y2="136" stroke="currentColor"/>
 
-        <!-- slots -->
-        <rect x="230" y="140" width="48" height="48" fill="var(--dead)" stroke="var(--line)"/>
-        <text x="254" y="169" text-anchor="middle" fill="var(--muted)">30</text>
-        <rect x="282" y="140" width="48" height="48" fill="none" stroke="var(--line)"/>
-        <line x1="286" y1="184" x2="326" y2="144" stroke="var(--muted)"/>
-        <rect x="334" y="140" width="48" height="48" fill="var(--ask-soft)" stroke="var(--ask)"/>
-        <text x="358" y="169" text-anchor="middle" fill="var(--ask)">25</text>
+        <!-- the vector: seqs 2..5, then empty -->
+        <rect x="282" y="140" width="48" height="48" fill="var(--ask-soft)" stroke="var(--ask)"/>
+        <text x="306" y="169" text-anchor="middle" fill="var(--ask)">25</text>
+        <rect x="334" y="140" width="48" height="48" fill="none" stroke="var(--line)"/>
+        <line x1="338" y1="184" x2="378" y2="144" stroke="var(--muted)"/>
         <rect x="386" y="140" width="48" height="48" fill="var(--ask-soft)" stroke="var(--ask)"/>
         <text x="410" y="169" text-anchor="middle" fill="var(--ask)">40</text>
         <rect x="438" y="140" width="48" height="48" fill="var(--ask-soft)" stroke="var(--ask)"/>
@@ -681,35 +686,34 @@
         <text x="600" y="170" fill="var(--muted)">&#8230;</text>
 
         <!-- seq labels -->
-        <text x="254" y="206" text-anchor="middle" font-size="10" fill="var(--muted)">0</text>
-        <text x="306" y="206" text-anchor="middle" font-size="10" fill="var(--muted)">1</text>
-        <text x="358" y="206" text-anchor="middle" font-size="10" fill="var(--muted)">2</text>
-        <text x="410" y="206" text-anchor="middle" font-size="10" fill="var(--muted)">3</text>
-        <text x="462" y="206" text-anchor="middle" font-size="10" fill="var(--muted)">4</text>
-        <text x="514" y="206" text-anchor="middle" font-size="10" fill="var(--muted)">5</text>
-        <text x="566" y="206" text-anchor="middle" font-size="10" fill="var(--muted)">6</text>
+        <text x="306" y="206" text-anchor="middle" font-size="10" fill="var(--muted)">2</text>
+        <text x="358" y="206" text-anchor="middle" font-size="10" fill="var(--muted)">3</text>
+        <text x="410" y="206" text-anchor="middle" font-size="10" fill="var(--muted)">4</text>
+        <text x="462" y="206" text-anchor="middle" font-size="10" fill="var(--muted)">5</text>
+        <text x="514" y="206" text-anchor="middle" font-size="10" fill="var(--muted)">6</text>
+        <text x="566" y="206" text-anchor="middle" font-size="10" fill="var(--muted)">7</text>
 
         <!-- entry size -->
         <text x="700" y="110" font-weight="700" font-size="11" fill="var(--muted)">entry size</text>
         <text x="700" y="132" fill="var(--muted)" font-size="11">124 B empty</text>
-        <text x="700" y="150" fill="var(--muted)" font-size="11">+12 B per slot held</text>
-        <text x="700" y="168" fill="var(--muted)" font-size="11">892 B at the default</text>
-        <text x="700" y="186" fill="var(--muted)" font-size="11">level_cap of 64</text>
+        <text x="700" y="150" fill="var(--muted)" font-size="11">+12 B per slot</text>
+        <text x="700" y="168" fill="var(--muted)" font-size="11">ahead of the head</text>
+        <text x="700" y="186" fill="var(--muted)" font-size="11">892 B at level_cap 64</text>
 
         <!-- legend -->
-        <rect x="30" y="252" width="13" height="13" fill="var(--dead)" stroke="var(--line)"/>
-        <text x="53" y="263" font-size="11" fill="var(--muted)">filled: consumed history behind the head</text>
+        <rect x="30" y="252" width="13" height="13" fill="none" stroke="var(--line)" stroke-dasharray="2 4"/>
+        <text x="53" y="263" font-size="11" fill="var(--muted)">dropped: seqs behind the head, filled or cancelled; no longer stored, settle pays them as filled</text>
         <rect x="30" y="274" width="13" height="13" fill="none" stroke="var(--line)"/>
         <line x1="31" y1="286" x2="42" y2="275" stroke="var(--muted)"/>
-        <text x="53" y="285" font-size="11" fill="var(--muted)">cancelled: tombstone; never moved or compacted</text>
+        <text x="53" y="285" font-size="11" fill="var(--muted)">cancelled ahead of the head: a tombstone, skipped by the walk, kept until the head passes it</text>
         <rect x="30" y="296" width="13" height="13" fill="var(--ask-soft)" stroke="var(--ask)"/>
         <text x="53" y="307" font-size="11" fill="var(--muted)">open: one maker order's open lots (the head slot shrinks as it is taken)</text>
         <rect x="30" y="318" width="13" height="13" fill="none" stroke="var(--line)" stroke-dasharray="3 3"/>
         <text x="53" y="329" font-size="11" fill="var(--muted)">empty: the next append lands at the tail</text>
 
         <!-- reuse note -->
-        <text x="30" y="362" fill="var(--muted)" font-size="11">the entry is never deleted: a sweep, or the first rest into a queue that cancels emptied,</text>
-        <text x="30" y="378" fill="var(--muted)" font-size="11">increments gen, empties the vector, and restarts seqs</text>
+        <text x="30" y="362" fill="var(--muted)" font-size="11">slot s lives at index s minus head_seq; the cap counts slots ahead of the head. the entry is never deleted:</text>
+        <text x="30" y="378" fill="var(--muted)" font-size="11">a sweep, or the first rest into a queue that cancels emptied, increments gen, empties the vector, and restarts seqs</text>
       </g>
     </svg></div>
   <aside class="notes">
