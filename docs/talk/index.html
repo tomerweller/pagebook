@@ -803,10 +803,9 @@
   <h2><span class="k">10</span>The taker walk</h2>
   <ul>
     <li><b>A take crosses the opposite side from the best price outward.</b> Index, then level, then index again, at most 32 levels per transaction; hitting the cap keeps the progress made, and the remainder rests or is refunded by flag</li>
-    <li><b>One way to fail.</b> Only a walk past the padded band fails on the footprint; every other outcome is a typed result. Arithmetic is exact, and the taker fee is the only rounding</li>
   </ul>
-  <p class="cap" data-frag="3">Example: buy 35 lots with a limit of 15,805, against 20 lots resting at 15,800 and 30 at 15,805. Steps 1 to 4 in the figure.</p>
-  <div class="fig" data-frag="3"><svg viewBox="0 70 940 330" role="img" aria-label="The taker walk over the real structures. The tick index points to the best ask at 15,800 (step 1); that 20-lot level is swept whole using its counters, with one Level write and no slot reads, resetting its generation and clearing its tick bit (step 2); the index's next set bit is 15,805 (step 3); 15 lots are consumed from that queue's head and the walk stops with all 35 lots filled (step 4).">
+  <p class="cap" data-frag="2">Example: buy 35 lots with a limit of 15,805, against 20 lots resting at 15,800 and 30 at 15,805. Steps 1 to 4 in the figure.</p>
+  <div class="fig" data-frag="2"><svg viewBox="0 70 940 330" role="img" aria-label="The taker walk over the real structures. The tick index points to the best ask at 15,800 (step 1); that 20-lot level is swept whole using its counters, with one Level write and no slot reads, resetting its generation and clearing its tick bit (step 2); the index's next set bit is 15,805 (step 3); 15 lots are consumed from that queue's head and the walk stops with all 35 lots filled (step 4).">
       <defs>
         <marker id="warr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
