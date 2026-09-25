@@ -991,7 +991,7 @@
     <li><b>Geometric ticks.</b> The step is a fixed fraction of the price, so no tick range is needed, but prices are no longer whole numbers of quote units and matching would have to round</li>
     <li><b>Significant-figure ticks, 1-2-5 tables.</b> Prices stay whole, the step stays within a fixed fraction of the price, no tick range. What Hyperliquid and traditional exchanges use, and the better candidate</li>
   </ul>
-  <p class="try">Try it: <a href="https://tomerweller.com/pagebook/explainer/tick-grids.html" target="_blank" rel="noopener">tomerweller.com/pagebook/explainer/tick-grids.html</a>, drag the price and watch each grid respond</p>
+  <p class="try" data-frag="3">Try it: <a href="https://tomerweller.com/pagebook/explainer/tick-grids.html" target="_blank" rel="noopener">tomerweller.com/pagebook/explainer/tick-grids.html</a>, drag the price and watch each grid respond</p>
   <p class="foot">Also on the list: per-market vault sub-accounts so markets sharing a token stop serializing, settle batching, permissionless market creation.</p>
   <aside class="notes">
     <p>A geometric grid, as in the Liquidity Book, makes relative tick width constant, but its prices are not whole atoms, so matching would have to round, and the rounding lands inside the maker's claim. That trades away the property the whole correctness argument rests on.</p>
