@@ -938,7 +938,7 @@
       <tr class="hi"><td>Maximum take, 32 levels</td><td class="num">77</td><td class="num">18.7M</td><td class="num">38.6</td><td class="num">0.036 XLM</td></tr>
     </tbody>
   </table>
-  <ul style="margin-top:20px">
+  <ul style="margin-top:20px" data-nofrag>
     <li class="small">Maker paths are flat: rest, replace, and settle never walk, so their footprints are functions of the arguments alone</li>
     <li class="small">The heaviest legal take uses under a third of every per-transaction cap. Ledger write bytes bind first: four deep takes fill a ledger, and under saturation the chain sat at 97% of write bytes with instructions at 55%</li>
   </ul>
@@ -1065,7 +1065,7 @@
   /* fragments: top-level bullets of the current slide; nested bullets show with their parent */
   function fragsOf(i) {
     return Array.prototype.slice.call(slides[i].querySelectorAll('ul > li')).filter(function (li) {
-      return !li.parentElement.closest('li') && !li.closest('aside');
+      return !li.parentElement.closest('li') && !li.closest('aside') && !li.closest('[data-nofrag]');
     });
   }
   function stepsOf(i) {
