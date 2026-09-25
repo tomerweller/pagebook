@@ -418,7 +418,7 @@
     <li>Price-time priority: best price first, then oldest order at that price</li>
     <li>Makers rest orders; takers cross the spread and match against them</li>
   </ul>
-  <div class="fig img"><img src="depth-chart.png" alt="A depth chart and order book from a centralized exchange: cumulative bids in green on the left, asks in red on the right, and the price ladder beside it"></div>
+  <div class="fig img" data-frag="5"><img src="depth-chart.png" alt="A depth chart and order book from a centralized exchange: cumulative bids in green on the left, asks in red on the right, and the price ladder beside it"></div>
   <aside class="notes">
     <p>Standard vocabulary, stated once so the rest of the talk can use it. Two sides. Each side is a set of price levels. Each level is a queue in arrival order. A maker rests at the tail of a level; a taker starts at the best level on the opposite side and consumes from the head outward.</p>
     <p>The repo pins the words. Entry points are what you call: place, replace, settle, route. Behaviors are what a call did: take, rest, sweep. "Fill" is only ever an order state. This matters because the same word meaning two things caused real confusion in review.</p>
@@ -552,7 +552,7 @@
     <li><b>A two-level bitmap of which price levels may have supply, so matching finds the next level without a scan. A</b> 2,048-bit summary over 2,048-bit words covers 2<sup>22</sup> ticks; each bitmap is one 256-byte entry</li>
     <li><b>Derived, allowed to be stale.</b> A live level always has its bit set; a set bit over an empty level is cleared by the next taker to land there</li>
   </ul>
-  <div class="fig"><svg viewBox="0 70 940 266" role="img" aria-label="The tick index is a 2,048-bit summary over 2,048-bit tick words. A tick number splits into a word index and a bit index: tick 15,805 is word 7, bit 1,469. A set bit means the tick's level may have resting supply; a stale set bit points at an empty level; a clear bit means nothing rests there.">
+  <div class="fig" data-frag="3"><svg viewBox="0 70 940 266" role="img" aria-label="The tick index is a 2,048-bit summary over 2,048-bit tick words. A tick number splits into a word index and a bit index: tick 15,805 is word 7, bit 1,469. A set bit means the tick's level may have resting supply; a stale set bit points at an empty level; a clear bit means nothing rests there.">
       <g fill="currentColor" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">
 
         <!-- summary row -->
@@ -648,7 +648,7 @@
     <li><b>One entry per price level so crossing a price touches one key however many orders rest there.</b> A FIFO of order quantities: appends go at the tail, the head advances, nothing is ever moved. 124 B empty, 12 B per resting order</li>
     <li><b>A sweep is one write.</b> A taker that clears the level prices it from the open total and writes it empty without reading a single slot. Matching cost scales with levels crossed, not with makers</li>
   </ul>
-  <div class="fig"><svg viewBox="0 70 940 322" role="img" aria-label="One level queue at tick 15,800, stored as one Level entry holding the generation, the head sequence number, open_lots, and a vector of quantity slots whose length is the tail. Slots hold consumed history, a cancelled tombstone, or open quantities; the head advances through the vector, appends push onto its end, and nothing moves. The entry is 124 bytes empty and grows 12 bytes per slot, 892 bytes at the default cap of 64.">
+  <div class="fig" data-frag="3"><svg viewBox="0 70 940 322" role="img" aria-label="One level queue at tick 15,800, stored as one Level entry holding the generation, the head sequence number, open_lots, and a vector of quantity slots whose length is the tail. Slots hold consumed history, a cancelled tombstone, or open quantities; the head advances through the vector, appends push onto its end, and nothing moves. The entry is 124 bytes empty and grows 12 bytes per slot, 892 bytes at the default cap of 64.">
       <g fill="currentColor" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">
 
         <!-- Level entry -->
@@ -728,7 +728,7 @@
     <li><b>Settle is a comparison.</b> The record's generation and sequence against the level's counters say filled, still open, or both, in constant work whatever the queue holds</li>
     <li><b>Replace rewrites in place.</b> The record is fixed-size, so moving a quote pays no new rent</li>
   </ul>
-  <div class="fig"><svg viewBox="0 70 940 278" role="img" aria-label="An Order record stores the maker's nonce, side, tick, queue generation, sequence number, and original quantity, and never changes while takers fill it. At settle, its generation and sequence number are compared with the level's counters: behind the head means fully filled, at the head may be partially filled, ahead of the head is still open, and an older generation is fully filled regardless of position.">
+  <div class="fig" data-frag="5"><svg viewBox="0 70 940 278" role="img" aria-label="An Order record stores the maker's nonce, side, tick, queue generation, sequence number, and original quantity, and never changes while takers fill it. At settle, its generation and sequence number are compared with the level's counters: behind the head means fully filled, at the head may be partially filled, ahead of the head is still open, and an older generation is fully filled regardless of position.">
       <defs>
         <marker id="oarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"/>
@@ -806,8 +806,8 @@
     <li><b>A take crosses the opposite side from the best price outward.</b> Index, then level, then index again, at most 32 levels per transaction; hitting the cap keeps the progress made, and the remainder rests or is refunded by flag</li>
     <li><b>One way to fail.</b> Only a walk past the padded band fails on the footprint; every other outcome is a typed result. Arithmetic is exact, and the taker fee is the only rounding</li>
   </ul>
-  <p class="cap">Example: buy 35 lots with a limit of 15,805, against 20 lots resting at 15,800 and 30 at 15,805. Steps 1 to 4 in the figure.</p>
-  <div class="fig"><svg viewBox="0 70 940 330" role="img" aria-label="The taker walk over the real structures. The tick index points to the best ask at 15,800 (step 1); that 20-lot level is swept whole using its counters, with one Level write and no slot reads, resetting its generation and clearing its tick bit (step 2); the index's next set bit is 15,805 (step 3); 15 lots are consumed from that queue's head and the walk stops with all 35 lots filled (step 4).">
+  <p class="cap" data-frag="3">Example: buy 35 lots with a limit of 15,805, against 20 lots resting at 15,800 and 30 at 15,805. Steps 1 to 4 in the figure.</p>
+  <div class="fig" data-frag="3"><svg viewBox="0 70 940 330" role="img" aria-label="The taker walk over the real structures. The tick index points to the best ask at 15,800 (step 1); that 20-lot level is swept whole using its counters, with one Level write and no slot reads, resetting its generation and clearing its tick bit (step 2); the index's next set bit is 15,805 (step 3); 15 lots are consumed from that queue's head and the walk stops with all 35 lots filled (step 4).">
       <defs>
         <marker id="warr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
@@ -958,7 +958,7 @@
     <li><b>A fixed step is a different fraction of the price at every price.</b> On the example market, 5 bps at 0.02 and 0.06 bps at 1.58</li>
     <li><b>Both ends hurt.</b> At low prices the step is too coarse to quote inside the spread. At high prices, padding 1% of depth takes 1,580 level keys, eight times what a transaction may write. Once the price leaves the tick range, the only fix is a new market and a migration</li>
   </ul>
-  <div class="fig short"><svg viewBox="0 70 940 140" role="img" aria-label="Three price slices, each 0.1% wide, at 0.02, 0.158 and 1.58 USDC per XLM. Under linear ticks the slice holds 2, 16 and 158 ticks, and padding one percent of depth declares 20, 158 and 1,580 level keys.">
+  <div class="fig short" data-frag="4"><svg viewBox="0 70 940 140" role="img" aria-label="Three price slices, each 0.1% wide, at 0.02, 0.158 and 1.58 USDC per XLM. Under linear ticks the slice holds 2, 16 and 158 ticks, and padding one percent of depth declares 20, 158 and 1,580 level keys.">
       <g fill="currentColor" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">
       <text x="235" y="86" text-anchor="middle" font-size="12">0.02 USDC/XLM</text>
       <text x="505" y="86" text-anchor="middle" font-size="12">0.158 USDC/XLM</text>
@@ -1068,6 +1068,13 @@
       return !li.parentElement.closest('li') && !li.closest('aside');
     });
   }
+  function stepsOf(i) {
+    var m = fragsOf(i).length;
+    Array.prototype.forEach.call(slides[i].querySelectorAll('[data-frag]'), function (el) {
+      m = Math.max(m, parseInt(el.getAttribute('data-frag'), 10) || 0);
+    });
+    return m;
+  }
   slides.forEach(function (s, i) { fragsOf(i).forEach(function (li) { li.classList.add('frag'); }); });
 
   function titleOf(i) {
@@ -1086,12 +1093,13 @@
   function render() {
     slides.forEach(function (s, i) { s.classList.toggle('current', i === current); });
     var fr = fragsOf(current);
-    if (frag > fr.length) frag = fr.length;
+    var steps = stepsOf(current);
+    if (frag > steps) frag = steps;
     fr.forEach(function (li, k) { li.classList.toggle('shown', k < frag); });
     Array.prototype.forEach.call(slides[current].querySelectorAll('[data-frag]'), function (el) {
       el.classList.toggle('shown', frag >= parseInt(el.getAttribute('data-frag'), 10));
     });
-    hud.textContent = (current + 1) + ' / ' + n + (fr.length ? ' · ' + frag + '/' + fr.length : '');
+    hud.textContent = (current + 1) + ' / ' + n + (steps ? ' · ' + frag + '/' + steps : '');
     notesPanel.innerHTML = '<p><span class="lbl">' + (current + 1) + ' · ' + titleOf(current) + '</span></p>' + notesOf(current);
     document.title = 'PageBook talk · ' + (current + 1) + ' ' + titleOf(current);
   }
@@ -1114,12 +1122,12 @@
     if (!silent) broadcast();
   }
   function next() {
-    if (frag < fragsOf(current).length) { frag += 1; render(); broadcast(); }
+    if (frag < stepsOf(current)) { frag += 1; render(); broadcast(); }
     else if (current < n - 1) go(current + 1);
   }
   function prev() {
     if (frag > 0) { frag -= 1; render(); broadcast(); }
-    else if (current > 0) go(current - 1, false, fragsOf(current - 1).length);
+    else if (current > 0) go(current - 1, false, stepsOf(current - 1));
   }
   function broadcast() {
     var msg = { slide: current, frag: frag, t: Date.now() };
@@ -1161,7 +1169,7 @@
       case 'ArrowLeft': case 'ArrowUp': case 'PageUp': case 'k': case 'h':
         e.preventDefault(); prev(); break;
       case 'Home': e.preventDefault(); go(0); break;
-      case 'End': e.preventDefault(); go(n - 1, false, fragsOf(n - 1).length); break;
+      case 'End': e.preventDefault(); go(n - 1, false, stepsOf(n - 1)); break;
       case 'n': if (mode === 'main') body.classList.toggle('show-notes'); fit(); break;
       case 's': if (mode === 'main') openPresenter(); break;
       case 'f': if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); break;
@@ -1180,9 +1188,9 @@
     var cur = base + current + (frag ? '.' + frag : '');
     if (pCur.contentWindow) pCur.contentWindow.location.replace(cur); else pCur.src = cur;
     var nx = Math.min(n - 1, current + 1);
-    if (current === n - 1) { pNxt.style.visibility = 'hidden'; } else { pNxt.style.visibility = ''; var nu = base + nx + '.' + fragsOf(nx).length; if (pNxt.contentWindow) pNxt.contentWindow.location.replace(nu); else pNxt.src = nu; }
+    if (current === n - 1) { pNxt.style.visibility = 'hidden'; } else { pNxt.style.visibility = ''; var nu = base + nx + '.' + stepsOf(nx); if (pNxt.contentWindow) pNxt.contentWindow.location.replace(nu); else pNxt.src = nu; }
     pNotes.innerHTML = notesOf(current);
-    var fr = fragsOf(current).length;
+    var fr = stepsOf(current);
     pNum.textContent = (current + 1) + ' / ' + n + (fr ? ' · ' + frag + '/' + fr : '');
     pTitle.textContent = titleOf(current);
     if (!started) started = Date.now();
