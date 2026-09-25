@@ -164,6 +164,9 @@
   .slide.bultop .fig.img img { max-width: 100%; max-height: 100%; height: auto; object-fit: contain; }
   .slide p.cap { font-size: 19px; color: var(--muted); margin: 0; }
   .slide p.try { font-size: 24px; margin-top: 12px; }
+  .slide li.frag { opacity: 0; transform: translateY(6px); transition: opacity .25s ease, transform .25s ease; }
+  .slide li.frag.shown { opacity: 1; transform: none; }
+  body.view .slide li.frag { opacity: 1; transform: none; transition: none; }
   .slide .foot {
     margin-top: auto;
     padding-top: 16px;
@@ -352,6 +355,7 @@
     }
     .slide > aside.notes p { font-size: 24px; max-width: none; margin: 0 0 12px; }
     .hud, .notes-panel, .help, .pres { display: none !important; }
+    .slide li.frag { opacity: 1; transform: none; }
   }
 </style>
 </head>
@@ -385,8 +389,16 @@
 <section class="slide ">
   <h2><span class="k">1</span>Why build a Soroban Orderbook</h2>
   <ul>
-    <li>SDEX exists but contracts can't call SDEX and SDEX can't call contracts
+    <li>Contracts can't call SDEX and SDEX can't call contracts
       <ul><li>Example: contract tokens</li></ul>
+    </li>
+    <li>SDEX doesn't allow for customization
+      <ul><li>Example: taker fees, maker discounts</li></ul>
+    </li>
+    <li>SDEX has no proper metering
+      <ul><li>Example: an order that crosses 1 offer "costs" as much as an order that crosses 1000 offers</li></ul>
+    </li>
+  </ul>
     </li>
     <li>No room for customization
       <ul><li>Example: taker fees, maker discounts</li></ul>
@@ -1015,7 +1027,7 @@
 <div class="hud" id="hud"></div>
 <div class="notes-panel" id="notes"></div>
 <div class="help" id="help"><div>
-  <div><kbd>→</kbd> <kbd>space</kbd> next &nbsp; <kbd>←</kbd> previous &nbsp; <kbd>home</kbd> <kbd>end</kbd></div>
+  <div><kbd>→</kbd> <kbd>space</kbd> next bullet, then next slide &nbsp; <kbd>←</kbd> back &nbsp; <kbd>home</kbd> <kbd>end</kbd></div>
   <div><kbd>n</kbd> notes under the slide</div>
   <div><kbd>s</kbd> presenter window</div>
   <div><kbd>f</kbd> fullscreen &nbsp; <kbd>t</kbd> light/dark</div>
@@ -1045,12 +1057,23 @@
   var chan = null;
   try { chan = new BroadcastChannel('pagebook-talk'); } catch (e) {}
 
+  /* the hash is "slide" or "slide.fragment" */
   function readHash() {
-    var h = parseInt(location.hash.replace('#', ''), 10);
-    if (isNaN(h)) return 0;
-    return Math.max(0, Math.min(n - 1, h));
+    var parts = location.hash.replace('#', '').split('.');
+    var i = parseInt(parts[0], 10), f = parseInt(parts[1], 10);
+    if (isNaN(i)) i = 0;
+    return { i: Math.max(0, Math.min(n - 1, i)), f: isNaN(f) ? 0 : Math.max(0, f) };
   }
-  var current = readHash();
+  var h0 = readHash();
+  var current = h0.i, frag = h0.f;
+
+  /* fragments: top-level bullets of the current slide; nested bullets show with their parent */
+  function fragsOf(i) {
+    return Array.prototype.slice.call(slides[i].querySelectorAll('ul > li')).filter(function (li) {
+      return !li.parentElement.closest('li') && !li.closest('aside');
+    });
+  }
+  slides.forEach(function (s, i) { fragsOf(i).forEach(function (li) { li.classList.add('frag'); }); });
 
   function titleOf(i) {
     var h = slides[i].querySelector('h1, h2');
@@ -1067,7 +1090,10 @@
 
   function render() {
     slides.forEach(function (s, i) { s.classList.toggle('current', i === current); });
-    hud.textContent = (current + 1) + ' / ' + n;
+    var fr = fragsOf(current);
+    if (frag > fr.length) frag = fr.length;
+    fr.forEach(function (li, k) { li.classList.toggle('shown', k < frag); });
+    hud.textContent = (current + 1) + ' / ' + n + (fr.length ? ' · ' + frag + '/' + fr.length : '');
     notesPanel.innerHTML = '<p><span class="lbl">' + (current + 1) + ' · ' + titleOf(current) + '</span></p>' + notesOf(current);
     document.title = 'PageBook talk · ' + (current + 1) + ' ' + titleOf(current);
   }
@@ -1077,27 +1103,46 @@
     var s = Math.min(w / 1280, h / 720);
     deck.style.transform = 'scale(' + s + ')';
   }
-  function go(i, silent) {
+  function setHash() {
+    var want = '#' + current + (mode === 'view' && frag ? '.' + frag : '');
+    if (location.hash !== want) history.replaceState(null, '', want);
+  }
+  function go(i, silent, f) {
     i = Math.max(0, Math.min(n - 1, i));
     current = i;
-    if (location.hash !== '#' + i) history.replaceState(null, '', '#' + i);
+    frag = f === undefined ? 0 : f;
+    setHash();
     render();
     if (!silent) broadcast();
   }
+  function next() {
+    if (frag < fragsOf(current).length) { frag += 1; render(); broadcast(); }
+    else if (current < n - 1) go(current + 1);
+  }
+  function prev() {
+    if (frag > 0) { frag -= 1; render(); broadcast(); }
+    else if (current > 0) go(current - 1, false, fragsOf(current - 1).length);
+  }
   function broadcast() {
-    var msg = { slide: current, t: Date.now() };
+    var msg = { slide: current, frag: frag, t: Date.now() };
     if (chan) chan.postMessage(msg);
     try { localStorage.setItem('pagebook-talk-slide', JSON.stringify(msg)); } catch (e) {}
   }
   function onRemote(msg) {
     if (!msg || typeof msg.slide !== 'number') return;
-    if (msg.slide !== current) { go(msg.slide, true); if (mode === 'presenter') presRender(); }
+    if (msg.slide !== current || (msg.frag || 0) !== frag) {
+      go(msg.slide, true, msg.frag || 0);
+      if (mode === 'presenter') presRender();
+    }
   }
   if (chan) chan.onmessage = function (e) { onRemote(e.data); };
   window.addEventListener('storage', function (e) {
     if (e.key === 'pagebook-talk-slide' && e.newValue) { try { onRemote(JSON.parse(e.newValue)); } catch (x) {} }
   });
-  window.addEventListener('hashchange', function () { var i = readHash(); if (i !== current) { go(i, mode === 'view'); if (mode === 'presenter') presRender(); } });
+  window.addEventListener('hashchange', function () {
+    var h = readHash();
+    if (h.i !== current || (mode === 'view' && h.f !== frag)) { go(h.i, mode === 'view', mode === 'view' ? h.f : 0); if (mode === 'presenter') presRender(); }
+  });
   window.addEventListener('resize', fit);
 
   function toggleTheme() {
@@ -1114,11 +1159,11 @@
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     switch (e.key) {
       case 'ArrowRight': case 'ArrowDown': case ' ': case 'PageDown': case 'j': case 'l':
-        e.preventDefault(); go(current + 1); break;
+        e.preventDefault(); next(); break;
       case 'ArrowLeft': case 'ArrowUp': case 'PageUp': case 'k': case 'h':
-        e.preventDefault(); go(current - 1); break;
+        e.preventDefault(); prev(); break;
       case 'Home': e.preventDefault(); go(0); break;
-      case 'End': e.preventDefault(); go(n - 1); break;
+      case 'End': e.preventDefault(); go(n - 1, false, fragsOf(n - 1).length); break;
       case 'n': if (mode === 'main') body.classList.toggle('show-notes'); fit(); break;
       case 's': if (mode === 'main') openPresenter(); break;
       case 'f': if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); break;
@@ -1134,11 +1179,13 @@
   var pCur, pNxt, pNotes, pNum, pTitle, pElapsed, pClock, started = null;
   function presRender() {
     var base = location.pathname + '?view#';
-    if (pCur.contentWindow) pCur.contentWindow.location.replace(base + current); else pCur.src = base + current;
+    var cur = base + current + (frag ? '.' + frag : '');
+    if (pCur.contentWindow) pCur.contentWindow.location.replace(cur); else pCur.src = cur;
     var nx = Math.min(n - 1, current + 1);
-    if (current === n - 1) { pNxt.style.visibility = 'hidden'; } else { pNxt.style.visibility = ''; if (pNxt.contentWindow) pNxt.contentWindow.location.replace(base + nx); else pNxt.src = base + nx; }
+    if (current === n - 1) { pNxt.style.visibility = 'hidden'; } else { pNxt.style.visibility = ''; var nu = base + nx + '.' + fragsOf(nx).length; if (pNxt.contentWindow) pNxt.contentWindow.location.replace(nu); else pNxt.src = nu; }
     pNotes.innerHTML = notesOf(current);
-    pNum.textContent = (current + 1) + ' / ' + n;
+    var fr = fragsOf(current).length;
+    pNum.textContent = (current + 1) + ' / ' + n + (fr ? ' · ' + frag + '/' + fr : '');
     pTitle.textContent = titleOf(current);
     if (!started) started = Date.now();
   }
@@ -1174,14 +1221,14 @@
       if (body.classList.contains('show-help')) { body.classList.remove('show-help'); return; }
       if (e.target.closest('.notes-panel')) return;
       var r = deck.getBoundingClientRect();
-      if (e.clientX < r.left + r.width * 0.2) go(current - 1); else go(current + 1);
+      if (e.clientX < r.left + r.width * 0.2) prev(); else next();
     });
     var tx = null;
     document.addEventListener('touchstart', function (e) { tx = e.touches[0].clientX; }, { passive: true });
     document.addEventListener('touchend', function (e) {
       if (tx === null) return;
       var dx = e.changedTouches[0].clientX - tx; tx = null;
-      if (Math.abs(dx) > 40) go(current + (dx < 0 ? 1 : -1));
+      if (Math.abs(dx) > 40) { if (dx < 0) next(); else prev(); }
     });
     render(); fit();
   }
